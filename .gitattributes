@@ -1,0 +1,4 @@
+# скрипты и юниты уезжают на Linux — только LF, иначе `bash: cannot execute`
+*.sh text eol=lf
+*.service text eol=lf
+Caddyfile.snippet text eol=lf
