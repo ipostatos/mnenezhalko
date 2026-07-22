@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import 'dotenv/config'
 
 function req(name: string): string {
@@ -6,8 +7,22 @@ function req(name: string): string {
   return v
 }
 
+const botToken = req('BOT_TOKEN')
+
+/**
+ * Секрет вебхука: Telegram шлёт его в заголовке X-Telegram-Bot-Api-Secret-Token,
+ * и без совпадения апдейт отбрасывается. Иначе кто угодно, зная адрес, отправит
+ * поддельный апдейт от имени любого человека — вплоть до админских команд.
+ * Если в окружении не задан, выводим из токена бота: значение стабильное между
+ * рестартами, невыводимое снаружи и не требует ручной правки .env.
+ */
+const webhookSecret =
+  process.env.WEBHOOK_SECRET ||
+  crypto.createHash('sha256').update(`${botToken}:webhook`).digest('hex')
+
 export const env = {
-  botToken: req('BOT_TOKEN'),
+  botToken,
+  webhookSecret,
   publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
   botMode: (process.env.BOT_MODE || 'polling') as 'polling' | 'webhook',
   port: Number(process.env.PORT || 8080),

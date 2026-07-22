@@ -131,13 +131,11 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
   return report
 }
 
-let timer: NodeJS.Timeout | null = null
-
 /** Периодический фоновой синк (по умолчанию раз в 12 часов). */
 export function startSyncLoop() {
   if (!env.notion.syncHours) return
   const runSafe = () =>
     syncFromNotion().catch((e) => console.error('[sync] ошибка:', e?.message || e))
-  timer = setInterval(runSafe, env.notion.syncHours * 3600_000)
+  const timer = setInterval(runSafe, env.notion.syncHours * 3600_000)
   timer.unref?.()
 }

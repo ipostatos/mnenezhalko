@@ -37,7 +37,12 @@ if (env.botMode === 'webhook' && !botDisabled) {
   // а бот на каждый повтор отвечал в чат. Отдаём 200 сразу, работа идёт дальше.
   app.post(
     WEBHOOK_PATH,
-    webhookCallback(bot, 'fastify', { onTimeout: 'return', timeoutMilliseconds: 8_000 }),
+    webhookCallback(bot, 'fastify', {
+      onTimeout: 'return',
+      timeoutMilliseconds: 8_000,
+      // без совпадения секрета апдейт не наш — grammY ответит 401
+      secretToken: env.webhookSecret,
+    }),
   )
 }
 
@@ -61,6 +66,7 @@ if (botDisabled) {
     // очередь повторов, накопленная за простой, при старте не нужна:
     // это ровно те апдейты, на которые бот уже отвечал
     drop_pending_updates: true,
+    secret_token: env.webhookSecret,
   })
   app.log.info(`webhook: ${env.publicUrl}${WEBHOOK_PATH}`)
 } else {

@@ -5,6 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Своя учётка: в .env лежат токен бота и cookie рабочего аккаунта Notion,
+# процессу, открытому в интернет, права root ни к чему.
+# Код в /opt/mnenezhalko раскладывает деплой от root (сервису — только чтение),
+# писать нужно лишь в server/data: база и обложки.
+User=mnenezhalko
+Group=mnenezhalko
 WorkingDirectory=/opt/mnenezhalko/server
 EnvironmentFile=/opt/mnenezhalko/server/.env
 ExecStart=/usr/bin/node dist/index.js
@@ -12,6 +18,13 @@ Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# Базовая изоляция
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/mnenezhalko/server/data
 
 [Install]
 WantedBy=multi-user.target

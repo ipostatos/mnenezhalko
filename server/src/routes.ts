@@ -22,6 +22,29 @@ function who(req: FastifyRequest): TgUser | null {
 const json = (v: unknown) =>
   JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)))
 
+/**
+ * Счётчик обращений к платным ручкам (Claude): подбор книг и распознавание фото.
+ * Экземпляр один, поэтому хватает памяти — внешнего хранилища заводить незачем.
+ */
+const HITS = new Map<string, number[]>()
+
+/** @returns true, если лимит исчерпан и запрос надо отклонить. */
+function tooOften(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now()
+  const fresh = (HITS.get(key) ?? []).filter((t) => now - t < windowMs)
+  // попутно чистим тех, кто давно не заходил, чтобы карта не росла бесконечно
+  if (HITS.size > 5000) {
+    for (const [k, times] of HITS) if (times.every((t) => now - t >= windowMs)) HITS.delete(k)
+  }
+  if (fresh.length >= limit) {
+    HITS.set(key, fresh)
+    return true
+  }
+  fresh.push(now)
+  HITS.set(key, fresh)
+  return false
+}
+
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/health', async () => {
     const [books, librarians, sync] = await Promise.all([
@@ -103,7 +126,14 @@ export async function registerRoutes(app: FastifyInstance) {
     return json({ owner, books: books.map(toCard) })
   })
 
+  /**
+   * Подбор книг ИИ. Ручка платная (два обращения к Claude на запрос), поэтому
+   * только для своих — подпись Telegram обязательна — и с лимитом на человека.
+   */
   app.post('/api/ai', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (tooOften(`ai:${u.id}`, 12, 60_000)) return reply.code(429).send({ error: 'too_many' })
     const { text, city } = req.body as { text?: string; city?: string }
     if (!text || text.trim().length < 2) return reply.code(400).send({ error: 'empty' })
     return askAi(text.trim().slice(0, 500), city || undefined)
@@ -246,6 +276,8 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/recognize', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    // распознавание тоже идёт в Claude, и картинка весит мегабайты
+    if (tooOften(`vision:${u.id}`, 20, 300_000)) return reply.code(429).send({ error: 'too_many' })
     const { image } = req.body as { image?: string }
     if (!image) return reply.code(400).send({ error: 'bad_request' })
 

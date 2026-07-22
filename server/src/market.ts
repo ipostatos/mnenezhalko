@@ -37,7 +37,7 @@ export type ParsedOffer = {
   district: string | null
 }
 
-export const NO_CITY = 'Все города'
+const NO_CITY = 'Все города'
 
 /** Разбирает пост барахолки. Пустой результат — значит не объявление. */
 export async function parseOffer(text: string): Promise<ParsedOffer | null> {

@@ -5,10 +5,13 @@
 # упакует только его и затрёт корневые файлы на сервере.
 #
 # Первый раз на сервере:
+#   useradd --system --home /opt/mnenezhalko --shell /usr/sbin/nologin mnenezhalko
 #   mkdir -p /opt/mnenezhalko/server/data
 #   cp .env /opt/mnenezhalko/server/.env      # BOT_MODE=webhook, PUBLIC_URL=…
+#   chown root:root /opt/mnenezhalko/server/.env && chmod 600 …  # читает systemd
 #   cp scripts/mnenezhalko.service /etc/systemd/system/ && systemctl enable mnenezhalko
 #   в Caddyfile добавить блок из scripts/Caddyfile.snippet && systemctl reload caddy
+#   crontab -e → 34 3 * * * /opt/mnenezhalko/scripts/backup.sh >> /var/log/mnenezhalko-backup.log 2>&1
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,6 +26,7 @@ ssh "$HOST" "cd $DIR && npm i --no-audit --omit=dev=false \
   && npm run build -w web \
   && cd server && npx prisma generate && npx prisma db push --skip-generate \
   && npx tsc -p tsconfig.json \
+  && chown -R mnenezhalko:mnenezhalko $DIR/server/data \
   && systemctl restart mnenezhalko && sleep 3 && systemctl is-active mnenezhalko"
 
 echo "→ проверка живого сервиса"

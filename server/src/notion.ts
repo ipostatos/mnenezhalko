@@ -260,7 +260,7 @@ const CITY_ALIASES: Record<string, string> = {
  * «Warszawa/Wola», «Gdańsk», «Wrocław,Wrocław» → { city, district }.
  * Значение multi-select может содержать несколько вариантов — берём первый.
  */
-export function splitCity(raw: string): { city: string | null; district: string | null } {
+function splitCity(raw: string): { city: string | null; district: string | null } {
   const first = (raw || '').split(',')[0]?.trim()
   if (!first) return { city: null, district: null }
   const [cityRaw, districtRaw] = first.split('/').map((s) => s.trim())

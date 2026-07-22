@@ -14,7 +14,7 @@ import { prisma } from './db.js'
 import { tgHandle } from './notion.js'
 
 /** Срок по умолчанию — месяц: столько обычно и держат книгу. */
-export const DEFAULT_DAYS = 30
+const DEFAULT_DAYS = 30
 
 export type LoanDraft = {
   ownerTg: bigint
@@ -34,7 +34,7 @@ const day = 86_400_000
  * Дата выдачи: книгу часто вспоминают записать не в тот же день, поэтому
  * принимаем прошлое (до пяти лет назад), а будущее считаем опиской.
  */
-export function parseTakenAt(value?: Date | string | null): Date {
+function parseTakenAt(value?: Date | string | null): Date {
   if (!value) return new Date()
   const d = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(d.getTime())) throw new Error('bad_date')

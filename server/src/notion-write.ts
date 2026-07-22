@@ -120,11 +120,6 @@ async function schemas() {
   return cache as Required<typeof cache>
 }
 
-/** Сбросить кеш схем (после правок структуры таблиц в Notion). */
-export const resetSchemaCache = () => {
-  cache = {}
-}
-
 type Props = Array<[pid: string | undefined, value: unknown]>
 
 function createRowOps(collectionId: string, props: Props): { id: string; ops: Op[] } {

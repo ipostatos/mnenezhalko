@@ -66,7 +66,9 @@ export async function upsertUser(u: TgUser) {
       username: u.username,
       firstName: u.firstName,
       seenAt: new Date(),
-      ...(isAdmin(u.id) ? { isAdmin: true } : {}),
+      // единственный источник правды — ADMIN_IDS: убрали из окружения, значит
+      // прав нет и в API (раньше флаг в базе только выставлялся и не снимался)
+      isAdmin: isAdmin(u.id),
     },
   })
 }

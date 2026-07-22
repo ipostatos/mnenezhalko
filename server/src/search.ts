@@ -68,7 +68,7 @@ export function toCard(b: any): BookCard {
   }
 }
 
-export function whereOf(p: SearchParams): Prisma.BookWhereInput {
+function whereOf(p: SearchParams): Prisma.BookWhereInput {
   const and: Prisma.BookWhereInput[] = [{ active: true }]
   if (p.kind) and.push({ kind: p.kind })
   if (p.city) and.push({ city: p.city })

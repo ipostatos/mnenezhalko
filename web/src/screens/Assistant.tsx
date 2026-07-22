@@ -5,6 +5,12 @@ import type { Book } from '../types'
 import { haptic } from '../telegram'
 import { BookRow } from './BookRow'
 
+/** Коды сервера — человеческим языком. */
+const ERRORS: Record<string, string> = {
+  too_many: 'Слишком много запросов подряд — переведите дух и попробуйте через минуту.',
+  unauthorized: 'Откройте библиотеку из Telegram — так я пойму, кто вы.',
+}
+
 const IDEAS = [
   'хочу про любовь и приключения',
   'что-то лёгкое на вечер',
@@ -39,7 +45,7 @@ export function Assistant({
       setIntro(res.intro)
       setItems(res.items)
     } catch (e: any) {
-      setError(e.message)
+      setError(ERRORS[e.message] ?? e.message)
     } finally {
       setLoading(false)
     }

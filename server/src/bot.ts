@@ -618,7 +618,7 @@ const eventFmt = new Intl.DateTimeFormat('ru-RU', {
 })
 
 /** Рассылает анонс тем, кто ждёт встречи этого города. */
-export async function notifyNewEvent(event: {
+async function notifyNewEvent(event: {
   id: string
   city: string
   title: string

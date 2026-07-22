@@ -10,7 +10,7 @@ import { toCard, type BookCard } from './search.js'
 
 export type DigestPeriod = 'day' | 'month'
 
-export const PERIOD_HOURS: Record<DigestPeriod, number> = { day: 24, month: 24 * 30 }
+const PERIOD_HOURS: Record<DigestPeriod, number> = { day: 24, month: 24 * 30 }
 
 export type Digest = {
   period: DigestPeriod
