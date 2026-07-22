@@ -962,6 +962,75 @@ bot.command('notionpush', async (ctx) => {
   await ctx.reply(`Ушло в Notion: ${r.ok}, не получилось: ${r.failed}.`)
 })
 
+/**
+ * Диагностика связи с чатом проекта: видит ли бот группу и её сообщения.
+ * Без этого «барахолка пуста» выглядит как поломка, хотя данных просто нет.
+ */
+bot.command('topics', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const lines: string[] = []
+
+  const me = await bot.api.getMe().catch(() => null)
+  const canReadAll = me?.can_read_all_group_messages ?? false
+
+  try {
+    const chat = await bot.api.getChat(String(MAIN_CHAT_ID))
+    lines.push(`✅ Вижу чат: <b>${esc(chat.title ?? String(MAIN_CHAT_ID))}</b>`)
+    const member = await bot.api.getChatMember(String(MAIN_CHAT_ID), me!.id).catch(() => null)
+    lines.push(`Статус бота: ${member?.status ?? 'неизвестен'}`)
+    if (member?.status === 'administrator' || canReadAll) {
+      lines.push('✅ Сообщения тем вижу — афиши и барахолка будут собираться.')
+    } else {
+      lines.push(
+        '⚠️ Сообщения НЕ вижу: включён privacy mode. Сделайте бота администратором ' +
+          'чата либо выключите режим у @BotFather → /setprivacy → Disable.',
+      )
+    }
+  } catch (e: any) {
+    lines.push(
+      `❌ Чат недоступен: ${esc(e?.description ?? e?.message ?? String(e))}`,
+      'Добавьте @' + BOT_USERNAME + ' в чат проекта.',
+    )
+  }
+
+  const [market, events] = await Promise.all([
+    prisma.marketItem.count({ where: { source: 'topic' } }),
+    prisma.event.count({ where: { source: 'topic' } }),
+  ])
+  lines.push(
+    '',
+    `Из тем собрано: объявлений ${market}, встреч ${events}.`,
+    `Темы: барахолка ${MARKET_TOPIC_ID}, афиша ${EVENTS_TOPIC_ID}.`,
+    'Историю бот не видит — прошлые посты переносятся импортом выгрузки.',
+  )
+
+  await ctx.reply(lines.join('\n'), {
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+  })
+})
+
+/** Бот добавили в чат — сразу сообщаем админам, всё ли готово. */
+bot.on('my_chat_member', async (ctx) => {
+  const status = ctx.myChatMember.new_chat_member.status
+  if (BigInt(ctx.chat.id) !== MAIN_CHAT_ID) return
+  if (!['member', 'administrator'].includes(status)) return
+
+  const me = await bot.api.getMe().catch(() => null)
+  const sees = status === 'administrator' || (me?.can_read_all_group_messages ?? false)
+  const text = [
+    `🤝 Меня добавили в «${esc(ctx.chat.title ?? 'чат проекта')}» (${status}).`,
+    sees
+      ? '✅ Сообщения тем вижу — новые афиши и объявления барахолки начну собирать сразу.'
+      : '⚠️ Но сообщения я НЕ вижу: включён privacy mode. Сделайте меня администратором ' +
+        'или выключите режим у @BotFather → /setprivacy → Disable.',
+  ].join('\n')
+
+  for (const id of env.adminIds) {
+    await bot.api.sendMessage(String(id), text, { parse_mode: 'HTML' }).catch(() => {})
+  }
+})
+
 bot.command('addgroup', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
   const parts = (ctx.match?.toString() || '').split('|').map((s) => s.trim())

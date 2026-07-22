@@ -51,7 +51,7 @@ if (botDisabled) {
 } else if (env.botMode === 'webhook') {
   if (!env.publicUrl) throw new Error('Для BOT_MODE=webhook нужен PUBLIC_URL')
   await bot.api.setWebhook(`${env.publicUrl}${WEBHOOK_PATH}`, {
-    allowed_updates: ['message', 'callback_query'],
+    allowed_updates: ['message', 'callback_query', 'my_chat_member'],
   })
   app.log.info(`webhook: ${env.publicUrl}${WEBHOOK_PATH}`)
 } else {
@@ -59,7 +59,7 @@ if (botDisabled) {
   // 409 «terminated by other getUpdates» приходит, когда где-то запущен второй
   // экземпляр — падать из-за этого веб-часть не должна
   bot
-    .start({ allowed_updates: ['message', 'callback_query'] })
+    .start({ allowed_updates: ['message', 'callback_query', 'my_chat_member'] })
     .catch((e) => app.log.error(`polling остановлен: ${e?.message ?? e}`))
   app.log.info('bot: long polling')
 }
