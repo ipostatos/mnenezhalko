@@ -1,0 +1,159 @@
+import type { Route } from '../App'
+import type { Health } from '../types'
+import { openTg } from '../telegram'
+
+const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
+const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
+const GUIDE = 'https://mnenezhalko.notion.site/3fcdfa8ed57444d7ae2129bf5c0299f7'
+const PROJECT = 'https://mnenezhalko.notion.site/in-Poland-e4f29a5687c449f79581add35f17791b'
+const CURATOR = 'https://t.me/LizavetaZh'
+
+/** О проекте: что это, как устроено и как участвовать. */
+export function About({ go, health }: { go: (r: Route) => void; health: Health | null }) {
+  return (
+    <>
+      <div className="hero">
+        <span className="logo">🌿</span>
+        <h1>О проекте</h1>
+      </div>
+
+      <p className="lead">
+        <b>Добро пожаловать в «МнеНеЖалко»!</b> 👋
+      </p>
+      <p className="lead">
+        Мы создаем сообщество, где бумажные книги получают вторую жизнь, а люди – возможность
+        читать, знакомиться и поддерживать друг друга, особенно в миграции 🐝
+      </p>
+      <p className="lead">
+        Благодаря «МнеНеЖалко» можно найти книги на полках у других участников проекта, взять их
+        почитать на время или обменяться навсегда. А наши встречи – это не только про обмен
+        книгами, но и про душевное общение, обсуждение литературы и поиск новых друзей 🤗
+      </p>
+
+      {health && (
+        <div className="stat-tiles">
+          <div className="s">
+            <div className="n">{health.books}</div>
+            <div className="c">книг и игр</div>
+          </div>
+          <div className="s">
+            <div className="n">{health.librarians}</div>
+            <div className="c">библиотекарей</div>
+          </div>
+          <div className="s">
+            <div className="n">9</div>
+            <div className="c">городов</div>
+          </div>
+        </div>
+      )}
+
+      <div className="section-title">Как взять книгу</div>
+      <ol className="steps">
+        <li>
+          Найдите книгу в библиотеке — поиском по названию и автору, фильтрами по городу, жанру и
+          языку. Не знаете, чего хочется, — расскажите настроение помощнику, он подберёт.
+        </li>
+        <li>
+          В карточке виден библиотекарь — человек, у которого книга стоит на полке, и его город с
+          районом. Напишите ему напрямую в Telegram.
+        </li>
+        <li>
+          Договоритесь, как удобно: встретиться, передать на встрече проекта или в городском чате.
+          Сроки и условия — между вами двумя, проект в это не вмешивается.
+        </li>
+        <li>
+          Прочитали — верните или обменяйтесь навсегда, если оба не против. Книга живёт дальше 🌿
+        </li>
+      </ol>
+
+      <div className="section-title">Как стать библиотекарем</div>
+      <p className="lead">
+        Библиотекарь — это любой участник, который поделился своими книгами. Никаких обязательств:
+        книга остаётся у вас дома, просто становится видна соседям.
+      </p>
+      <p className="lead">
+        Проще всего — сфотографировать обложку в приложении: название, автор, язык и жанр
+        заполнятся сами, останется проверить и нажать «Поставить на полку». Карточка сразу попадёт
+        и в поиск, и в общую таблицу проекта. Можно и по-старинке — заполнить поля руками.
+      </p>
+      <button className="btn ghost" onClick={() => go({ name: 'add' })}>
+        📸 Добавить свою книгу
+      </button>
+
+      <div className="section-title">Что ещё есть в приложении</div>
+      <div className="about-list">
+        <div>
+          <b>Новинки</b> — что появилось на полках за сутки и за месяц.
+        </div>
+        <div>
+          <b>У кого моя книга</b> — записываете, кому отдали почитать, и бот сам помнит: сколько
+          дней прошло и когда пора напомнить. Возврат отмечается одной кнопкой.
+        </div>
+        <div>
+          <b>Встречи</b> — афиша по городам. Анонсы приходят в личку, если включены уведомления.
+        </div>
+        <div>
+          <b>Барахолка</b> — отдам, продам, ищу: книжные полки, коробки, всё вокруг книг.
+        </div>
+        <div>
+          <b>Города и чаты</b> — девять городов Польши, у каждого своя тема в общем чате.
+        </div>
+      </div>
+
+      <div className="section-title">По-соседски</div>
+      <div className="about-list">
+        <div>Берегите чужую книгу так же, как свою любимую.</div>
+        <div>Договорились о сроке — предупредите, если не успеваете.</div>
+        <div>Книга не вернулась вовремя — обычно это просто жизнь, напомните по-доброму.</div>
+        <div>Пишите библиотекарю по-человечески: кто вы, откуда узнали, когда удобно встретиться.</div>
+      </div>
+
+      <div className="section-title">Куда идти дальше</div>
+      <button className="row-card" onClick={() => openTg(MAIN_CHAT)}>
+        <div className="ic-tile" style={{ ['--tone' as any]: '#50a8eb' }}>
+          💬
+        </div>
+        <div className="grow">
+          <div className="t">Чат проекта</div>
+          <div className="d">Знакомства, вопросы, темы по городам</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
+      <button className="row-card" onClick={() => openTg(INSTAGRAM)}>
+        <div className="ic-tile" style={{ ['--tone' as any]: '#d95c8a' }}>
+          📸
+        </div>
+        <div className="grow">
+          <div className="t">Инстаграм</div>
+          <div className="d">@mne_ne_zhalko_pl</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
+      <button className="row-card" onClick={() => openTg(GUIDE)}>
+        <div className="ic-tile" style={{ ['--tone' as any]: '#4caf72' }}>
+          📖
+        </div>
+        <div className="grow">
+          <div className="t">Инструкция новичка</div>
+          <div className="d">Как всё устроено в общей таблице проекта</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
+      <button className="row-card" onClick={() => openTg(PROJECT)}>
+        <div className="ic-tile" style={{ ['--tone' as any]: '#a77bf0' }}>
+          🌐
+        </div>
+        <div className="grow">
+          <div className="t">Страница проекта</div>
+          <div className="d">Полная библиотека и правила в Notion</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
+
+      <div className="curator" onClick={() => openTg(CURATOR)}>
+        <div className="role">Главный по книгам</div>
+        <div className="who">@LizavetaZh</div>
+      </div>
+    </>
+  )
+}

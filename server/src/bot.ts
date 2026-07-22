@@ -55,7 +55,10 @@ export const botUsername = () => BOT_USERNAME
 
 const mainKeyboard = () => {
   const kb = new InlineKeyboard()
-  if (webAppUrl()) kb.webApp('📚 Открыть библиотеку', webAppUrl()).row()
+  if (webAppUrl()) {
+    kb.webApp('📚 Открыть библиотеку', webAppUrl()).row()
+    kb.webApp('🌿 О проекте', `${webAppUrl()}/?screen=about`).row()
+  }
   kb.url('💬 Чат проекта', env.mainChatUrl).row()
   kb.url('📸 Инстаграм', INSTAGRAM_URL)
   return kb
@@ -138,16 +141,7 @@ bot.command('start', async (ctx) => {
         'взять их почитать на время или обменяться навсегда. А наши встречи – это не только ' +
         'про обмен книгами, но и про душевное общение, обсуждение литературы и поиск новых друзей 🤗',
       '',
-      `Сейчас на полках соседей <b>${total}</b> книг.`,
-      '',
-      'Что умею:',
-      '📚 Библиотека проекта и поиск',
-      '🤖 Подобрать книгу по настроению — просто напишите, чего хочется',
-      '🆕 Новинки за сутки и месяц — /new',
-      '📕 Помню, у кого ваша книга — /lend и /loans',
-      '🏙 Городские чаты — /groups, встречи — /events',
-      '🛍 Барахолка по городам — /baraholka',
-      '📸 Сфотографируйте книгу — сам заполню карточку и поставлю её на полку',
+      `Сейчас на полках соседей <b>${total}</b> книг — открывайте библиотеку и выбирайте 👇`,
     ].join('\n'),
     { parse_mode: 'HTML', reply_markup: mainKeyboard(), link_preview_options: { is_disabled: true } },
   )

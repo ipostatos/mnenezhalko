@@ -81,6 +81,13 @@ export function Home({
       route: { name: 'add' },
     },
     {
+      icon: '🌿',
+      tone: '#7bb37a',
+      title: 'О проекте',
+      sub: 'Как всё устроено и с чего начать',
+      route: { name: 'about' },
+    },
+    {
       icon: '💬',
       tone: '#8a9aa9',
       title: 'Чат проекта',
@@ -146,7 +153,10 @@ export function Home({
       <div className="foot">
         Проект, где каждый может стать библиотекарем 🌿
         <br />
-        Данные библиотеки — из общей базы проекта
+        Главный по книгам —{' '}
+        <button className="foot-link" onClick={() => openTg('https://t.me/LizavetaZh')}>
+          @LizavetaZh
+        </button>
       </div>
     </>
   )
