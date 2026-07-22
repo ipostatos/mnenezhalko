@@ -9,7 +9,8 @@ const LABEL: Record<string, string> = {
   search: '🔎 Ищу',
 }
 
-const BOT = 'https://t.me/mnenezhalkobot?start=baraholka'
+/** Барахолка — витрина темы чата: размещают объявления там. */
+const MARKET_TOPIC = 'https://t.me/c/1856176764/4547'
 
 export function Market({ city }: { city?: string }) {
   const [items, setItems] = useState<MarketItem[] | null>(null)
@@ -81,15 +82,13 @@ export function Market({ city }: { city?: string }) {
         </div>
       ))}
 
-      {items && items.length > 0 && (
-        <div className="foot">
-          Объявления собираются из темы «Барахолка» в чате проекта
-        </div>
-      )}
+      <div className="foot">
+        Объявления собираются из темы «Барахолка» в чате проекта — там же их и размещают.
+      </div>
 
       <div className="fab-bar">
-        <button className="btn" onClick={() => openTg(BOT)}>
-          ➕ Разместить объявление
+        <button className="btn ghost" onClick={() => openTg(MARKET_TOPIC)}>
+          💬 Открыть барахолку в чате
         </button>
       </div>
     </>

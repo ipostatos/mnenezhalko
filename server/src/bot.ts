@@ -686,16 +686,7 @@ bot.command('events', async (ctx) => {
   await ctx.reply(text, { parse_mode: 'HTML', reply_markup: afisha })
 })
 
-/* ── барахолка: короткий мастер прямо в чате ──────────────── */
-
-type Draft = {
-  step: 'city' | 'kind' | 'title' | 'description' | 'photo'
-  city?: string
-  kind?: string
-  title?: string
-  description?: string
-}
-const drafts = new Map<number, Draft>()
+/* ── барахолка: витрина темы «Барахолка» из чата проекта ─── */
 
 bot.command('baraholka', async (ctx) => {
   const items = await prisma.marketItem.findMany({
@@ -703,12 +694,13 @@ bot.command('baraholka', async (ctx) => {
     orderBy: { bumpedAt: 'desc' },
     take: 5,
   })
-  const kb = new InlineKeyboard()
-    .text('➕ Разместить объявление', 'market:new')
-    .row()
-    .url('💬 Барахолка в чате', marketTopicUrl())
+  const kb = new InlineKeyboard().url('💬 Открыть барахолку в чате', marketTopicUrl())
   if (!items.length) {
-    return ctx.reply('Барахолка пока пуста — будьте первым!', { reply_markup: kb })
+    return ctx.reply(
+      'Пока пусто. Объявления сюда попадают из темы «Барахолка» в чате проекта — ' +
+        'разместите своё там, и оно появится здесь.',
+      { reply_markup: kb },
+    )
   }
   const text = items.map(marketCard).join('\n\n')
   await ctx.reply(text, {
@@ -747,45 +739,6 @@ function marketCard(i: {
     .filter(Boolean)
     .join('\n')
 }
-
-bot.callbackQuery('market:new', async (ctx) => {
-  drafts.set(ctx.from.id, { step: 'city' })
-  const kb = new InlineKeyboard()
-  CITIES.forEach((c, i) => {
-    kb.text(c, `mcity:${c}`)
-    if (i % 2 === 1) kb.row()
-  })
-  await ctx.answerCallbackQuery()
-  await ctx.reply('Город объявления:', { reply_markup: kb })
-})
-
-bot.callbackQuery(/^mcity:(.+)$/, async (ctx) => {
-  const d = drafts.get(ctx.from.id)
-  if (!d) return ctx.answerCallbackQuery({ text: 'Начните заново: /baraholka' })
-  d.city = ctx.match![1]
-  d.step = 'kind'
-  await ctx.answerCallbackQuery()
-  await ctx.reply('Что за объявление?', {
-    reply_markup: new InlineKeyboard()
-      .text('🎁 Отдам', 'mkind:give')
-      .text('💰 Продам', 'mkind:sell')
-      .text('🔎 Ищу', 'mkind:search'),
-  })
-})
-
-bot.callbackQuery(/^mkind:(.+)$/, async (ctx) => {
-  const d = drafts.get(ctx.from.id)
-  if (!d) return ctx.answerCallbackQuery({ text: 'Начните заново: /baraholka' })
-  d.kind = ctx.match![1]
-  d.step = 'title'
-  await ctx.answerCallbackQuery()
-  await ctx.reply('Напишите заголовок одной строкой (например: «Отдам две коробки книг»).')
-})
-
-bot.command('cancel', async (ctx) => {
-  drafts.delete(ctx.from!.id)
-  await ctx.reply('Отменил.', { reply_markup: { remove_keyboard: true } })
-})
 
 /* ── фото книги → полка ───────────────────────────────────── */
 
@@ -1058,19 +1011,14 @@ bot.command('addevent', async (ctx) => {
   await notifyNewEvent(event)
 })
 
-/* ── свободный текст: продолжение мастера либо запрос к ИИ ── */
+/* ── входящие сообщения: темы чата, фото книг, запрос к ИИ ── */
 
 bot.on('message:photo', async (ctx) => {
-  const d = drafts.get(ctx.from.id)
-  if (d?.step === 'photo') {
-    const photo = ctx.message.photo.at(-1)!
-    return saveDraft(ctx, d, photo.file_id)
-  }
   // афиша и барахолка обычно приходят картинкой с подписью
   const caption = ctx.message.caption?.trim()
   if (isEventsTopic(ctx)) return caption ? handleAnnouncement(ctx, caption) : undefined
   if (isMarketTopic(ctx)) return caption ? handleMarketPost(ctx, caption) : undefined
-  // фото вне мастера барахолки считаем обложкой книги
+  // фото в личке считаем обложкой книги
   if (ctx.chat.type !== 'private') return
   await handleBookPhoto(ctx)
 })
@@ -1078,21 +1026,6 @@ bot.on('message:photo', async (ctx) => {
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim()
   if (text.startsWith('/')) return
-  const d = drafts.get(ctx.from.id)
-
-  if (d?.step === 'title') {
-    d.title = text.slice(0, 200)
-    d.step = 'description'
-    return ctx.reply('Добавьте описание и цену (или напишите «-», чтобы пропустить).')
-  }
-  if (d?.step === 'description') {
-    d.description = text === '-' ? undefined : text.slice(0, 1000)
-    d.step = 'photo'
-    return ctx.reply('Пришлите фото или напишите «-», чтобы опубликовать без фото.')
-  }
-  if (d?.step === 'photo') {
-    return saveDraft(ctx, d, null)
-  }
 
   if (isEventsTopic(ctx)) return handleAnnouncement(ctx, text)
   if (isMarketTopic(ctx)) return handleMarketPost(ctx, text)
@@ -1127,34 +1060,6 @@ async function handleMarketPost(ctx: any, text: string) {
   if (saved) {
     console.log(`[market] объявление из чата: «${saved.title}» (${saved.city})`)
   }
-}
-
-async function saveDraft(ctx: any, d: Draft, photo: string | null) {
-  drafts.delete(ctx.from.id)
-  await prisma.user.upsert({
-    where: { tgId: BigInt(ctx.from.id) },
-    create: {
-      tgId: BigInt(ctx.from.id),
-      username: ctx.from.username,
-      firstName: ctx.from.first_name,
-      isAdmin: isAdmin(ctx.from.id),
-    },
-    update: { username: ctx.from.username },
-  })
-  await prisma.marketItem.create({
-    data: {
-      city: d.city!,
-      kind: d.kind ?? 'give',
-      title: d.title!,
-      description: d.description ?? null,
-      photo,
-      authorTg: BigInt(ctx.from.id),
-      authorUsername: ctx.from.username ?? null,
-    },
-  })
-  await ctx.reply('Опубликовал в барахолке 🎉 Посмотреть: /baraholka', {
-    reply_markup: mainKeyboard(),
-  })
 }
 
 /**

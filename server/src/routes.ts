@@ -242,39 +242,6 @@ export async function registerRoutes(app: FastifyInstance) {
     return json(items)
   })
 
-  app.post('/api/market', async (req, reply) => {
-    const u = who(req)
-    if (!u) return reply.code(401).send({ error: 'unauthorized' })
-    await upsertUser(u)
-    const b = req.body as Record<string, string>
-    if (!b.city || !b.title) return reply.code(400).send({ error: 'bad_request' })
-    const item = await prisma.marketItem.create({
-      data: {
-        city: b.city,
-        kind: ['give', 'sell', 'search'].includes(b.kind) ? b.kind : 'give',
-        title: b.title.slice(0, 200),
-        description: b.description?.slice(0, 1000) || null,
-        price: b.price?.slice(0, 50) || null,
-        photo: b.photo || null,
-        authorTg: u.id,
-        authorUsername: u.username || null,
-      },
-    })
-    return json(item)
-  })
-
-  app.post('/api/market/:id/close', async (req, reply) => {
-    const u = who(req)
-    if (!u) return reply.code(401).send({ error: 'unauthorized' })
-    const { id } = req.params as { id: string }
-    const item = await prisma.marketItem.findUnique({ where: { id } })
-    if (!item) return reply.code(404).send({ error: 'not_found' })
-    const user = await upsertUser(u)
-    if (item.authorTg !== u.id && !user.isAdmin) return reply.code(403).send({ error: 'forbidden' })
-    await prisma.marketItem.update({ where: { id }, data: { status: 'closed' } })
-    return { ok: true }
-  })
-
   /** Фото обложки → предзаполненная карточка + сохранённая обложка. */
   app.post('/api/recognize', async (req, reply) => {
     const u = who(req)
