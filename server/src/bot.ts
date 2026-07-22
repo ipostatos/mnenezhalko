@@ -381,4 +381,10 @@ export async function setupBotCommands() {
     { command: 'baraholka', description: 'Барахолка по городам' },
     { command: 'help', description: 'Помощь' },
   ])
+  // постоянная кнопка Mini App слева от поля ввода
+  if (webAppUrl()) {
+    await bot.api.setChatMenuButton({
+      menu_button: { type: 'web_app', text: 'Библиотека', web_app: { url: webAppUrl() } },
+    })
+  }
 }

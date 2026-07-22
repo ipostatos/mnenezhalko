@@ -94,3 +94,14 @@ Mini App при разработке удобнее гонять отдельн�
 
 `scripts/deploy.sh` — выкладка на VPS через `git archive | ssh` (см. комментарии в файле).
 На сервере: `BOT_MODE=webhook`, `PUBLIC_URL=https://…`, systemd-юнит `mnenezhalko`.
+
+### Прод
+
+- Mini App: <https://mnenezhalko-46-224-220-94.sslip.io> (Caddy → `127.0.0.1:4310`)
+- сервер: `root@46.224.220.94`, каталог `/opt/mnenezhalko`, юнит `mnenezhalko`
+- логи: `journalctl -u mnenezhalko -f`
+- ручной синк на сервере: `cd /opt/mnenezhalko && set -a && . server/.env && set +a && npm run sync`
+
+⚠️ Локальный запуск с `BOT_MODE=polling` вызывает `deleteWebhook` и молча забирает
+апдейты у прода. Для локальной работы либо заводите отдельного тестового бота,
+либо поднимайте только веб-часть: `DISABLE_BOT=1 npm run dev`.
