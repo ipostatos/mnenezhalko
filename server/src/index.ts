@@ -7,7 +7,7 @@ import { webhookCallback } from 'grammy'
 import { env } from './env.js'
 import { prisma } from './db.js'
 import { registerRoutes } from './routes.js'
-import { bot, setupBotCommands } from './bot.js'
+import { bot, remindOverdueLoans, setupBotCommands } from './bot.js'
 import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
 
@@ -65,6 +65,15 @@ if (botDisabled) {
 }
 
 startSyncLoop()
+
+// раз в сутки напоминаем про книги, которые загостились у читателей
+if (!botDisabled) {
+  const loansTimer = setInterval(
+    () => remindOverdueLoans().catch((e) => app.log.error(`[loans] ${e?.message ?? e}`)),
+    24 * 3600_000,
+  )
+  loansTimer.unref?.()
+}
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.once(sig, async () => {

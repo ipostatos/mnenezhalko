@@ -67,6 +67,13 @@ export function Home({
       route: { name: 'market' },
     },
     {
+      icon: '📕',
+      tone: '#c98a3a',
+      title: 'У кого моя книга',
+      sub: 'Кому отдали почитать и когда ждать назад',
+      route: { name: 'loans' },
+    },
+    {
       icon: '➕',
       tone: '#50a8eb',
       title: 'Добавить книгу',

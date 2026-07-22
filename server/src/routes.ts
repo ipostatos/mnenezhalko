@@ -9,6 +9,8 @@ import { decodeDataUrl, readCover, saveCover } from './covers.js'
 import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
 import { findDuplicates, putOnShelf } from './publish.js'
 import { digest } from './digest.js'
+import { createLoan, listBorrowed, listLoans, markReturned } from './loans.js'
+import { botUsername } from './bot.js'
 import { notionWriteEnabled } from './notion-write.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -105,6 +107,64 @@ export async function registerRoutes(app: FastifyInstance) {
     const { text, city } = req.body as { text?: string; city?: string }
     if (!text || text.trim().length < 2) return reply.code(400).send({ error: 'empty' })
     return askAi(text.trim().slice(0, 500), city || undefined)
+  })
+
+  /* ── «у кого моя книга сейчас» ──────────────────────────── */
+
+  app.get('/api/loans', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { status } = req.query as { status?: string }
+    const [given, taken] = await Promise.all([
+      listLoans(u.id, status === 'all' ? 'all' : status === 'returned' ? 'returned' : 'active'),
+      listBorrowed(u.id),
+    ])
+    return json({ given, taken })
+  })
+
+  /** Отметить, что книга ушла почитать: название + ник читателя. */
+  app.post('/api/loans', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    await upsertUser(u)
+    const b = req.body as Record<string, any>
+    if (!b.title || !b.holder) return reply.code(400).send({ error: 'bad_request' })
+    try {
+      const loan = await createLoan({
+        ownerTg: u.id,
+        title: String(b.title),
+        bookId: b.bookId ? String(b.bookId) : null,
+        holder: String(b.holder),
+        days: b.days === null ? null : b.days ? Number(b.days) : undefined,
+        note: b.note ? String(b.note) : null,
+      })
+      return json({ loan, inviteUrl: `https://t.me/${botUsername()}?start=loan_${loan.id}` })
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message ?? 'bad_request' })
+    }
+  })
+
+  app.post('/api/loans/:id/return', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const loan = await markReturned(id, u.id)
+    if (!loan) return reply.code(404).send({ error: 'not_found' })
+    return json({ loan })
+  })
+
+  /** Мои книги на полке — из них удобно выбирать, что отдаёшь. */
+  app.get('/api/my-books', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const librarian = await prisma.librarian.findUnique({ where: { tgId: u.id } })
+    if (!librarian) return json([])
+    const books = await prisma.book.findMany({
+      where: { ownerId: librarian.id, active: true },
+      orderBy: { title: 'asc' },
+      take: 200,
+    })
+    return json(books.map(toCard))
   })
 
   /** Новинки библиотеки: `period=day|month`. */

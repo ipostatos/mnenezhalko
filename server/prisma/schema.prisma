@@ -23,6 +23,8 @@ model User {
   librarian   Librarian?
   marketItems MarketItem[]
   events      Event[]
+  loansGiven  Loan[]       @relation("LoansGiven")
+  loansTaken  Loan[]       @relation("LoansTaken")
 }
 
 /// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
@@ -69,10 +71,41 @@ model Book {
 
   ownerId String?
   owner   Librarian? @relation(fields: [ownerId], references: [id])
+  loans   Loan[]
 
   @@index([kind])
   @@index([city])
   @@index([ownerId])
+}
+
+/// «У кого моя книга сейчас»: выдача книги из рук в руки
+model Loan {
+  id    String @id @default(cuid())
+  /// название как ввёл владелец — книги может не быть в библиотеке
+  title String
+  /// карточка книги, если выдавали со своей полки
+  bookId String?
+  book   Book?   @relation(fields: [bookId], references: [id])
+
+  ownerTg BigInt
+  owner   User   @relation("LoansGiven", fields: [ownerTg], references: [tgId])
+
+  /// у кого книга: ник обязателен, id появляется, когда человек откроет бота
+  holderUsername String?
+  holderName     String?
+  holderTg       BigInt?
+  holder         User?   @relation("LoansTaken", fields: [holderTg], references: [tgId])
+
+  status     String    @default("active") // active | returned
+  takenAt    DateTime  @default(now())
+  dueAt      DateTime?
+  returnedAt DateTime?
+  /// когда последний раз напоминали — чтобы не долбить каждый день
+  remindedAt DateTime?
+  note       String?
+
+  @@index([ownerTg, status])
+  @@index([holderTg, status])
 }
 
 /// Городские чаты и каналы проекта

@@ -14,6 +14,17 @@ import {
   marketTopicUrl,
 } from './seed.js'
 import { parseOffer, saveOffer } from './market.js'
+import {
+  claimLoans,
+  createLoan,
+  daysOut,
+  dueLoans,
+  listBorrowed,
+  listLoans,
+  loanById,
+  markReminded,
+  markReturned,
+} from './loans.js'
 import { digest, type DigestPeriod } from './digest.js'
 import { parseAnnouncement, saveAnnouncement } from './announce.js'
 import { saveCoverFromTelegram } from './covers.js'
@@ -35,6 +46,10 @@ bot.catch((err) => {
 })
 
 const webAppUrl = () => env.publicUrl || ''
+
+/** Ник бота нужен для ссылок-приглашений; уточняем его при старте. */
+let BOT_USERNAME = 'mnenezhalkobot'
+export const botUsername = () => BOT_USERNAME
 
 const mainKeyboard = () => {
   const kb = new InlineKeyboard()
@@ -69,6 +84,46 @@ const renderList = (items: (BookCard & { why?: string })[]) =>
   items.map(bookLine).join('\n\n')
 
 bot.command('start', async (ctx) => {
+  // человек пришёл по ссылке-приглашению из выдачи книги
+  const payload = ctx.match?.toString().trim() ?? ''
+  const loanId = payload.startsWith('loan_') ? payload.slice(5) : undefined
+
+  await prisma.user.upsert({
+    where: { tgId: BigInt(ctx.from!.id) },
+    create: {
+      tgId: BigInt(ctx.from!.id),
+      username: ctx.from!.username,
+      firstName: ctx.from!.first_name,
+      isAdmin: isAdmin(ctx.from!.id),
+    },
+    update: { username: ctx.from!.username },
+  })
+  const claimed = await claimLoans(BigInt(ctx.from!.id), ctx.from!.username, loanId)
+
+  if (loanId) {
+    const loan = await loanById(loanId)
+    if (loan && loan.status === 'active') {
+      await ctx.reply(
+        [
+          `📗 У вас книга <b>${esc(loan.title)}</b>.`,
+          loan.dueAt ? `Договорились вернуть к ${loanFmt.format(loan.dueAt)}.` : '',
+          '',
+          'Как дочитаете — нажмите кнопку, и я закрою запись у владельца.',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        {
+          parse_mode: 'HTML',
+          reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
+        },
+      )
+    }
+  } else if (claimed) {
+    await ctx.reply(
+      `📗 Кстати, за вами числится ${claimed === 1 ? 'книга' : `книг: ${claimed}`} из библиотеки проекта. Посмотреть — /loans`,
+    )
+  }
+
   const total = await prisma.book.count({ where: { active: true, kind: 'book' } })
   await ctx.reply(
     [
@@ -87,6 +142,7 @@ bot.command('start', async (ctx) => {
       '📚 Библиотека проекта и поиск',
       '🤖 Подобрать книгу по настроению — просто напишите, чего хочется',
       '🆕 Новинки за сутки и месяц — /new',
+      '📕 Помню, у кого ваша книга — /lend и /loans',
       '🏙 Городские чаты — /groups, встречи — /events',
       '🛍 Барахолка по городам — /baraholka',
       '📸 Сфотографируйте книгу — сам заполню карточку и поставлю её на полку',
@@ -102,6 +158,8 @@ bot.command('help', (ctx) =>
       '/find <i>запрос</i> — поиск по названию или автору',
       '/ai <i>что хочется почитать</i> — подбор книги ИИ-помощником',
       '/new — новинки библиотеки за сутки и за месяц',
+      '/lend <i>Название | @ник</i> — отметить, кому отдали книгу',
+      '/loans — у кого мои книги сейчас и что читаю я',
       '/city — выбрать свой город',
       '/groups — чаты по городам',
       '/events — ближайшие встречи',
@@ -177,6 +235,227 @@ bot.callbackQuery(/^city:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: value ? `Город: ${value}` : 'Показываю все города' })
   await ctx.editMessageText(value ? `✅ Ваш город: ${value}` : '✅ Показываю книги по всем городам')
 })
+
+/* ── «у кого моя книга сейчас» ────────────────────────────── */
+
+const loanFmt = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeZone: 'Europe/Warsaw' })
+
+const loanLink = (id: string) => `https://t.me/${BOT_USERNAME}?start=loan_${id}`
+
+/** Строка выдачи: книга, у кого, сколько дней, срок. */
+function loanLine(l: {
+  title: string
+  holderUsername: string | null
+  holderName: string | null
+  takenAt: Date
+  dueAt: Date | null
+  status: string
+}) {
+  const who = l.holderUsername ? `@${l.holderUsername}` : (l.holderName ?? 'кто-то')
+  const days = daysOut(l.takenAt)
+  const overdue = l.dueAt && l.dueAt.getTime() < Date.now()
+  const parts = [`📕 <b>${esc(l.title)}</b>`, `У кого: ${esc(who)} · ${days} дн.`]
+  if (l.status === 'returned') parts.push('✅ вернулась')
+  else if (l.dueAt) {
+    parts.push(
+      overdue
+        ? `⏰ ждём с ${loanFmt.format(l.dueAt)}`
+        : `Договорились до ${loanFmt.format(l.dueAt)}`,
+    )
+  }
+  return parts.join('\n')
+}
+
+bot.command('loans', async (ctx) => {
+  const tgId = BigInt(ctx.from!.id)
+  const [given, taken] = await Promise.all([listLoans(tgId, 'active'), listBorrowed(tgId)])
+
+  if (!given.length && !taken.length) {
+    return ctx.reply(
+      [
+        'Пока никому ничего не отдавали — и вам не отдавали.',
+        '',
+        'Отдали книгу почитать? Отметьте, чтобы не забыть:',
+        '<code>/lend Название книги | @ник</code>',
+        '',
+        'Через месяц напомню и вам, и читателю.',
+      ].join('\n'),
+      { parse_mode: 'HTML', reply_markup: mainKeyboard() },
+    )
+  }
+
+  const kb = new InlineKeyboard()
+  given.forEach((l) => kb.text(`✅ Вернулась: ${l.title.slice(0, 30)}`, `loan:back:${l.id}`).row())
+  if (webAppUrl()) kb.webApp('📚 Открыть библиотеку', webAppUrl())
+
+  const blocks: string[] = []
+  if (given.length) {
+    blocks.push(`<b>Мои книги на руках (${given.length})</b>\n\n${given.map(loanLine).join('\n\n')}`)
+  }
+  if (taken.length) {
+    blocks.push(
+      `<b>Я читаю сейчас (${taken.length})</b>\n\n` +
+        taken.map((l) => `📗 <b>${esc(l.title)}</b> · ${daysOut(l.takenAt)} дн.`).join('\n'),
+    )
+  }
+
+  await ctx.reply(blocks.join('\n\n'), {
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+    reply_markup: kb,
+  })
+})
+
+bot.command('lend', async (ctx) => {
+  const raw = ctx.match?.toString().trim() ?? ''
+  const [title, holder, when] = raw.split('|').map((s) => s.trim())
+  if (!title || !holder) {
+    return ctx.reply(
+      [
+        'Формат: <code>/lend Название книги | @ник</code>',
+        'Можно добавить срок: <code>/lend Дюна | @anna | 14</code> — дней до возврата.',
+      ].join('\n'),
+      { parse_mode: 'HTML' },
+    )
+  }
+
+  await prisma.user.upsert({
+    where: { tgId: BigInt(ctx.from!.id) },
+    create: {
+      tgId: BigInt(ctx.from!.id),
+      username: ctx.from!.username,
+      firstName: ctx.from!.first_name,
+      isAdmin: isAdmin(ctx.from!.id),
+    },
+    update: { username: ctx.from!.username },
+  })
+
+  // если книга есть на полке владельца — привяжем карточку
+  const own = await prisma.librarian.findUnique({ where: { tgId: BigInt(ctx.from!.id) } })
+  const book = own
+    ? await prisma.book.findFirst({
+        where: { ownerId: own.id, active: true, title: { contains: title } },
+        select: { id: true },
+      })
+    : null
+
+  try {
+    const loan = await createLoan({
+      ownerTg: BigInt(ctx.from!.id),
+      title,
+      bookId: book?.id ?? null,
+      holder,
+      days: when ? Number(when) || null : undefined,
+    })
+    await sendLoanCreated(ctx, loan)
+  } catch (e: any) {
+    const messages: Record<string, string> = {
+      bad_holder: 'Не понял ник. Напишите его как @ник или ссылкой t.me/ник.',
+      empty_title: 'Не понял название книги.',
+    }
+    await ctx.reply(messages[e?.message] ?? `Не получилось: ${e?.message ?? e}`)
+  }
+})
+
+/** Сообщение владельцу после отметки + попытка предупредить читателя. */
+async function sendLoanCreated(ctx: any, loan: any) {
+  const due = loan.dueAt ? `\nЖдём обратно к ${loanFmt.format(loan.dueAt)}.` : ''
+  const reached = await notifyHolder(loan)
+
+  await ctx.reply(
+    [
+      `📕 Записал: «${esc(loan.title)}» у @${esc(loan.holderUsername)}.${due}`,
+      '',
+      reached
+        ? 'Читателю написал — он сможет отметить возврат сам.'
+        : 'Читатель ещё не знаком с ботом. Перешлите ему ссылку, чтобы он получал напоминания:',
+      reached ? '' : loanLink(loan.id),
+      '',
+      'Все выдачи — /loans',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    {
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      reply_markup: new InlineKeyboard().text('✅ Уже вернулась', `loan:back:${loan.id}`),
+    },
+  )
+}
+
+/** Пишет читателю, если он знаком боту. Возвращает, дошло ли. */
+async function notifyHolder(loan: any): Promise<boolean> {
+  if (!loan.holderTg) return false
+  const owner = await prisma.user.findUnique({ where: { tgId: loan.ownerTg } })
+  const from = owner?.username ? `@${owner.username}` : (owner?.firstName ?? 'Владелец')
+  const due = loan.dueAt ? `\nДоговорились до ${loanFmt.format(loan.dueAt)}.` : ''
+  return bot.api
+    .sendMessage(
+      String(loan.holderTg),
+      [
+        `📗 ${esc(from)} отметил, что у вас его книга:`,
+        `<b>${esc(loan.title)}</b>${due}`,
+        '',
+        'Как дочитаете — верните и нажмите кнопку, я закрою запись.',
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
+      },
+    )
+    .then(() => true)
+    .catch(() => false)
+}
+
+bot.callbackQuery(/^loan:back:(.+)$/, async (ctx) => {
+  const loan = await markReturned(ctx.match![1], BigInt(ctx.from.id))
+  if (!loan) return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })
+
+  await ctx.answerCallbackQuery({ text: 'Книга дома 🎉' })
+  await ctx.editMessageText(`✅ «${esc(loan.title)}» вернулась. Спасибо!`, { parse_mode: 'HTML' })
+
+  // вторая сторона тоже должна узнать
+  const other = ctx.from.id === Number(loan.ownerTg) ? loan.holderTg : loan.ownerTg
+  if (other) {
+    await bot.api
+      .sendMessage(String(other), `✅ «${loan.title}» отмечена как вернувшаяся.`)
+      .catch(() => {})
+  }
+})
+
+/**
+ * Раз в сутки напоминаем про просроченные книги — мягко, обеим сторонам,
+ * и не чаще раза в неделю по одной выдаче.
+ */
+export async function remindOverdueLoans() {
+  const loans = await dueLoans()
+  for (const loan of loans) {
+    const days = daysOut(loan.takenAt)
+    const kb = new InlineKeyboard().text('✅ Книга вернулась', `loan:back:${loan.id}`)
+
+    if (loan.holderTg) {
+      await bot.api
+        .sendMessage(
+          String(loan.holderTg),
+          `📗 Напоминание: книга «${loan.title}» у вас уже ${days} дн. ` +
+            'Если дочитали — самое время вернуть её владельцу 🙂',
+          { reply_markup: kb },
+        )
+        .catch(() => {})
+    }
+    await bot.api
+      .sendMessage(
+        String(loan.ownerTg),
+        `📕 Ваша книга «${loan.title}» у @${loan.holderUsername ?? 'читателя'} уже ${days} дн.` +
+          (loan.holderTg ? '\nЯ напомнил читателю.' : `\nЧитатель пока не в боте: ${loanLink(loan.id)}`),
+        { reply_markup: kb, link_preview_options: { is_disabled: true } },
+      )
+      .catch(() => {})
+    await markReminded(loan.id)
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  if (loans.length) console.log(`[loans] напомнил по ${loans.length} выдачам`)
+}
 
 /* ── дайджест новинок ─────────────────────────────────────── */
 
@@ -815,11 +1094,15 @@ setPendingNotifier(async (book, reason) => {
 })
 
 export async function setupBotCommands() {
+  const me = await bot.api.getMe().catch(() => null)
+  if (me?.username) BOT_USERNAME = me.username
+
   await bot.api.setMyCommands([
     { command: 'start', description: 'Библиотека и меню' },
     { command: 'find', description: 'Поиск книги по названию или автору' },
     { command: 'ai', description: 'Подобрать книгу по настроению' },
     { command: 'new', description: 'Новинки библиотеки за сутки и месяц' },
+    { command: 'loans', description: 'У кого моя книга сейчас' },
     { command: 'city', description: 'Выбрать свой город' },
     { command: 'groups', description: 'Чаты по городам' },
     { command: 'events', description: 'Ближайшие встречи' },

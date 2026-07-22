@@ -12,6 +12,7 @@ import type {
   RecognizeResult,
   ShelfResult,
   DigestResult,
+  Loan,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -63,6 +64,11 @@ export const api = {
     req<{ owner: Owner; books: Book[] }>('GET', `/api/librarians/${id}`),
   ai: (text: string, city?: string) =>
     req<{ intro: string; items: Book[]; usedAi: boolean }>('POST', '/api/ai', { text, city }),
+  loans: () => req<{ given: Loan[]; taken: Loan[] }>('GET', '/api/loans'),
+  lend: (data: { title: string; holder: string; bookId?: string; days?: number | null }) =>
+    req<{ loan: Loan; inviteUrl: string }>('POST', '/api/loans', data),
+  loanReturn: (id: string) => req<{ loan: Loan }>('POST', `/api/loans/${id}/return`, {}),
+  myBooks: () => req<Book[]>('GET', '/api/my-books'),
   digest: (period: 'day' | 'month', city?: string) =>
     req<DigestResult>('GET', `/api/digest${qs({ period, city })}`),
   cities: () => req<CityInfo[]>('GET', '/api/cities'),

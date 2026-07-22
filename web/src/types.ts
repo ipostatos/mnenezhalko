@@ -100,6 +100,20 @@ export type RecognizeResult = {
   languages: string[]
 }
 
+/** Выдача книги из рук в руки. */
+export type Loan = {
+  id: string
+  title: string
+  bookId: string | null
+  book: { id: string; title: string; coverUrl: string | null } | null
+  holderUsername: string | null
+  holderName: string | null
+  status: string
+  takenAt: string
+  dueAt: string | null
+  returnedAt: string | null
+}
+
 export type DigestResult = {
   period: 'day' | 'month'
   since: string
