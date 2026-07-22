@@ -100,6 +100,14 @@ export type RecognizeResult = {
   languages: string[]
 }
 
+export type DigestResult = {
+  period: 'day' | 'month'
+  since: string
+  total: number
+  items: Book[]
+  byCity: { city: string; count: number }[]
+}
+
 export type ShelfResult = {
   book: Book
   notionStatus: string

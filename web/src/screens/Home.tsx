@@ -3,6 +3,7 @@ import type { Health, Me } from '../types'
 import { haptic, openTg } from '../telegram'
 
 const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
+const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
 
 type Tile = {
   icon: string
@@ -38,6 +39,13 @@ export function Home({
       route: { name: 'ai' },
     },
     {
+      icon: '🆕',
+      tone: '#5ac8d8',
+      title: 'Новинки',
+      sub: 'Что появилось за сутки и за месяц',
+      route: { name: 'digest' },
+    },
+    {
       icon: '🏙',
       tone: '#4caf72',
       title: 'Города и чаты',
@@ -71,6 +79,13 @@ export function Home({
       title: 'Чат проекта',
       sub: 'МнеНеЖалко в Польше',
       url: MAIN_CHAT,
+    },
+    {
+      icon: '📸',
+      tone: '#d95c8a',
+      title: 'Инстаграм',
+      sub: '@mne_ne_zhalko_pl',
+      url: INSTAGRAM,
     },
   ]
 

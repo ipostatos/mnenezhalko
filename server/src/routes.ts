@@ -8,6 +8,7 @@ import { CITIES } from './seed.js'
 import { decodeDataUrl, readCover, saveCover } from './covers.js'
 import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
 import { findDuplicates, putOnShelf } from './publish.js'
+import { digest } from './digest.js'
 import { notionWriteEnabled } from './notion-write.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -104,6 +105,12 @@ export async function registerRoutes(app: FastifyInstance) {
     const { text, city } = req.body as { text?: string; city?: string }
     if (!text || text.trim().length < 2) return reply.code(400).send({ error: 'empty' })
     return askAi(text.trim().slice(0, 500), city || undefined)
+  })
+
+  /** Новинки библиотеки: `period=day|month`. */
+  app.get('/api/digest', async (req) => {
+    const { period, city } = req.query as { period?: string; city?: string }
+    return json(await digest(period === 'month' ? 'month' : 'day', city || undefined))
   })
 
   app.get('/api/cities', async () => {

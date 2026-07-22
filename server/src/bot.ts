@@ -4,7 +4,18 @@ import { prisma } from './db.js'
 import { searchBooks, type BookCard } from './search.js'
 import { askAi } from './ai.js'
 import { syncFromNotion } from './sync.js'
-import { CITIES } from './seed.js'
+import {
+  CITIES,
+  EVENTS_TOPIC_ID,
+  INSTAGRAM_URL,
+  MAIN_CHAT_ID,
+  MARKET_TOPIC_ID,
+  eventsTopicUrl,
+  marketTopicUrl,
+} from './seed.js'
+import { parseOffer, saveOffer } from './market.js'
+import { digest, type DigestPeriod } from './digest.js'
+import { parseAnnouncement, saveAnnouncement } from './announce.js'
 import { saveCoverFromTelegram } from './covers.js'
 import { recognizeCover, visionEnabled, type Recognized } from './vision.js'
 import {
@@ -28,7 +39,8 @@ const webAppUrl = () => env.publicUrl || ''
 const mainKeyboard = () => {
   const kb = new InlineKeyboard()
   if (webAppUrl()) kb.webApp('📚 Открыть библиотеку', webAppUrl()).row()
-  kb.url('💬 Чат проекта', env.mainChatUrl)
+  kb.url('💬 Чат проекта', env.mainChatUrl).row()
+  kb.url('📸 Инстаграм', INSTAGRAM_URL)
   return kb
 }
 
@@ -60,14 +72,22 @@ bot.command('start', async (ctx) => {
   const total = await prisma.book.count({ where: { active: true, kind: 'book' } })
   await ctx.reply(
     [
-      '👋 Привет! Это бот книжного проекта <b>«МнеНеЖалко»</b> в Польше.',
+      '<b>Добро пожаловать в «МнеНеЖалко»!</b> 👋',
       '',
-      `В библиотеке сейчас <b>${total}</b> книг у соседей по городам.`,
+      'Мы создаем сообщество, где бумажные книги получают вторую жизнь, а люди – ' +
+        'возможность читать, знакомиться и поддерживать друг друга, особенно в миграции 🐝',
+      '',
+      'Благодаря «МнеНеЖалко» можно найти книги на полках у других участников проекта, ' +
+        'взять их почитать на время или обменяться навсегда. А наши встречи – это не только ' +
+        'про обмен книгами, но и про душевное общение, обсуждение литературы и поиск новых друзей 🤗',
+      '',
+      `Сейчас на полках соседей <b>${total}</b> книг.`,
       '',
       'Что умею:',
-      '📚 Быстрый доступ к библиотеке и поиск',
+      '📚 Библиотека проекта и поиск',
       '🤖 Подобрать книгу по настроению — просто напишите, чего хочется',
-      '🏙 Городские чаты и ближайшие встречи',
+      '🆕 Новинки за сутки и месяц — /new',
+      '🏙 Городские чаты — /groups, встречи — /events',
       '🛍 Барахолка по городам — /baraholka',
       '📸 Сфотографируйте книгу — сам заполню карточку и поставлю её на полку',
     ].join('\n'),
@@ -81,9 +101,11 @@ bot.command('help', (ctx) =>
       '<b>Команды</b>',
       '/find <i>запрос</i> — поиск по названию или автору',
       '/ai <i>что хочется почитать</i> — подбор книги ИИ-помощником',
+      '/new — новинки библиотеки за сутки и за месяц',
       '/city — выбрать свой город',
       '/groups — чаты по городам',
       '/events — ближайшие встречи',
+      '/alerts — анонсы новых встреч: включить или выключить',
       '/baraholka — барахолка города',
       '',
       'Пришлите <b>фото книги или настолки</b> — распознаю название, автора, язык и жанр,',
@@ -156,6 +178,158 @@ bot.callbackQuery(/^city:(.+)$/, async (ctx) => {
   await ctx.editMessageText(value ? `✅ Ваш город: ${value}` : '✅ Показываю книги по всем городам')
 })
 
+/* ── дайджест новинок ─────────────────────────────────────── */
+
+const periodLabel: Record<DigestPeriod, string> = { day: 'за сутки', month: 'за месяц' }
+
+async function sendDigest(ctx: any, period: DigestPeriod, edit = false) {
+  const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
+  const d = await digest(period, user?.city ?? undefined, 10)
+
+  const other: DigestPeriod = period === 'day' ? 'month' : 'day'
+  const kb = new InlineKeyboard().text(`Показать ${periodLabel[other]}`, `digest:${other}`)
+  if (webAppUrl()) kb.row().webApp('📚 Открыть библиотеку', webAppUrl())
+
+  const where = user?.city ? ` в городе ${user.city}` : ''
+  if (!d.total) {
+    const text = `Новинок${where} ${periodLabel[period]} пока нет. Может, ваша книга станет первой?`
+    return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb })
+  }
+
+  const cities = d.byCity
+    .slice(0, 5)
+    .map((c) => `${c.city} — ${c.count}`)
+    .join(' · ')
+
+  const text = [
+    `🆕 <b>Новинки ${periodLabel[period]}${where}: ${d.total}</b>`,
+    cities && !user?.city ? `<i>${esc(cities)}</i>` : '',
+    '',
+    renderList(d.items.slice(0, 5)),
+    d.total > 5 ? `\n…и ещё ${d.total - 5}. Всё — в библиотеке.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const options = {
+    parse_mode: 'HTML' as const,
+    link_preview_options: { is_disabled: true },
+    reply_markup: kb,
+  }
+  return edit ? ctx.editMessageText(text, options) : ctx.reply(text, options)
+}
+
+bot.command('new', (ctx) => sendDigest(ctx, 'day'))
+bot.command('digest', (ctx) => sendDigest(ctx, 'day'))
+
+bot.callbackQuery(/^digest:(day|month)$/, async (ctx) => {
+  await ctx.answerCallbackQuery()
+  await sendDigest(ctx, ctx.match![1] as DigestPeriod, true)
+})
+
+/* ── анонсы встреч ────────────────────────────────────────── */
+
+bot.command('alerts', async (ctx) => {
+  const user = await prisma.user.upsert({
+    where: { tgId: BigInt(ctx.from!.id) },
+    create: {
+      tgId: BigInt(ctx.from!.id),
+      username: ctx.from!.username,
+      firstName: ctx.from!.first_name,
+      isAdmin: isAdmin(ctx.from!.id),
+    },
+    update: {},
+  })
+  const kb = new InlineKeyboard().text(
+    user.eventAlerts ? '🔕 Выключить анонсы' : '🔔 Включить анонсы',
+    `alerts:${user.eventAlerts ? 'off' : 'on'}`,
+  )
+  await ctx.reply(
+    user.eventAlerts
+      ? 'Присылаю анонсы новых встреч' +
+          (user.city ? ` в городе ${user.city}.` : ' во всех городах — выберите свой: /city.')
+      : 'Анонсы встреч выключены.',
+    { reply_markup: kb },
+  )
+})
+
+bot.callbackQuery(/^alerts:(on|off)$/, async (ctx) => {
+  const on = ctx.match![1] === 'on'
+  await prisma.user.update({
+    where: { tgId: BigInt(ctx.from.id) },
+    data: { eventAlerts: on },
+  })
+  await ctx.answerCallbackQuery({ text: on ? 'Включил' : 'Выключил' })
+  await ctx.editMessageText(
+    on ? '🔔 Буду присылать анонсы новых встреч.' : '🔕 Анонсы встреч выключены. Вернуть: /alerts',
+  )
+})
+
+const eventFmt = new Intl.DateTimeFormat('ru-RU', {
+  dateStyle: 'long',
+  timeStyle: 'short',
+  timeZone: 'Europe/Warsaw',
+})
+
+/** Рассылает анонс тем, кто ждёт встречи этого города. */
+export async function notifyNewEvent(event: {
+  id: string
+  city: string
+  title: string
+  startsAt: Date
+  place: string | null
+  description: string | null
+}) {
+  const users = await prisma.user.findMany({
+    where: { eventAlerts: true, OR: [{ city: event.city }, { city: null }] },
+    select: { tgId: true },
+  })
+  if (!users.length) return
+
+  const text = [
+    '📅 <b>Новая встреча МнеНеЖалко</b>',
+    '',
+    `<b>${esc(event.title)}</b>`,
+    `🗓 ${eventFmt.format(event.startsAt)}`,
+    `📍 ${esc(event.city)}${event.place ? ', ' + esc(event.place) : ''}`,
+    event.description ? esc(event.description) : '',
+    '',
+    '<i>Выключить анонсы — /alerts</i>',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const kb = new InlineKeyboard().url('💬 Афиша в чате проекта', eventsTopicUrl())
+
+  let sent = 0
+  for (const u of users) {
+    const ok = await bot.api
+      .sendMessage(String(u.tgId), text, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        reply_markup: kb,
+      })
+      .then(() => true)
+      .catch(() => false)
+    if (ok) sent++
+    // Telegram не любит больше ~30 сообщений в секунду
+    await new Promise((r) => setTimeout(r, 40))
+  }
+  console.log(`[events] анонс «${event.title}» разослан: ${sent} из ${users.length}`)
+}
+
+/** Афиша из темы общего чата → встреча + алерт. */
+async function handleAnnouncement(ctx: any, text: string) {
+  const events = await parseAnnouncement(text).catch((e: any) => {
+    console.error('[events] не разобрал афишу:', e?.message ?? e)
+    return []
+  })
+  for (const e of events) {
+    const created = await saveAnnouncement(e, ctx.message.message_id)
+    if (created) await notifyNewEvent(created)
+  }
+}
+
 bot.command('groups', async (ctx) => {
   const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from!.id) } })
   const groups = await prisma.cityGroup.findMany({
@@ -178,10 +352,12 @@ bot.command('events', async (ctx) => {
     orderBy: { startsAt: 'asc' },
     take: 5,
   })
+  const afisha = new InlineKeyboard().url('💬 Афиша встреч в чате', eventsTopicUrl())
   if (!events.length) {
     return ctx.reply(
-      'Ближайших встреч пока нет. Анонсы появляются в чате проекта.',
-      { reply_markup: mainKeyboard() },
+      'Ближайших встреч пока нет. Анонсы появляются в афише чата проекта — ' +
+        'как только там будет новая встреча, я пришлю её вам (/alerts).',
+      { reply_markup: afisha },
     )
   }
   const fmt = new Intl.DateTimeFormat('ru-RU', {
@@ -201,7 +377,7 @@ bot.command('events', async (ctx) => {
         .join('\n'),
     )
     .join('\n\n')
-  await ctx.reply(text, { parse_mode: 'HTML' })
+  await ctx.reply(text, { parse_mode: 'HTML', reply_markup: afisha })
 })
 
 /* ── барахолка: короткий мастер прямо в чате ──────────────── */
@@ -221,26 +397,50 @@ bot.command('baraholka', async (ctx) => {
     orderBy: { bumpedAt: 'desc' },
     take: 5,
   })
-  const kb = new InlineKeyboard().text('➕ Разместить объявление', 'market:new')
+  const kb = new InlineKeyboard()
+    .text('➕ Разместить объявление', 'market:new')
+    .row()
+    .url('💬 Барахолка в чате', marketTopicUrl())
   if (!items.length) {
     return ctx.reply('Барахолка пока пуста — будьте первым!', { reply_markup: kb })
   }
-  const labels: Record<string, string> = { give: '🎁 Отдам', sell: '💰 Продам', search: '🔎 Ищу' }
-  const text = items
-    .map((i) =>
-      [
-        `${labels[i.kind] ?? ''} <b>${esc(i.title)}</b>`,
-        i.price ? `Цена: ${esc(i.price)}` : '',
-        `📍 ${esc(i.city)}`,
-        i.description ? esc(i.description) : '',
-        i.authorUsername ? `Написать: @${esc(i.authorUsername)}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    )
-    .join('\n\n')
-  await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb })
+  const text = items.map(marketCard).join('\n\n')
+  await ctx.reply(text, {
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+    reply_markup: kb,
+  })
 })
+
+const MARKET_LABELS: Record<string, string> = {
+  give: '🎁 Отдам',
+  sell: '💰 Продам',
+  search: '🔎 Ищу',
+}
+
+/** Ровная карточка объявления: тип, цена, город, кому написать. */
+function marketCard(i: {
+  kind: string
+  title: string
+  price: string | null
+  city: string
+  description: string | null
+  authorUsername: string | null
+  authorTg: bigint
+}): string {
+  const meta = [i.price, i.city !== 'Все города' ? i.city : null].filter(Boolean).join(' · ')
+  const contact = i.authorUsername
+    ? `<a href="https://t.me/${i.authorUsername}">@${esc(i.authorUsername)}</a>`
+    : `<a href="tg://user?id=${i.authorTg}">написать автору</a>`
+  return [
+    `${MARKET_LABELS[i.kind] ?? '📦'} <b>${esc(i.title)}</b>`,
+    meta ? `<i>${esc(meta)}</i>` : '',
+    i.description ? esc(i.description) : '',
+    `Написать: ${contact}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
 
 bot.callbackQuery('market:new', async (ctx) => {
   drafts.set(ctx.from.id, { step: 'city' })
@@ -476,10 +676,11 @@ bot.command('addevent', async (ctx) => {
   const [city, when, title, place] = parts
   const startsAt = new Date(when.replace(' ', 'T') + ':00+02:00')
   if (Number.isNaN(startsAt.getTime())) return ctx.reply('Не понял дату. Формат: 2026-08-01 18:30')
-  await prisma.event.create({
+  const event = await prisma.event.create({
     data: { city, title, startsAt, place: place || null, createdBy: BigInt(ctx.from!.id) },
   })
-  await ctx.reply(`Встреча «${title}» добавлена.`)
+  await ctx.reply(`Встреча «${title}» добавлена, рассылаю анонс.`)
+  await notifyNewEvent(event)
 })
 
 /* ── свободный текст: продолжение мастера либо запрос к ИИ ── */
@@ -490,6 +691,10 @@ bot.on('message:photo', async (ctx) => {
     const photo = ctx.message.photo.at(-1)!
     return saveDraft(ctx, d, photo.file_id)
   }
+  // афиша и барахолка обычно приходят картинкой с подписью
+  const caption = ctx.message.caption?.trim()
+  if (isEventsTopic(ctx)) return caption ? handleAnnouncement(ctx, caption) : undefined
+  if (isMarketTopic(ctx)) return caption ? handleMarketPost(ctx, caption) : undefined
   // фото вне мастера барахолки считаем обложкой книги
   if (ctx.chat.type !== 'private') return
   await handleBookPhoto(ctx)
@@ -514,9 +719,40 @@ bot.on('message:text', async (ctx) => {
     return saveDraft(ctx, d, null)
   }
 
+  if (isEventsTopic(ctx)) return handleAnnouncement(ctx, text)
+  if (isMarketTopic(ctx)) return handleMarketPost(ctx, text)
   if (ctx.chat.type !== 'private') return
   await handleAi(ctx, text.slice(0, 500))
 })
+
+/** Сообщение из темы «Афиша встреч» общего чата. */
+const isEventsTopic = (ctx: any) =>
+  BigInt(ctx.chat?.id ?? 0) === MAIN_CHAT_ID && ctx.message?.message_thread_id === EVENTS_TOPIC_ID
+
+/** Сообщение из темы «Барахолка» общего чата. */
+const isMarketTopic = (ctx: any) =>
+  BigInt(ctx.chat?.id ?? 0) === MAIN_CHAT_ID && ctx.message?.message_thread_id === MARKET_TOPIC_ID
+
+/** Пост барахолки из чата → карточка с фото, ценой, городом и контактом. */
+async function handleMarketPost(ctx: any, text: string) {
+  const offer = await parseOffer(text).catch((e: any) => {
+    console.error('[market] не разобрал объявление:', e?.message ?? e)
+    return null
+  })
+  if (!offer) return
+
+  const photo = ctx.message.photo?.at(-1)?.file_id ?? null
+  const saved = await saveOffer(offer, {
+    id: ctx.message.message_id,
+    authorTg: BigInt(ctx.from.id),
+    authorUsername: ctx.from.username ?? null,
+    firstName: ctx.from.first_name ?? null,
+    photo,
+  })
+  if (saved) {
+    console.log(`[market] объявление из чата: «${saved.title}» (${saved.city})`)
+  }
+}
 
 async function saveDraft(ctx: any, d: Draft, photo: string | null) {
   drafts.delete(ctx.from.id)
@@ -583,9 +819,11 @@ export async function setupBotCommands() {
     { command: 'start', description: 'Библиотека и меню' },
     { command: 'find', description: 'Поиск книги по названию или автору' },
     { command: 'ai', description: 'Подобрать книгу по настроению' },
+    { command: 'new', description: 'Новинки библиотеки за сутки и месяц' },
     { command: 'city', description: 'Выбрать свой город' },
     { command: 'groups', description: 'Чаты по городам' },
     { command: 'events', description: 'Ближайшие встречи' },
+    { command: 'alerts', description: 'Анонсы новых встреч' },
     { command: 'baraholka', description: 'Барахолка по городам' },
     { command: 'help', description: 'Помощь' },
   ])

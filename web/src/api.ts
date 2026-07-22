@@ -11,6 +11,7 @@ import type {
   Owner,
   RecognizeResult,
   ShelfResult,
+  DigestResult,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -62,6 +63,8 @@ export const api = {
     req<{ owner: Owner; books: Book[] }>('GET', `/api/librarians/${id}`),
   ai: (text: string, city?: string) =>
     req<{ intro: string; items: Book[]; usedAi: boolean }>('POST', '/api/ai', { text, city }),
+  digest: (period: 'day' | 'month', city?: string) =>
+    req<DigestResult>('GET', `/api/digest${qs({ period, city })}`),
   cities: () => req<CityInfo[]>('GET', '/api/cities'),
   groups: (city?: string) => req<CityGroup[]>('GET', `/api/groups${qs({ city })}`),
   events: (city?: string) => req<EventItem[]>('GET', `/api/events${qs({ city })}`),

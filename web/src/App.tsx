@@ -11,6 +11,7 @@ import { Events } from './screens/Events'
 import { Market } from './screens/Market'
 import { AddBook } from './screens/AddBook'
 import { Shelf } from './screens/Shelf'
+import { Digest } from './screens/Digest'
 
 export type Route =
   | { name: 'home' }
@@ -21,6 +22,7 @@ export type Route =
   | { name: 'events' }
   | { name: 'market' }
   | { name: 'add' }
+  | { name: 'digest' }
   | { name: 'shelf'; id: string }
 
 /** Бот открывает Mini App сразу на нужном экране: `?screen=add`. */
@@ -68,6 +70,8 @@ export function App() {
       return <Market city={city} />
     case 'add':
       return <AddBook city={city} go={go} />
+    case 'digest':
+      return <Digest city={city} go={go} />
     case 'shelf':
       return <Shelf id={route.id} go={go} />
     default:

@@ -701,3 +701,43 @@ textarea.input {
   color: var(--link);
   font-size: var(--fs-sm);
 }
+
+/* ── барахолка ────────────────────────────────────────────── */
+
+.market-card {
+  align-items: flex-start;
+}
+
+.market-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+
+.tag {
+  font-size: var(--fs-xs);
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--hint);
+  white-space: nowrap;
+}
+
+.tag.give {
+  color: var(--ok);
+}
+
+.tag.sell {
+  color: var(--warn);
+}
+
+.tag.search {
+  color: var(--link);
+}
+
+.tag.price {
+  color: var(--text);
+  font-weight: 600;
+}

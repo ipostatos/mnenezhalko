@@ -48,7 +48,7 @@ export function Market({ city }: { city?: string }) {
       )}
 
       {items?.map((i) => (
-        <div key={i.id} className="row-card static">
+        <div key={i.id} className="row-card static market-card">
           <div className="cover">
             {i.photo ? (
               <img src={`/api/photo/${i.photo}`} alt="" loading="lazy" />
@@ -57,25 +57,30 @@ export function Market({ city }: { city?: string }) {
             )}
           </div>
           <div className="grow">
-            <div className="t-sm">
-              {LABEL[i.kind] ?? ''} {i.title}
-            </div>
-            <div className="d">
-              {i.city}
-              {i.price ? ` · ${i.price}` : ''}
+            <div className="t-sm">{i.title}</div>
+            <div className="market-meta">
+              <span className={`tag ${i.kind}`}>{LABEL[i.kind] ?? '📦'}</span>
+              {i.price && <span className="tag price">{i.price}</span>}
+              {i.city !== 'Все города' && <span className="tag">📍 {i.city}</span>}
             </div>
             {i.description && <div className="d" style={{ marginTop: 4 }}>{i.description}</div>}
+            {i.authorUsername && (
+              <button
+                className="link-row"
+                onClick={() => openTg(`https://t.me/${i.authorUsername}`)}
+              >
+                Написать @{i.authorUsername}
+              </button>
+            )}
           </div>
-          {i.authorUsername && (
-            <button
-              className="btn ghost sm"
-              onClick={() => openTg(`https://t.me/${i.authorUsername}`)}
-            >
-              💬
-            </button>
-          )}
         </div>
       ))}
+
+      {items && items.length > 0 && (
+        <div className="foot">
+          Объявления собираются из темы «Барахолка» в чате проекта
+        </div>
+      )}
 
       <div className="fab-bar">
         <button className="btn" onClick={() => openTg(BOT)}>

@@ -1,0 +1,61 @@
+/**
+ * Дайджест новинок библиотеки: что появилось на полках за сутки и за месяц.
+ *
+ * Опираемся на `addedAt` — дату добавления в таблицу проекта, а не на момент
+ * попадания строки в нашу базу: при первом синке все 3 200 книг «пришли» разом,
+ * и по createdAt дайджест был бы бессмысленным.
+ */
+import { prisma } from './db.js'
+import { toCard, type BookCard } from './search.js'
+
+export type DigestPeriod = 'day' | 'month'
+
+export const PERIOD_HOURS: Record<DigestPeriod, number> = { day: 24, month: 24 * 30 }
+
+export type Digest = {
+  period: DigestPeriod
+  since: string
+  total: number
+  items: BookCard[]
+  /** сколько новинок в каждом городе — для короткой сводки */
+  byCity: { city: string; count: number }[]
+}
+
+export async function digest(
+  period: DigestPeriod = 'day',
+  city?: string,
+  limit = 20,
+): Promise<Digest> {
+  const since = new Date(Date.now() - PERIOD_HOURS[period] * 3600_000)
+  const where = {
+    active: true,
+    addedAt: { gte: since },
+    ...(city ? { city } : {}),
+  }
+
+  const [total, rows, grouped] = await Promise.all([
+    prisma.book.count({ where }),
+    prisma.book.findMany({
+      where,
+      include: {
+        owner: {
+          select: { id: true, name: true, telegram: true, instagram: true, city: true, district: true },
+        },
+      },
+      orderBy: [{ addedAt: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+    }),
+    prisma.book.groupBy({ by: ['city'], _count: true, where }),
+  ])
+
+  return {
+    period,
+    since: since.toISOString(),
+    total,
+    items: rows.map(toCard),
+    byCity: grouped
+      .filter((g) => g.city)
+      .map((g) => ({ city: g.city!, count: g._count }))
+      .sort((a, b) => b.count - a.count),
+  }
+}
