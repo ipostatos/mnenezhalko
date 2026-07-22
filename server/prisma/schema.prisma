@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Пользователь бота (Telegram)
+model User {
+  tgId      BigInt   @id
+  username  String?
+  firstName String?
+  lang      String   @default("ru")
+  city      String?
+  isAdmin   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  seenAt    DateTime @default(now())
+
+  librarian   Librarian?
+  marketItems MarketItem[]
+  events      Event[]
+}
+
+/// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
+model Librarian {
+  id        String   @id @default(cuid())
+  notionId  String?  @unique
+  name      String
+  telegram  String? // @handle без ссылки
+  instagram String?
+  city      String?
+  district  String?
+  tgId      BigInt?  @unique
+  createdAt DateTime @default(now())
+
+  user  User?  @relation(fields: [tgId], references: [tgId])
+  books Book[]
+
+  @@index([city])
+}
+
+/// Книга или настольная игра в библиотеке проекта
+model Book {
+  id        String    @id @default(cuid())
+  notionId  String?   @unique
+  kind      String    @default("book") // book | game
+  title     String
+  author    String?
+  genres    String    @default("") // через запятую
+  languages String    @default("") // через запятую
+  city      String?
+  district  String?
+  coverUrl  String?
+  status    String    @default("free") // free | busy
+  addedAt   DateTime?
+  source    String    @default("notion") // notion | bot
+  addedByTg BigInt?
+  search    String    @default("") // нормализованная строка для поиска
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  ownerId String?
+  owner   Librarian? @relation(fields: [ownerId], references: [id])
+
+  @@index([kind])
+  @@index([city])
+  @@index([ownerId])
+}
+
+/// Городские чаты и каналы проекта
+model CityGroup {
+  id    Int    @id @default(autoincrement())
+  city  String
+  title String
+  url   String
+  kind  String @default("chat") // chat | channel | folder
+  sort  Int    @default(0)
+
+  @@index([city])
+}
+
+/// Ближайшие встречи по городам
+model Event {
+  id          String   @id @default(cuid())
+  city        String
+  title       String
+  startsAt    DateTime
+  place       String?
+  description String?
+  url         String?
+  createdAt   DateTime @default(now())
+  createdBy   BigInt?
+
+  author User? @relation(fields: [createdBy], references: [tgId])
+
+  @@index([city, startsAt])
+}
+
+/// Барахолка по городам
+model MarketItem {
+  id          String   @id @default(cuid())
+  city        String
+  kind        String   @default("give") // give | sell | search
+  title       String
+  description String?
+  price       String?
+  photo       String? // telegram file_id
+  status      String   @default("active") // active | closed
+  createdAt   DateTime @default(now())
+  bumpedAt    DateTime @default(now())
+
+  authorTg       BigInt
+  authorUsername String?
+  author         User    @relation(fields: [authorTg], references: [tgId])
+
+  @@index([city, status, bumpedAt])
+}
+
+/// Служебное key-value (курсоры синхронизации и т.п.)
+model SyncState {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

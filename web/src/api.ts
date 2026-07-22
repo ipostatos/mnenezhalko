@@ -1,0 +1,76 @@
+import { tg } from './telegram'
+import type {
+  Book,
+  CityInfo,
+  CityGroup,
+  EventItem,
+  Facets,
+  Health,
+  MarketItem,
+  Me,
+  Owner,
+} from './types'
+
+async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const initData: string = tg?.initData ?? ''
+  if (initData) headers['X-Init-Data'] = initData
+
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const data = await res.json()
+      if (data?.error) message = data.error
+    } catch {}
+    throw new Error(message)
+  }
+  return res.json()
+}
+
+const qs = (params: Record<string, string | number | undefined>) => {
+  const s = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') s.set(k, String(v))
+  const str = s.toString()
+  return str ? `?${str}` : ''
+}
+
+export const api = {
+  health: () => req<Health>('GET', '/api/health'),
+  me: () => req<Me>('POST', '/api/me', {}),
+  setCity: (city: string | null) => req<{ user: Me['user'] }>('PATCH', '/api/me', { city }),
+  facets: (city?: string) => req<Facets>('GET', `/api/facets${qs({ city })}`),
+  books: (p: {
+    q?: string
+    city?: string
+    genre?: string
+    language?: string
+    kind?: string
+    ownerId?: string
+    limit?: number
+    offset?: number
+  }) => req<{ total: number; items: Book[] }>('GET', `/api/books${qs(p)}`),
+  book: (id: string) => req<Book>('GET', `/api/books/${id}`),
+  librarian: (id: string) =>
+    req<{ owner: Owner; books: Book[] }>('GET', `/api/librarians/${id}`),
+  ai: (text: string, city?: string) =>
+    req<{ intro: string; items: Book[]; usedAi: boolean }>('POST', '/api/ai', { text, city }),
+  cities: () => req<CityInfo[]>('GET', '/api/cities'),
+  groups: (city?: string) => req<CityGroup[]>('GET', `/api/groups${qs({ city })}`),
+  events: (city?: string) => req<EventItem[]>('GET', `/api/events${qs({ city })}`),
+  market: (city?: string) => req<MarketItem[]>('GET', `/api/market${qs({ city })}`),
+  addBook: (data: {
+    title: string
+    author?: string
+    genres?: string
+    languages?: string
+    city?: string
+    kind?: string
+    coverUrl?: string
+  }) => req<{ book: Book }>('POST', '/api/books', data),
+}

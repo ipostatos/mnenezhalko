@@ -1,0 +1,5 @@
+# Блок для /etc/caddy/Caddyfile — авто-TLS от Let's Encrypt через sslip.io
+mnenezhalko-46-224-220-94.sslip.io {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:4310
+}

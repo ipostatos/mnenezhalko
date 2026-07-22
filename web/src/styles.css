@@ -1,0 +1,639 @@
+/* Дизайн-система в стиле ISSA Trainer: Telegram-нативные токены, тёмный дефолт,
+   плоские карточки с волосяными бордерами, единые шкалы отступов/радиусов. */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  /* цвета из темы Telegram, тёмный fallback по умолчанию */
+  --bg: var(--tg-theme-bg-color, #17212b);
+  --text: var(--tg-theme-text-color, #fff);
+  --hint: var(--tg-theme-hint-color, #8a9aa9);
+  --card: var(--tg-theme-secondary-bg-color, #232e3c);
+  --accent: var(--tg-theme-button-color, #50a8eb);
+  --accent-text: var(--tg-theme-button-text-color, #fff);
+  --link: var(--tg-theme-link-color, var(--accent));
+  --border: rgba(255, 255, 255, 0.1);
+  --ok: #4caf72;
+  --warn: #e0a13a;
+  --bad: #e5544b;
+
+  /* шкала отступов и радиусов */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 28px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+
+  /* типографика */
+  --fs-h1: 22px;
+  --fs-h2: 17px;
+  --fs-body: 15px;
+  --fs-sm: 13px;
+  --fs-xs: 11px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #1a1a1a);
+    --hint: var(--tg-theme-hint-color, #7d8a99);
+    --card: var(--tg-theme-secondary-bg-color, #f1f3f5);
+    --accent: var(--tg-theme-button-color, #3390ec);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --border: rgba(0, 0, 0, 0.1);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  min-height: 100vh;
+}
+
+#root {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-4) calc(96px + env(safe-area-inset-bottom));
+}
+
+/* ── типографика ─────────────────────────────── */
+
+h1 {
+  font-size: var(--fs-h1);
+  font-weight: 800;
+  margin: 0 0 4px;
+}
+
+.sub {
+  color: var(--hint);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--sp-5);
+}
+
+.hero {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.hero .logo {
+  font-size: 24px;
+}
+
+.section-title {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--hint);
+  margin: var(--sp-5) var(--sp-1) var(--sp-2);
+}
+
+.muted {
+  color: var(--hint);
+}
+
+/* ── карточки и строки ───────────────────────── */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow);
+}
+
+.row-card {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-2);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.row-card:active {
+  transform: scale(0.99);
+}
+
+.row-card.static {
+  cursor: default;
+}
+
+.row-card.static:active {
+  transform: none;
+}
+
+.row-card .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-card .t {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-card .t-sm {
+  font-size: var(--fs-body);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-card .d {
+  color: var(--hint);
+  font-size: var(--fs-sm);
+}
+
+.row-card .chev {
+  color: var(--hint);
+  font-size: 18px;
+}
+
+.row-card .value {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* цветная плитка-иконка */
+.ic-tile {
+  --tone: var(--accent);
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+}
+
+.ic-tile.lg {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-md);
+  font-size: 30px;
+}
+
+.ic-tile.sm {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  font-size: 17px;
+}
+
+.ic-tile svg {
+  width: 55%;
+  height: 55%;
+}
+
+.btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── кнопки ──────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  font-size: var(--fs-body);
+  font-weight: 700;
+  font-family: inherit;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.btn:active {
+  transform: scale(0.99);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn.sm {
+  width: auto;
+  padding: 10px 12px;
+  font-size: var(--fs-sm);
+}
+
+.btn.ok {
+  background: var(--ok);
+  color: #fff;
+}
+
+/* ── сегменты и чипсы ────────────────────────── */
+
+.segmented {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.segmented button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: 0.12s;
+}
+
+.segmented button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.chips {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.chip {
+  padding: 8px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.chip:active {
+  transform: scale(0.97);
+}
+
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.chip.sm {
+  padding: 5px 10px;
+  font-size: var(--fs-xs);
+}
+
+/* ── формы ───────────────────────────────────── */
+
+.input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-family: inherit;
+  border-radius: var(--r-md);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.input::placeholder {
+  color: var(--hint);
+}
+
+.input-amount {
+  font-size: 32px;
+  font-weight: 800;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.input.inline {
+  padding: 8px 10px;
+  font-size: var(--fs-sm);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.emoji-picker {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.emoji-picker button {
+  width: 48px;
+  height: 48px;
+  font-size: 24px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.emoji-picker button:active {
+  transform: scale(0.95);
+}
+
+.emoji-picker button.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* ── балансы и статусы ───────────────────────── */
+
+.amount-positive {
+  color: var(--ok);
+}
+
+.amount-negative {
+  color: var(--bad);
+}
+
+/* баннер-рекомендация «кто кому переводит» */
+.rec {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-2);
+}
+
+.error-banner {
+  border: 1px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--card));
+  color: var(--text);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.warn-banner {
+  border: 1px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, var(--card));
+  color: var(--text);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+/* ── прочее ──────────────────────────────────── */
+
+.empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--hint);
+  font-size: var(--fs-sm);
+}
+
+.empty .big {
+  font-size: 52px;
+  margin-bottom: var(--sp-3);
+}
+
+.spinner {
+  text-align: center;
+  padding: 64px 0;
+  color: var(--hint);
+}
+
+.fab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, var(--bg) 35%);
+  display: flex;
+  gap: var(--sp-2);
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.stat-tiles {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.stat-tiles .s {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  text-align: center;
+}
+
+.stat-tiles .s .n {
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-tiles .s .c {
+  font-size: var(--fs-xs);
+  color: var(--hint);
+}
+
+.foot {
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--hint);
+  margin-top: var(--sp-6);
+}
+
+/* прогресс-метр (как в ISSA) */
+.meter {
+  height: 8px;
+  background: var(--border);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.meter > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width 0.25s;
+}
+
+/* свайп вправо для удаления */
+.swipe-wrap {
+  position: relative;
+  margin-bottom: var(--sp-2);
+  touch-action: pan-y;
+}
+
+.swipe-wrap .row-card {
+  margin-bottom: 0;
+}
+
+.swipe-bg {
+  position: absolute;
+  inset: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--bad) 22%, var(--card));
+  color: var(--bad);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 30px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.swipe-bg:active {
+  background: color-mix(in srgb, var(--bad) 34%, var(--card));
+}
+
+/* ── книжные обложки и карточка книги ────────── */
+
+.cover {
+  width: 44px;
+  height: 62px;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover.lg {
+  width: 104px;
+  height: 148px;
+  border-radius: var(--r-md);
+  font-size: 40px;
+  box-shadow: var(--shadow);
+}
+
+.book-hero {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+  margin-bottom: var(--sp-5);
+}
+
+.book-hero h1 {
+  font-size: var(--fs-h1);
+  line-height: 1.25;
+}
+
+.book-hero .sub {
+  margin-bottom: 0;
+}
+
+.row-card .why {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  margin-top: 4px;
+}
+
+.row-card .d {
+  white-space: normal;
+}
+
+textarea.input {
+  line-height: 1.45;
+}
