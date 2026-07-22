@@ -5,6 +5,9 @@ import type { Book, Loan, LoanSummary } from '../types'
 import { haptic, openTg, showAlert } from '../telegram'
 import { MoodBoard } from './MoodBoard'
 
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+
 const TERMS: { label: string; days: number | null }[] = [
   { label: '2 недели', days: 14 },
   { label: 'месяц', days: 30 },
@@ -181,30 +184,33 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         <>
           <div className="section-title">Сейчас у читателей ({given.length})</div>
           {given.map((l) => (
-            <div key={l.id} className="row-card static">
-              <div className="cover">
-                {l.book?.coverUrl ? (
-                  <img src={l.book.coverUrl} alt="" loading="lazy" />
-                ) : (
-                  <span>{l.mood.emoji}</span>
-                )}
-              </div>
-              <div className="grow">
-                <div className="t-sm">
-                  {l.mood.emoji} {l.title}
-                </div>
-                <div className="market-meta">
-                  <span className="tag">@{l.holderUsername ?? 'читатель'}</span>
-                  <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн.</span>
-                  <span className={`tag mood-${l.mood.level}`}>{l.mood.label}</span>
-                  {l.mood.overdueDays > 0 && (
-                    <span className="tag sell">просрочка {l.mood.overdueDays} дн.</span>
+            <div key={l.id} className={`loan-card level-${l.mood.level}`}>
+              <div className="loan-top">
+                <div className="loan-cover">
+                  {l.book?.coverUrl ? (
+                    <img src={l.book.coverUrl} alt="" loading="lazy" />
+                  ) : (
+                    <span>📕</span>
                   )}
+                  <span className="loan-face">{l.mood.emoji}</span>
                 </div>
-                <button className="link-row" onClick={() => markBack(l.id)}>
-                  ✅ Книга вернулась
-                </button>
+                <div className="grow">
+                  <div className="loan-title">{l.title}</div>
+                  <div className="loan-who">
+                    у @{l.holderUsername ?? 'читателя'} · с {fmtDate(l.takenAt)}
+                  </div>
+                  <div className="market-meta">
+                    <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн.</span>
+                    <span className={`tag mood-${l.mood.level}`}>{l.mood.label}</span>
+                    {l.mood.overdueDays > 0 && (
+                      <span className="tag sell">просрочка {l.mood.overdueDays} дн.</span>
+                    )}
+                  </div>
+                </div>
               </div>
+              <button className="btn ghost sm" onClick={() => markBack(l.id)}>
+                ✅ Книга вернулась
+              </button>
             </div>
           ))}
         </>
@@ -214,20 +220,23 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         <>
           <div className="section-title">Читаю сейчас ({taken.length})</div>
           {taken.map((l) => (
-            <div key={l.id} className="row-card static">
-              <div className="cover">
-                <span>📗</span>
-              </div>
-              <div className="grow">
-                <div className="t-sm">{l.title}</div>
-                <div className="market-meta">
-                  <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн. у меня</span>
-                  {l.mood.level >= 2 && <span className="tag sell">пора вернуть</span>}
+            <div key={l.id} className={`loan-card level-${l.mood.level}`}>
+              <div className="loan-top">
+                <div className="loan-cover">
+                  <span>📗</span>
                 </div>
-                <button className="link-row" onClick={() => markBack(l.id)}>
-                  ✅ Вернул(а) книгу
-                </button>
+                <div className="grow">
+                  <div className="loan-title">{l.title}</div>
+                  <div className="loan-who">взял(а) {fmtDate(l.takenAt)}</div>
+                  <div className="market-meta">
+                    <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн. у меня</span>
+                    {l.mood.level >= 2 && <span className="tag sell">пора вернуть</span>}
+                  </div>
+                </div>
               </div>
+              <button className="btn ghost sm" onClick={() => markBack(l.id)}>
+                ✅ Вернул(а) книгу
+              </button>
             </div>
           ))}
         </>

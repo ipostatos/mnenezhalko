@@ -56,6 +56,16 @@
   }
 }
 
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  /* Mini App живёт в одной колонке: вбок не листаем и не зумим */
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
@@ -63,12 +73,31 @@ body {
   font-size: var(--fs-body);
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   min-height: 100vh;
+}
+
+/* длинные названия и ссылки не должны распирать колонку */
+h1,
+p,
+div,
+span,
+button,
+li {
+  overflow-wrap: anywhere;
+}
+
+img,
+svg,
+input,
+textarea {
+  max-width: 100%;
 }
 
 #root {
   max-width: 520px;
   margin: 0 auto;
+  overflow-x: clip;
   padding: var(--sp-5) var(--sp-4) calc(96px + env(safe-area-inset-bottom));
 }
 
@@ -885,4 +914,95 @@ textarea.input {
 
 input.input[type='date'] {
   color-scheme: dark light;
+}
+
+/* ── карточка выдачи ──────────────────────────────────────── */
+
+.loan-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-3);
+  box-shadow: var(--shadow);
+}
+
+.loan-card.level-2 {
+  border-left-color: var(--warn);
+}
+
+.loan-card.level-3,
+.loan-card.level-4 {
+  border-left-color: var(--bad);
+}
+
+.loan-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.loan-cover {
+  position: relative;
+  width: 54px;
+  height: 78px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.loan-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.loan-face {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  font-size: 17px;
+  line-height: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 2px 3px;
+}
+
+.loan-title {
+  font-size: var(--fs-body);
+  font-weight: 700;
+  line-height: 1.3;
+  /* название не режем в строку — переносим */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.loan-who {
+  color: var(--hint);
+  font-size: var(--fs-sm);
+  margin: 3px 0 var(--sp-2);
+}
+
+.loan-card .market-meta {
+  margin-top: 0;
+}
+
+.btn.ghost.sm {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
 }
