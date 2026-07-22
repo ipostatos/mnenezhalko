@@ -38,9 +38,7 @@ export function Cities({
             </div>
             <div className="grow">
               <div className="t">{c.city}</div>
-              <div className="d">
-                {c.books} книг{c.groups.length ? ` · ${c.groups.length} чат(а)` : ''}
-              </div>
+              <div className="d">{c.books} книг</div>
             </div>
             <div className="chev">{open === c.city ? '⌄' : '›'}</div>
           </button>

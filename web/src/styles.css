@@ -912,8 +912,30 @@ textarea.input {
   transform: scale(0.99);
 }
 
+/* нативное поле даты в WebKit тянет собственную ширину и вылезает за колонку */
 input.input[type='date'] {
   color-scheme: dark light;
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+input.input[type='date']::-webkit-date-and-time-value {
+  text-align: left;
+  margin: 0;
+}
+
+input.input[type='date']::-webkit-calendar-picker-indicator {
+  margin-left: auto;
+  padding: 0;
+  opacity: 0.6;
+}
+
+.field-group > * {
+  min-width: 0;
 }
 
 /* ── карточка выдачи ──────────────────────────────────────── */
