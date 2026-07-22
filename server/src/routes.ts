@@ -140,6 +140,7 @@ export async function registerRoutes(app: FastifyInstance) {
         bookId: b.bookId ? String(b.bookId) : null,
         holder: String(b.holder),
         days: b.days === null ? null : b.days ? Number(b.days) : undefined,
+        takenAt: b.takenAt ? String(b.takenAt) : null,
         note: b.note ? String(b.note) : null,
       })
       return json({ loan, inviteUrl: `https://t.me/${botUsername()}?start=loan_${loan.id}` })

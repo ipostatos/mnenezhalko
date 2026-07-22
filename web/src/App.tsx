@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from './api'
 import { backButton } from './telegram'
-import type { Health, Me } from './types'
+import type { Health, LoanSummary, Me } from './types'
 import { Home } from './screens/Home'
 import { Library } from './screens/Library'
 import { BookView } from './screens/BookView'
@@ -42,6 +42,7 @@ export function App() {
   const [stack, setStack] = useState<Route[]>(initialStack)
   const [me, setMe] = useState<Me | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
+  const [loans, setLoans] = useState<LoanSummary | null>(null)
   const route = stack[stack.length - 1]
 
   const go = (r: Route) => setStack((s) => [...s, r])
@@ -50,6 +51,7 @@ export function App() {
   useEffect(() => {
     api.health().then(setHealth).catch(() => {})
     api.me().then(setMe).catch(() => {})
+    api.loans().then((r) => setLoans(r.summary)).catch(() => {})
   }, [])
 
   useEffect(() => backButton(stack.length > 1, back), [stack.length])
@@ -86,6 +88,6 @@ export function App() {
     case 'shelf':
       return <Shelf id={route.id} go={go} />
     default:
-      return <Home go={go} me={me} health={health} />
+      return <Home go={go} me={me} health={health} loans={loans} />
   }
 }

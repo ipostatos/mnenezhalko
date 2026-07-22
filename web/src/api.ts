@@ -67,7 +67,13 @@ export const api = {
     req<{ intro: string; items: Book[]; usedAi: boolean }>('POST', '/api/ai', { text, city }),
   loans: () =>
     req<{ given: Loan[]; taken: Loan[]; summary: LoanSummary }>('GET', '/api/loans'),
-  lend: (data: { title: string; holder: string; bookId?: string; days?: number | null }) =>
+  lend: (data: {
+    title: string
+    holder: string
+    bookId?: string
+    days?: number | null
+    takenAt?: string
+  }) =>
     req<{ loan: Loan; inviteUrl: string }>('POST', '/api/loans', data),
   loanReturn: (id: string) => req<{ loan: Loan }>('POST', `/api/loans/${id}/return`, {}),
   myBooks: () => req<Book[]>('GET', '/api/my-books'),

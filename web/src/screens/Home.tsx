@@ -1,6 +1,7 @@
 import type { Route } from '../App'
-import type { Health, Me } from '../types'
+import type { Health, LoanSummary, Me } from '../types'
 import { haptic, openTg } from '../telegram'
+import { MoodBoard } from './MoodBoard'
 
 const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
 const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
@@ -18,10 +19,12 @@ export function Home({
   go,
   me,
   health,
+  loans,
 }: {
   go: (r: Route) => void
   me: Me | null
   health: Health | null
+  loans: LoanSummary | null
 }) {
   const tiles: Tile[] = [
     {
@@ -105,6 +108,8 @@ export function Home({
 
   return (
     <>
+      <MoodBoard summary={loans} onOpen={() => go({ name: 'loans' })} />
+
       <div className="hero">
         <span className="logo">🌿</span>
         <h1>МнеНеЖалко</h1>

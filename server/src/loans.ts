@@ -24,9 +24,25 @@ export type LoanDraft = {
   holderName?: string | null
   days?: number | null
   note?: string | null
+  /** когда книгу отдали: записать можно и задним числом */
+  takenAt?: Date | string | null
 }
 
 const day = 86_400_000
+
+/**
+ * Дата выдачи: книгу часто вспоминают записать не в тот же день, поэтому
+ * принимаем прошлое (до пяти лет назад), а будущее считаем опиской.
+ */
+export function parseTakenAt(value?: Date | string | null): Date {
+  if (!value) return new Date()
+  const d = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(d.getTime())) throw new Error('bad_date')
+  const now = Date.now()
+  if (d.getTime() > now + day) throw new Error('future_date')
+  if (d.getTime() < now - 5 * 365 * day) throw new Error('too_old_date')
+  return d.getTime() > now ? new Date() : d
+}
 
 export async function createLoan(d: LoanDraft) {
   const holderUsername = tgHandle(d.holder)
@@ -41,6 +57,7 @@ export async function createLoan(d: LoanDraft) {
   })
 
   const days = d.days === null ? null : d.days ?? DEFAULT_DAYS
+  const takenAt = parseTakenAt(d.takenAt)
   const loan = await prisma.loan.create({
     data: {
       title,
@@ -49,7 +66,9 @@ export async function createLoan(d: LoanDraft) {
       holderUsername,
       holderName: d.holderName ?? known?.firstName ?? null,
       holderTg: known?.tgId ?? null,
-      dueAt: days ? new Date(Date.now() + days * day) : null,
+      takenAt,
+      // срок отсчитываем от дня выдачи, а не от момента записи
+      dueAt: days ? new Date(takenAt.getTime() + days * day) : null,
       note: d.note?.slice(0, 500) ?? null,
     },
     include: { book: true },

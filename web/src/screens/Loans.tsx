@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Loan, LoanSummary } from '../types'
 import { haptic, openTg, showAlert } from '../telegram'
+import { MoodBoard } from './MoodBoard'
 
 const TERMS: { label: string; days: number | null }[] = [
   { label: '2 недели', days: 14 },
@@ -22,6 +23,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
   const [bookId, setBookId] = useState<string | null>(null)
   const [holder, setHolder] = useState('')
   const [term, setTerm] = useState<number | null>(30)
+  const [takenAt, setTakenAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [saving, setSaving] = useState(false)
   const [invite, setInvite] = useState<string | null>(null)
 
@@ -49,6 +51,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         holder: holder.trim(),
         bookId: bookId ?? undefined,
         days: term,
+        takenAt,
       })
       haptic('success')
       setInvite(res.inviteUrl)
@@ -87,24 +90,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       <h1>Мои книги на руках</h1>
       <div className="sub">Отметьте, кому отдали — напомню обоим, когда придёт время</div>
 
-      {summary && summary.active > 0 && summary.mood && (
-        <div className={`mood-board level-${summary.mood.level}`}>
-          <div className="face">{summary.mood.emoji}</div>
-          <div className="grow">
-            <div className="t">
-              {summary.active === 1 ? 'Одна книга у читателя' : `Книг у читателей: ${summary.active}`}
-            </div>
-            <div className="d">
-              Дольше всех — «{summary.longestTitle}», {summary.longestDays} дн.
-              {summary.overdue > 0 && ` · просрочено: ${summary.overdue}`}
-            </div>
-          </div>
-          <div className="mood-days">
-            <div className="n">{summary.longestDays}</div>
-            <div className="c">дн.</div>
-          </div>
-        </div>
-      )}
+      <MoodBoard summary={summary} />
 
       <div className="field-group">
         <input
@@ -144,7 +130,21 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         />
       </div>
 
-      <div className="section-title">Договорились до</div>
+      <div className="section-title">Когда отдали</div>
+      <div className="field-group" style={{ marginBottom: 'var(--sp-3)' }}>
+        <input
+          className="input"
+          type="date"
+          max={new Date().toISOString().slice(0, 10)}
+          value={takenAt}
+          onChange={(e) => setTakenAt(e.target.value)}
+        />
+      </div>
+      <div className="sub" style={{ marginBottom: 'var(--sp-4)' }}>
+        Отдали давно? Поставьте настоящую дату — дни на дашборде посчитаются точно.
+      </div>
+
+      <div className="section-title">Договорились на</div>
       <div className="chips" style={{ marginBottom: 'var(--sp-4)' }}>
         {TERMS.map((t) => (
           <button

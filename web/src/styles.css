@@ -873,3 +873,16 @@ textarea.input {
   color: var(--link);
   font-size: inherit;
 }
+
+.mood-board.tappable {
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+
+.mood-board.tappable:active {
+  transform: scale(0.99);
+}
+
+input.input[type='date'] {
+  color-scheme: dark light;
+}

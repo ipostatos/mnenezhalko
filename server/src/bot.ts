@@ -324,16 +324,21 @@ bot.command('loans', async (ctx) => {
 
 bot.command('lend', async (ctx) => {
   const raw = ctx.match?.toString().trim() ?? ''
-  const [title, holder, when] = raw.split('|').map((s) => s.trim())
+  const [title, holder, ...rest] = raw.split('|').map((s) => s.trim())
   if (!title || !holder) {
     return ctx.reply(
       [
         'Формат: <code>/lend Название книги | @ник</code>',
-        'Можно добавить срок: <code>/lend Дюна | @anna | 14</code> — дней до возврата.',
+        'Срок в днях: <code>/lend Дюна | @anna | 14</code>',
+        'И дата выдачи, если отдали давно: <code>/lend Дюна | @anna | 14 | 2026-06-01</code>',
       ].join('\n'),
       { parse_mode: 'HTML' },
     )
   }
+
+  // хвост команды: число — срок, дата — когда отдали, в любом порядке
+  const when = rest.find((r) => /^\d+$/.test(r))
+  const takenAt = rest.find((r) => /^\d{4}-\d{2}-\d{2}$/.test(r))
 
   await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from!.id) },
@@ -362,12 +367,16 @@ bot.command('lend', async (ctx) => {
       bookId: book?.id ?? null,
       holder,
       days: when ? Number(when) || null : undefined,
+      takenAt: takenAt ?? null,
     })
     await sendLoanCreated(ctx, loan)
   } catch (e: any) {
     const messages: Record<string, string> = {
       bad_holder: 'Не понял ник. Напишите его как @ник или ссылкой t.me/ник.',
       empty_title: 'Не понял название книги.',
+      bad_date: 'Не понял дату. Формат: 2026-06-01.',
+      future_date: 'Дата выдачи в будущем — проверьте, пожалуйста.',
+      too_old_date: 'Слишком давняя дата, такое я уже не осилю.',
     }
     await ctx.reply(messages[e?.message] ?? `Не получилось: ${e?.message ?? e}`)
   }
@@ -375,7 +384,9 @@ bot.command('lend', async (ctx) => {
 
 /** Сообщение владельцу после отметки + попытка предупредить читателя. */
 async function sendLoanCreated(ctx: any, loan: any) {
-  const due = loan.dueAt ? `\nЖдём обратно к ${loanFmt.format(loan.dueAt)}.` : ''
+  const mood = loanMood(loan.takenAt, loan.dueAt)
+  const since = mood.days > 0 ? ` Отдали ${loanFmt.format(loan.takenAt)} — это ${mood.days} дн. назад.` : ''
+  const due = (loan.dueAt ? `\nЖдём обратно к ${loanFmt.format(loan.dueAt)}.` : '') + since
   const reached = await notifyHolder(loan)
 
   await ctx.reply(
