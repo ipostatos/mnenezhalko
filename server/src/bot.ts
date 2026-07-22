@@ -22,8 +22,10 @@ import {
   listBorrowed,
   listLoans,
   loanById,
+  loanMood,
   markReminded,
   markReturned,
+  summarize,
 } from './loans.js'
 import { digest, type DigestPeriod } from './digest.js'
 import { parseAnnouncement, saveAnnouncement } from './announce.js'
@@ -242,7 +244,7 @@ const loanFmt = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeZone
 
 const loanLink = (id: string) => `https://t.me/${BOT_USERNAME}?start=loan_${id}`
 
-/** Строка выдачи: книга, у кого, сколько дней, срок. */
+/** Строка выдачи: настроение, книга, у кого, сколько дней, срок. */
 function loanLine(l: {
   title: string
   holderUsername: string | null
@@ -252,18 +254,32 @@ function loanLine(l: {
   status: string
 }) {
   const who = l.holderUsername ? `@${l.holderUsername}` : (l.holderName ?? 'кто-то')
-  const days = daysOut(l.takenAt)
-  const overdue = l.dueAt && l.dueAt.getTime() < Date.now()
-  const parts = [`📕 <b>${esc(l.title)}</b>`, `У кого: ${esc(who)} · ${days} дн.`]
+  const mood = loanMood(l.takenAt, l.dueAt)
+  const parts = [
+    `${mood.emoji} <b>${esc(l.title)}</b>`,
+    `У кого: ${esc(who)} · ${mood.days} дн. · ${mood.label}`,
+  ]
   if (l.status === 'returned') parts.push('✅ вернулась')
   else if (l.dueAt) {
     parts.push(
-      overdue
-        ? `⏰ ждём с ${loanFmt.format(l.dueAt)}`
+      mood.overdueDays > 0
+        ? `⏰ ждём с ${loanFmt.format(l.dueAt)} (${mood.overdueDays} дн.)`
         : `Договорились до ${loanFmt.format(l.dueAt)}`,
     )
   }
   return parts.join('\n')
+}
+
+/** Шапка списка: сколько книг гуляет и как давно самая забытая. */
+function loanDashboard(loans: { title: string; takenAt: Date; dueAt: Date | null }[]) {
+  const s = summarize(loans)
+  if (!s.active || !s.mood) return ''
+  const lines = [
+    `${s.mood.emoji} <b>Книг на руках: ${s.active}</b>`,
+    `Дольше всех — «${esc(s.longestTitle ?? '')}», ${s.longestDays} дн. (${s.mood.label})`,
+  ]
+  if (s.overdue) lines.push(`⏰ Просрочено по договорённости: ${s.overdue}`)
+  return lines.join('\n')
 }
 
 bot.command('loans', async (ctx) => {
@@ -290,12 +306,18 @@ bot.command('loans', async (ctx) => {
 
   const blocks: string[] = []
   if (given.length) {
-    blocks.push(`<b>Мои книги на руках (${given.length})</b>\n\n${given.map(loanLine).join('\n\n')}`)
+    blocks.push(loanDashboard(given))
+    blocks.push(given.map(loanLine).join('\n\n'))
   }
   if (taken.length) {
     blocks.push(
       `<b>Я читаю сейчас (${taken.length})</b>\n\n` +
-        taken.map((l) => `📗 <b>${esc(l.title)}</b> · ${daysOut(l.takenAt)} дн.`).join('\n'),
+        taken
+          .map((l) => {
+            const m = loanMood(l.takenAt, l.dueAt)
+            return `${m.emoji} <b>${esc(l.title)}</b> · ${m.days} дн. у меня`
+          })
+          .join('\n'),
     )
   }
 

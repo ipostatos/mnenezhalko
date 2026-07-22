@@ -151,3 +151,80 @@ export const markReminded = (id: string) =>
 /** Сколько дней книга на руках. */
 export const daysOut = (takenAt: Date, now = new Date()) =>
   Math.max(0, Math.floor((now.getTime() - takenAt.getTime()) / day))
+
+/**
+ * Настроение выдачи — чтобы одним взглядом понимать, где всё спокойно,
+ * а куда пора написать. Шкала по времени на руках, а если владелец назначил
+ * срок и он прошёл — настроение портится быстрее.
+ *
+ *   0–7 дней   🙂 читают
+ *   8–30 дней  📖 всё идёт своим чередом
+ *   31–60      😐 стоит напомнить
+ *   61–120     😟 давно у читателя
+ *   больше     😢 книга загостилась
+ */
+export type Mood = {
+  level: 0 | 1 | 2 | 3 | 4
+  emoji: string
+  label: string
+  days: number
+  overdueDays: number
+}
+
+export function loanMood(takenAt: Date, dueAt: Date | null, now = new Date()): Mood {
+  const days = daysOut(takenAt, now)
+  const overdueDays = dueAt ? Math.max(0, Math.floor((now.getTime() - dueAt.getTime()) / day)) : 0
+
+  let level: Mood['level'] = days <= 7 ? 0 : days <= 30 ? 1 : days <= 60 ? 2 : days <= 120 ? 3 : 4
+  // просрочка своего срока весит не меньше календаря: неделя сверху — минус балл
+  if (overdueDays > 0) {
+    const bump = overdueDays <= 7 ? 2 : overdueDays <= 30 ? 3 : 4
+    level = Math.max(level, bump) as Mood['level']
+  }
+
+  const faces: Record<Mood['level'], { emoji: string; label: string }> = {
+    0: { emoji: '🙂', label: 'первая неделя' },
+    1: { emoji: '📖', label: 'читают' },
+    2: { emoji: '😐', label: 'пора напомнить' },
+    3: { emoji: '😟', label: 'давно у читателя' },
+    4: { emoji: '😢', label: 'книга загостилась' },
+  }
+  return { level, ...faces[level], days, overdueDays }
+}
+
+export type LoanSummary = {
+  active: number
+  /** книги с назначенным сроком, который уже прошёл */
+  overdue: number
+  /** сколько дней у читателя самая давняя книга */
+  longestDays: number
+  /** общее настроение полки — по худшей книге */
+  mood: Mood | null
+  longestTitle: string | null
+}
+
+export function summarize(
+  loans: { title: string; takenAt: Date; dueAt: Date | null }[],
+  now = new Date(),
+): LoanSummary {
+  if (!loans.length) {
+    return { active: 0, overdue: 0, longestDays: 0, mood: null, longestTitle: null }
+  }
+  const withMood = loans.map((l) => ({ loan: l, mood: loanMood(l.takenAt, l.dueAt, now) }))
+  const worst = withMood.reduce((a, b) =>
+    b.mood.level > a.mood.level || (b.mood.level === a.mood.level && b.mood.days > a.mood.days) ? b : a,
+  )
+  return {
+    active: loans.length,
+    overdue: withMood.filter((x) => x.mood.overdueDays > 0).length,
+    longestDays: Math.max(...withMood.map((x) => x.mood.days)),
+    mood: worst.mood,
+    longestTitle: worst.loan.title,
+  }
+}
+
+/** Выдача с посчитанными днями и настроением — так её отдаём наружу. */
+export const decorate = <T extends { takenAt: Date; dueAt: Date | null }>(loan: T) => ({
+  ...loan,
+  mood: loanMood(loan.takenAt, loan.dueAt),
+})

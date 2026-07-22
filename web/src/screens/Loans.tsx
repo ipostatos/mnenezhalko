@@ -1,22 +1,20 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
-import type { Book, Loan } from '../types'
+import type { Book, Loan, LoanSummary } from '../types'
 import { haptic, openTg, showAlert } from '../telegram'
 
-const DAY = 86_400_000
 const TERMS: { label: string; days: number | null }[] = [
   { label: '2 недели', days: 14 },
   { label: 'месяц', days: 30 },
   { label: 'без срока', days: null },
 ]
 
-const daysOut = (iso: string) => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / DAY))
-
 /** «У кого моя книга сейчас»: список выданных книг и форма новой выдачи. */
 export function Loans({ go }: { go: (r: Route) => void }) {
   const [given, setGiven] = useState<Loan[]>([])
   const [taken, setTaken] = useState<Loan[]>([])
+  const [summary, setSummary] = useState<LoanSummary | null>(null)
   const [myBooks, setMyBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -33,6 +31,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       .then((r) => {
         setGiven(r.given)
         setTaken(r.taken)
+        setSummary(r.summary)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -87,6 +86,25 @@ export function Loans({ go }: { go: (r: Route) => void }) {
     <>
       <h1>Мои книги на руках</h1>
       <div className="sub">Отметьте, кому отдали — напомню обоим, когда придёт время</div>
+
+      {summary && summary.active > 0 && summary.mood && (
+        <div className={`mood-board level-${summary.mood.level}`}>
+          <div className="face">{summary.mood.emoji}</div>
+          <div className="grow">
+            <div className="t">
+              {summary.active === 1 ? 'Одна книга у читателя' : `Книг у читателей: ${summary.active}`}
+            </div>
+            <div className="d">
+              Дольше всех — «{summary.longestTitle}», {summary.longestDays} дн.
+              {summary.overdue > 0 && ` · просрочено: ${summary.overdue}`}
+            </div>
+          </div>
+          <div className="mood-days">
+            <div className="n">{summary.longestDays}</div>
+            <div className="c">дн.</div>
+          </div>
+        </div>
+      )}
 
       <div className="field-group">
         <input
@@ -162,33 +180,33 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       {given.length > 0 && (
         <>
           <div className="section-title">Сейчас у читателей ({given.length})</div>
-          {given.map((l) => {
-            const overdue = l.dueAt && Date.parse(l.dueAt) < Date.now()
-            return (
-              <div key={l.id} className="row-card static">
-                <div className="cover">
-                  {l.book?.coverUrl ? (
-                    <img src={l.book.coverUrl} alt="" loading="lazy" />
-                  ) : (
-                    <span>📕</span>
+          {given.map((l) => (
+            <div key={l.id} className="row-card static">
+              <div className="cover">
+                {l.book?.coverUrl ? (
+                  <img src={l.book.coverUrl} alt="" loading="lazy" />
+                ) : (
+                  <span>{l.mood.emoji}</span>
+                )}
+              </div>
+              <div className="grow">
+                <div className="t-sm">
+                  {l.mood.emoji} {l.title}
+                </div>
+                <div className="market-meta">
+                  <span className="tag">@{l.holderUsername ?? 'читатель'}</span>
+                  <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн.</span>
+                  <span className={`tag mood-${l.mood.level}`}>{l.mood.label}</span>
+                  {l.mood.overdueDays > 0 && (
+                    <span className="tag sell">просрочка {l.mood.overdueDays} дн.</span>
                   )}
                 </div>
-                <div className="grow">
-                  <div className="t-sm">{l.title}</div>
-                  <div className="market-meta">
-                    <span className="tag">@{l.holderUsername ?? 'читатель'}</span>
-                    <span className={`tag ${overdue ? 'sell' : ''}`}>
-                      {daysOut(l.takenAt)} дн.
-                    </span>
-                    {overdue && <span className="tag sell">пора вернуть</span>}
-                  </div>
-                  <button className="link-row" onClick={() => markBack(l.id)}>
-                    ✅ Книга вернулась
-                  </button>
-                </div>
+                <button className="link-row" onClick={() => markBack(l.id)}>
+                  ✅ Книга вернулась
+                </button>
               </div>
-            )
-          })}
+            </div>
+          ))}
         </>
       )}
 
@@ -203,7 +221,8 @@ export function Loans({ go }: { go: (r: Route) => void }) {
               <div className="grow">
                 <div className="t-sm">{l.title}</div>
                 <div className="market-meta">
-                  <span className="tag">{daysOut(l.takenAt)} дн. у меня</span>
+                  <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн. у меня</span>
+                  {l.mood.level >= 2 && <span className="tag sell">пора вернуть</span>}
                 </div>
                 <button className="link-row" onClick={() => markBack(l.id)}>
                   ✅ Вернул(а) книгу

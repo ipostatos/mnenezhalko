@@ -9,7 +9,7 @@ import { decodeDataUrl, readCover, saveCover } from './covers.js'
 import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
 import { findDuplicates, putOnShelf } from './publish.js'
 import { digest } from './digest.js'
-import { createLoan, listBorrowed, listLoans, markReturned } from './loans.js'
+import { createLoan, decorate, listBorrowed, listLoans, markReturned, summarize } from './loans.js'
 import { botUsername } from './bot.js'
 import { notionWriteEnabled } from './notion-write.js'
 
@@ -119,7 +119,11 @@ export async function registerRoutes(app: FastifyInstance) {
       listLoans(u.id, status === 'all' ? 'all' : status === 'returned' ? 'returned' : 'active'),
       listBorrowed(u.id),
     ])
-    return json({ given, taken })
+    return json({
+      given: given.map(decorate),
+      taken: taken.map(decorate),
+      summary: summarize(given.filter((l) => l.status === 'active')),
+    })
   })
 
   /** Отметить, что книга ушла почитать: название + ник читателя. */

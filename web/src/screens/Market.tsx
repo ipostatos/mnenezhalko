@@ -51,7 +51,12 @@ export function Market({ city }: { city?: string }) {
         <div key={i.id} className="row-card static market-card">
           <div className="cover">
             {i.photo ? (
-              <img src={`/api/photo/${i.photo}`} alt="" loading="lazy" />
+              // из бота приходит telegram file_id, из импорта — готовая ссылка
+              <img
+                src={i.photo.startsWith('http') || i.photo.startsWith('/') ? i.photo : `/api/photo/${i.photo}`}
+                alt=""
+                loading="lazy"
+              />
             ) : (
               <span>{LABEL[i.kind]?.slice(0, 2) ?? '🛍'}</span>
             )}

@@ -100,8 +100,26 @@ export type RecognizeResult = {
   languages: string[]
 }
 
+/** Настроение выдачи: чем дольше книга у читателя, тем грустнее. */
+export type Mood = {
+  level: 0 | 1 | 2 | 3 | 4
+  emoji: string
+  label: string
+  days: number
+  overdueDays: number
+}
+
+export type LoanSummary = {
+  active: number
+  overdue: number
+  longestDays: number
+  longestTitle: string | null
+  mood: Mood | null
+}
+
 /** Выдача книги из рук в руки. */
 export type Loan = {
+  mood: Mood
   id: string
   title: string
   bookId: string | null

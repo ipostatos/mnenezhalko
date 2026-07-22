@@ -741,3 +741,68 @@ textarea.input {
   color: var(--text);
   font-weight: 600;
 }
+
+/* ── «у кого моя книга»: настроение полки ─────────────────── */
+
+.mood-board {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+  box-shadow: var(--shadow);
+}
+
+.mood-board .face {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.mood-board .t {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+}
+
+.mood-board .d {
+  color: var(--hint);
+  font-size: var(--fs-sm);
+  margin-top: 2px;
+}
+
+.mood-board .mood-days {
+  text-align: center;
+  flex: none;
+}
+
+.mood-board .mood-days .n {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mood-board .mood-days .c {
+  font-size: var(--fs-xs);
+  color: var(--hint);
+}
+
+.mood-board.level-2 {
+  border-left-color: var(--warn);
+}
+
+.mood-board.level-3,
+.mood-board.level-4 {
+  border-left-color: var(--bad);
+}
+
+.tag.mood-2 {
+  color: var(--warn);
+}
+
+.tag.mood-3,
+.tag.mood-4 {
+  color: var(--bad);
+}
