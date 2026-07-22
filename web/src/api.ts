@@ -9,6 +9,8 @@ import type {
   MarketItem,
   Me,
   Owner,
+  RecognizeResult,
+  ShelfResult,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -70,7 +72,13 @@ export const api = {
     genres?: string
     languages?: string
     city?: string
+    district?: string
     kind?: string
     coverUrl?: string
-  }) => req<{ book: Book }>('POST', '/api/books', data),
+    coverImage?: string
+  }) => req<ShelfResult>('POST', '/api/books', data),
+  /** Фото обложки (dataURL) → распознанные поля, сохранённая обложка и дубли. */
+  recognize: (image: string) => req<RecognizeResult>('POST', '/api/recognize', { image }),
+  duplicates: (title: string, author?: string) =>
+    req<Book[]>('GET', `/api/duplicates${qs({ title, author })}`),
 }

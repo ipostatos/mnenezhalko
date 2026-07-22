@@ -56,6 +56,9 @@ model Book {
   status    String    @default("free") // free | busy
   addedAt   DateTime?
   source    String    @default("notion") // notion | bot
+  /// путь карточки в общую таблицу: local | pending | synced | failed
+  notionStatus String @default("local")
+  notionError  String?
   addedByTg BigInt?
   search    String    @default("") // нормализованная строка для поиска
   active    Boolean   @default(true)

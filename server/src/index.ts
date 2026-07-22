@@ -14,7 +14,8 @@ import { seedCityGroups } from './seed.js'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
 
-const app = Fastify({ logger: { level: 'info' } })
+// фото обложек приходят как dataURL в теле запроса — стандартного мегабайта мало
+const app = Fastify({ logger: { level: 'info' }, bodyLimit: 12 * 1024 * 1024 })
 
 await app.register(cors, { origin: true })
 await registerRoutes(app)

@@ -1,10 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { prisma, buildSearch } from './db.js'
+import { prisma } from './db.js'
 import { env } from './env.js'
 import { upsertUser, verifyInitData, type TgUser } from './auth.js'
 import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
+import { decodeDataUrl, readCover, saveCover } from './covers.js'
+import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
+import { findDuplicates, putOnShelf } from './publish.js'
+import { notionWriteEnabled } from './notion-write.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
 function who(req: FastifyRequest): TgUser | null {
@@ -22,7 +26,15 @@ export async function registerRoutes(app: FastifyInstance) {
       prisma.librarian.count(),
       prisma.syncState.findUnique({ where: { key: 'notion' } }),
     ])
-    return { ok: true, books, librarians, lastSync: sync?.value ?? null, ai: aiEnabled() }
+    return {
+      ok: true,
+      books,
+      librarians,
+      lastSync: sync?.value ?? null,
+      ai: aiEnabled(),
+      vision: visionEnabled(),
+      notionWrite: notionWriteEnabled(),
+    }
   })
 
   app.post('/api/me', async (req, reply) => {
@@ -191,51 +203,96 @@ export async function registerRoutes(app: FastifyInstance) {
     return { ok: true }
   })
 
-  /** Быстрое добавление книги на свою полку. */
+  /** Фото обложки → предзаполненная карточка + сохранённая обложка. */
+  app.post('/api/recognize', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { image } = req.body as { image?: string }
+    if (!image) return reply.code(400).send({ error: 'bad_request' })
+
+    let decoded
+    try {
+      decoded = decodeDataUrl(image)
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message ?? 'bad_image' })
+    }
+
+    const [saved, recognized] = await Promise.all([
+      saveCover(decoded),
+      recognizeCover(decoded.data, decoded.mediaType).catch((e) => {
+        req.log.warn(`распознавание не удалось: ${e?.message ?? e}`)
+        return null
+      }),
+    ])
+
+    const duplicates = recognized?.title
+      ? await findDuplicates(recognized.title, recognized.author)
+      : []
+
+    return json({ cover: saved.url, recognized, duplicates, languages: LANGUAGES })
+  })
+
+  app.get('/api/cover/:file', async (req, reply) => {
+    const { file } = req.params as { file: string }
+    const found = await readCover(file)
+    if (!found) return reply.code(404).send({ error: 'not_found' })
+    reply.header('Cache-Control', 'public, max-age=31536000, immutable')
+    reply.type(found.type)
+    return reply.send(found.body)
+  })
+
+  /** Проверка дублей до сохранения — лайфхак из инструкции проекта. */
+  app.get('/api/duplicates', async (req) => {
+    const { title, author } = req.query as { title?: string; author?: string }
+    return json(await findDuplicates(title || '', author))
+  })
+
+  /**
+   * Поставить книгу на полку: карточка у нас + строка в общей таблице Notion
+   * (Owners заводится автоматически, настолки уходят в Board Games).
+   */
   app.post('/api/books', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const user = await upsertUser(u)
-    const b = req.body as Record<string, string>
-    if (!b.title || b.title.trim().length < 2) return reply.code(400).send({ error: 'bad_request' })
-
-    const [city, district] = (b.city || '').split('/').map((s) => s.trim())
-    let librarian = await prisma.librarian.findUnique({ where: { tgId: u.id } })
-    if (!librarian) {
-      librarian = await prisma.librarian.create({
-        data: {
-          name: user.firstName || u.username || 'Библиотекарь',
-          telegram: u.username || null,
-          city: city || user.city || null,
-          district: district || null,
-          tgId: u.id,
-        },
-      })
-    } else if (city && !librarian.city) {
-      librarian = await prisma.librarian.update({
-        where: { id: librarian.id },
-        data: { city, district: district || null },
-      })
+    const b = req.body as Record<string, any>
+    if (!b.title || String(b.title).trim().length < 2) {
+      return reply.code(400).send({ error: 'bad_request' })
     }
 
-    const data = {
+    // город может прийти как «Warszawa/Wola» либо отдельным полем district
+    const [city, districtFromCity] = String(b.city || '').split('/').map((s: string) => s.trim())
+    const list = (v: unknown) =>
+      Array.isArray(v)
+        ? v.map(String)
+        : String(v || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+
+    let coverUrl: string | null = b.coverUrl ? String(b.coverUrl) : null
+    if (!coverUrl && b.coverImage) {
+      try {
+        coverUrl = (await saveCover(decodeDataUrl(String(b.coverImage)))).url
+      } catch (e: any) {
+        return reply.code(400).send({ error: e?.message ?? 'bad_image' })
+      }
+    }
+
+    const res = await putOnShelf({
+      tgId: u.id,
+      username: u.username ?? null,
+      firstName: user.firstName ?? u.firstName ?? null,
       kind: b.kind === 'game' ? 'game' : 'book',
-      title: b.title.trim().slice(0, 300),
-      author: b.author?.trim().slice(0, 200) || null,
-      genres: (b.genres || '').slice(0, 300),
-      languages: (b.languages || '').slice(0, 200),
-      city: city || librarian.city,
-      district: district || librarian.district,
-      coverUrl: b.coverUrl?.slice(0, 1000) || null,
-      source: 'bot',
-      addedByTg: u.id,
-      addedAt: new Date(),
-      ownerId: librarian.id,
-    }
-    const book = await prisma.book.create({
-      data: { ...data, search: buildSearch(data) },
+      title: String(b.title),
+      author: b.author ? String(b.author) : null,
+      genres: list(b.genres),
+      languages: list(b.languages),
+      city: city || user.city || null,
+      district: (b.district ? String(b.district) : districtFromCity) || null,
+      coverUrl,
     })
-    return json({ book: toCard({ ...book, owner: librarian }) })
+    return json(res)
   })
 
   /** Прокси картинок из Telegram (file_id → байты), чтобы Mini App их видел. */

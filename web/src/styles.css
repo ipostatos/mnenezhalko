@@ -637,3 +637,67 @@ h1 {
 textarea.input {
   line-height: 1.45;
 }
+
+/* ── добавление книги по фото ─────────────────────────────── */
+
+.scan-card {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow);
+  margin-bottom: var(--sp-4);
+}
+
+.scan-card .scan-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan-card .sub {
+  margin-bottom: 0;
+}
+
+.scan-cover,
+.scan-placeholder {
+  width: 76px;
+  height: 108px;
+  flex: none;
+  border-radius: var(--r-md);
+  object-fit: cover;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.scan-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  opacity: 0.5;
+}
+
+.note {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--hint);
+}
+
+.link-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: var(--sp-1) 0;
+  color: var(--link);
+  font-size: var(--fs-sm);
+}

@@ -1,6 +1,7 @@
 import { prisma, buildSearch } from './db.js'
 import { env } from './env.js'
 import { fetchBooks, fetchGames, fetchLibrarians } from './notion.js'
+import { flushPending } from './publish.js'
 
 export type SyncReport = {
   librarians: number
@@ -16,6 +17,15 @@ export type SyncReport = {
  */
 export async function syncFromNotion(log = console.log): Promise<SyncReport> {
   const started = Date.now()
+
+  // сначала отдаём в Notion свои карточки, иначе синк их не увидит
+  const pushed = await flushPending().catch((e) => {
+    log(`[sync] отправка карточек в Notion не удалась: ${e?.message ?? e}`)
+    return { ok: 0, failed: 0 }
+  })
+  if (pushed.ok || pushed.failed) {
+    log(`[sync] отправлено в Notion: ${pushed.ok}, с ошибкой: ${pushed.failed}`)
+  }
 
   log('[sync] тяну библиотекарей…')
   const librarians = await fetchLibrarians()

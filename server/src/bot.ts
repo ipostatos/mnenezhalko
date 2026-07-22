@@ -5,6 +5,16 @@ import { searchBooks, type BookCard } from './search.js'
 import { askAi } from './ai.js'
 import { syncFromNotion } from './sync.js'
 import { CITIES } from './seed.js'
+import { saveCoverFromTelegram } from './covers.js'
+import { recognizeCover, visionEnabled, type Recognized } from './vision.js'
+import {
+  findDuplicates,
+  flushPending,
+  pendingCount,
+  putOnShelf,
+  setPendingNotifier,
+} from './publish.js'
+import { notionWriteEnabled, whoAmI } from './notion-write.js'
 
 export const bot = new Bot(env.botToken)
 
@@ -59,7 +69,7 @@ bot.command('start', async (ctx) => {
       '🤖 Подобрать книгу по настроению — просто напишите, чего хочется',
       '🏙 Городские чаты и ближайшие встречи',
       '🛍 Барахолка по городам — /baraholka',
-      '➕ Добавить свою книгу на полку',
+      '📸 Сфотографируйте книгу — сам заполню карточку и поставлю её на полку',
     ].join('\n'),
     { parse_mode: 'HTML', reply_markup: mainKeyboard(), link_preview_options: { is_disabled: true } },
   )
@@ -75,6 +85,9 @@ bot.command('help', (ctx) =>
       '/groups — чаты по городам',
       '/events — ближайшие встречи',
       '/baraholka — барахолка города',
+      '',
+      'Пришлите <b>фото книги или настолки</b> — распознаю название, автора, язык и жанр,',
+      'заведу вас библиотекарем и добавлю книгу в общую таблицу проекта.',
       '',
       'Можно просто написать сообщение — я пойму это как запрос к помощнику.',
     ].join('\n'),
@@ -268,6 +281,136 @@ bot.command('cancel', async (ctx) => {
   await ctx.reply('Отменил.', { reply_markup: { remove_keyboard: true } })
 })
 
+/* ── фото книги → полка ───────────────────────────────────── */
+
+type ShelfDraft = Recognized & { coverUrl: string }
+const shelfDrafts = new Map<number, ShelfDraft>()
+
+const shelfCard = (d: ShelfDraft) => {
+  const lines = [`<b>${esc(d.title)}</b>`]
+  if (d.author) lines.push(esc(d.author))
+  const meta = [d.genres.join(', '), d.languages.join(', ')].filter(Boolean).join(' · ')
+  if (meta) lines.push(`<i>${esc(meta)}</i>`)
+  if (d.kind === 'game') lines.push('<i>Настольная игра</i>')
+  if (d.confidence !== 'high') lines.push('⚠️ Проверьте название — фото читается не идеально.')
+  if (d.note) lines.push(esc(d.note))
+  return lines.join('\n')
+}
+
+const shelfKeyboard = () => {
+  const kb = new InlineKeyboard().text('✅ Поставить на полку', 'shelf:save').row()
+  if (webAppUrl()) kb.webApp('✏️ Уточнить в приложении', `${webAppUrl()}/?screen=add`)
+  return kb
+}
+
+/** Фото книги в личке: распознаём и предлагаем поставить на полку. */
+async function handleBookPhoto(ctx: any) {
+  if (!visionEnabled()) {
+    return ctx.reply(
+      'Распознавание по фото сейчас недоступно. Добавьте книгу вручную в приложении.',
+      { reply_markup: mainKeyboard() },
+    )
+  }
+  const photo = ctx.message.photo.at(-1)!
+  await ctx.replyWithChatAction('typing')
+
+  const saved = await saveCoverFromTelegram(photo.file_id)
+  if (!saved) return ctx.reply('Не смог скачать фото, пришлите ещё раз.')
+
+  const recognized = await recognizeCover(saved.decoded.data, saved.decoded.mediaType).catch(
+    (e: any) => {
+      console.error('[vision] ошибка распознавания:', e?.message ?? e)
+      return null
+    },
+  )
+  if (!recognized || !recognized.recognized || !recognized.title) {
+    return ctx.reply(
+      recognized?.note
+        ? `Не разобрал книгу: ${recognized.note}`
+        : 'Не разобрал, что на фото. Переснимите так, чтобы читались название и автор.',
+    )
+  }
+
+  shelfDrafts.set(ctx.from.id, { ...recognized, coverUrl: saved.url })
+
+  const dups = await findDuplicates(recognized.title, recognized.author)
+  const dupText = dups.length
+    ? '\n\nКстати, такая книга уже есть:\n' +
+      dups
+        .map((b) => `• ${esc(b.title)}${b.owner ? ` — ${esc(b.owner.name)}` : ''}`)
+        .join('\n')
+    : ''
+
+  await ctx.reply(`Похоже, это:\n\n${shelfCard(shelfDrafts.get(ctx.from.id)!)}${dupText}`, {
+    parse_mode: 'HTML',
+    reply_markup: shelfKeyboard(),
+  })
+}
+
+bot.callbackQuery('shelf:save', async (ctx) => {
+  const d = shelfDrafts.get(ctx.from.id)
+  if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
+
+  const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
+  if (!user?.city) {
+    const kb = new InlineKeyboard()
+    CITIES.forEach((c, i) => {
+      kb.text(c, `shelfcity:${c}`)
+      if (i % 2 === 1) kb.row()
+    })
+    await ctx.answerCallbackQuery()
+    return ctx.reply('В каком городе стоит книга?', { reply_markup: kb })
+  }
+
+  await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
+  await saveShelfDraft(ctx, d, user.city)
+})
+
+bot.callbackQuery(/^shelfcity:(.+)$/, async (ctx) => {
+  const d = shelfDrafts.get(ctx.from.id)
+  if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
+  const city = ctx.match![1]
+  await prisma.user.upsert({
+    where: { tgId: BigInt(ctx.from.id) },
+    create: {
+      tgId: BigInt(ctx.from.id),
+      username: ctx.from.username,
+      firstName: ctx.from.first_name,
+      city,
+      isAdmin: isAdmin(ctx.from.id),
+    },
+    update: { city },
+  })
+  await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
+  await saveShelfDraft(ctx, d, city)
+})
+
+async function saveShelfDraft(ctx: any, d: ShelfDraft, city: string) {
+  shelfDrafts.delete(ctx.from.id)
+  const res = await putOnShelf({
+    tgId: BigInt(ctx.from.id),
+    username: ctx.from.username ?? null,
+    firstName: ctx.from.first_name ?? null,
+    kind: d.kind,
+    title: d.title,
+    author: d.author,
+    genres: d.genres,
+    languages: d.languages,
+    city,
+    coverUrl: d.coverUrl,
+  })
+
+  const inNotion =
+    res.notionStatus === 'synced'
+      ? 'Книга уже в общей таблице проекта.'
+      : 'Книга видна в боте и поиске; в общую таблицу проекта уйдёт чуть позже.'
+
+  await ctx.reply(`🎉 Готово! «${esc(res.book.title)}» на вашей полке.\n${inNotion}`, {
+    parse_mode: 'HTML',
+    reply_markup: mainKeyboard(),
+  })
+}
+
 /* ── админские команды ────────────────────────────────────── */
 
 bot.command('sync', async (ctx) => {
@@ -282,6 +425,35 @@ bot.command('sync', async (ctx) => {
   } catch (e: any) {
     await ctx.reply(`Ошибка синхронизации: ${e?.message ?? e}`)
   }
+})
+
+/** Состояние канала записи в общую таблицу Notion. */
+bot.command('notion', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const waiting = await pendingCount()
+  if (!notionWriteEnabled()) {
+    return ctx.reply(
+      `Запись в Notion выключена — нет NOTION_TOKEN_V2.\nЖдут отправки карточек: ${waiting}.`,
+    )
+  }
+  try {
+    const me = await whoAmI()
+    await ctx.reply(
+      `Запись в Notion включена, аккаунт: ${me?.email ?? me?.id ?? 'неизвестен'}.\n` +
+        `Ждут отправки карточек: ${waiting}.\nДожать: /notionpush`,
+    )
+  } catch (e: any) {
+    await ctx.reply(`Токен Notion не работает: ${e?.message ?? e}\nЖдут отправки: ${waiting}.`)
+  }
+})
+
+/** Дожать карточки, которые ещё не уехали в общую таблицу. */
+bot.command('notionpush', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  if (!notionWriteEnabled()) return ctx.reply('Нет NOTION_TOKEN_V2 — отправлять нечем.')
+  await ctx.reply('Отправляю…')
+  const r = await flushPending()
+  await ctx.reply(`Ушло в Notion: ${r.ok}, не получилось: ${r.failed}.`)
 })
 
 bot.command('addgroup', async (ctx) => {
@@ -314,9 +486,13 @@ bot.command('addevent', async (ctx) => {
 
 bot.on('message:photo', async (ctx) => {
   const d = drafts.get(ctx.from.id)
-  if (!d || d.step !== 'photo') return
-  const photo = ctx.message.photo.at(-1)!
-  await saveDraft(ctx, d, photo.file_id)
+  if (d?.step === 'photo') {
+    const photo = ctx.message.photo.at(-1)!
+    return saveDraft(ctx, d, photo.file_id)
+  }
+  // фото вне мастера барахолки считаем обложкой книги
+  if (ctx.chat.type !== 'private') return
+  await handleBookPhoto(ctx)
 })
 
 bot.on('message:text', async (ctx) => {
@@ -369,6 +545,38 @@ async function saveDraft(ctx: any, d: Draft, photo: string | null) {
     reply_markup: mainKeyboard(),
   })
 }
+
+/**
+ * Карточки, не уехавшие в общую таблицу, показываем админам —
+ * это ровно тот случай из инструкции, когда «админы внесут сами».
+ */
+setPendingNotifier(async (book, reason) => {
+  if (!env.adminIds.length) return
+  const text = [
+    '📥 Новая книга ждёт общей таблицы',
+    '',
+    `<b>${esc(book.title)}</b>${book.author ? '\n' + esc(book.author) : ''}`,
+    book.genres.length ? `<i>${esc(book.genres.join(', '))}</i>` : '',
+    book.owner
+      ? `Библиотекарь: ${esc(book.owner.name)}${book.owner.telegram ? ` (@${esc(book.owner.telegram)})` : ''}`
+      : '',
+    book.city ? `📍 ${esc(book.city)}${book.district ? ' / ' + esc(book.district) : ''}` : '',
+    book.coverUrl ? `Обложка: ${esc(book.coverUrl)}` : '',
+    '',
+    `Причина: ${esc(reason)}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  for (const id of env.adminIds) {
+    await bot.api
+      .sendMessage(String(id), text, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+      })
+      .catch(() => {})
+  }
+})
 
 export async function setupBotCommands() {
   await bot.api.setMyCommands([

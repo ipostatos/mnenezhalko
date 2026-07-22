@@ -77,4 +77,31 @@ export type Health = {
   librarians: number
   lastSync: string | null
   ai: boolean
+  vision: boolean
+  notionWrite: boolean
+}
+
+/** Ответ распознавания обложки по фото. */
+export type Recognized = {
+  recognized: boolean
+  kind: 'book' | 'game'
+  title: string
+  author: string | null
+  languages: string[]
+  genres: string[]
+  confidence: 'high' | 'medium' | 'low'
+  note: string | null
+}
+
+export type RecognizeResult = {
+  cover: string
+  recognized: Recognized | null
+  duplicates: Book[]
+  languages: string[]
+}
+
+export type ShelfResult = {
+  book: Book
+  notionStatus: string
+  notionError: string | null
 }

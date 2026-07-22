@@ -85,7 +85,7 @@ export function coverUrl(raw: string | null, blockId: string): string | null {
   return raw.startsWith('http') ? raw : null
 }
 
-type Schema = { byName: Record<string, string>; typeById: Record<string, string> }
+export type Schema = { byName: Record<string, string>; typeById: Record<string, string> }
 
 async function queryRaw(
   collection: string,
@@ -116,6 +116,11 @@ function schemaOf(res: Rec): Schema {
     typeById[pid] = s.type
   }
   return { byName, typeById }
+}
+
+/** Схема коллекции: id свойств по имени и их типы. Нужна и для записи. */
+export async function collectionSchema(collection: string, view: string): Promise<Schema> {
+  return schemaOf(await queryRaw(collection, view, null, 1))
 }
 
 export type NotionRow = {

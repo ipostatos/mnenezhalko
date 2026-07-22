@@ -23,8 +23,14 @@ export type Route =
   | { name: 'add' }
   | { name: 'shelf'; id: string }
 
+/** Бот открывает Mini App сразу на нужном экране: `?screen=add`. */
+function initialStack(): Route[] {
+  const screen = new URLSearchParams(window.location.search).get('screen')
+  return screen === 'add' ? [{ name: 'home' }, { name: 'add' }] : [{ name: 'home' }]
+}
+
 export function App() {
-  const [stack, setStack] = useState<Route[]>([{ name: 'home' }])
+  const [stack, setStack] = useState<Route[]>(initialStack)
   const [me, setMe] = useState<Me | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
   const route = stack[stack.length - 1]

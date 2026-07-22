@@ -30,6 +30,11 @@ export const env = {
     syncHours: Number(process.env.NOTION_SYNC_HOURS || 12),
   },
 
+  /** cookie token_v2 служебного аккаунта Notion — без него запись выключена */
+  notionToken: process.env.NOTION_TOKEN_V2 || '',
+  /** id пользователя Notion; нужен, если у аккаунта несколько пространств */
+  notionUserId: process.env.NOTION_USER_ID || '',
+
   anthropicKey: process.env.ANTHROPIC_API_KEY || '',
   anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
 
