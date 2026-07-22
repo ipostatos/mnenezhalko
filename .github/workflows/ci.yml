@@ -1,0 +1,35 @@
+name: CI
+
+# Сборка была только в деплое, то есть первую ошибку компиляции ловил прод.
+# Здесь проверяем то же самое до выкладки: типы обеих половин и сборку Mini App.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22' # как на VPS
+          cache: npm
+
+      - run: npm ci
+
+      # клиент Prisma генерируется из схемы, без него не соберётся сервер
+      - run: npx prisma generate
+        working-directory: server
+
+      - name: Типы сервера
+        run: npx tsc -p server/tsconfig.json --noEmit
+
+      - name: Сборка Mini App (внутри свой tsc)
+        run: npm run build -w web
+
+      - name: Уязвимости в зависимостях прода
+        run: npm audit --omit=dev --audit-level=high

@@ -81,40 +81,65 @@ function whereOf(p: SearchParams): Prisma.BookWhereInput {
   return { AND: and }
 }
 
+/**
+ * Сколько совпадений подтягиваем, чтобы ранжировать их целиком.
+ * На библиотеке в 3000+ книг ни один осмысленный запрос столько не находит,
+ * так что практически это «все совпадения», а потолок — защита от `q` из одной
+ * буквы, под которую подходит половина базы.
+ */
+const SCORE_WINDOW = 500
+
+const relevance = (b: { title: string; author: string | null }, q: string) => {
+  const title = norm(b.title)
+  const author = norm(b.author || '')
+  let score = 0
+  if (title === q) score += 100
+  if (title.startsWith(q)) score += 50
+  if (title.includes(q)) score += 25
+  if (author.includes(q)) score += 15
+  return score
+}
+
 export async function searchBooks(p: SearchParams) {
   const limit = Math.min(p.limit ?? 30, 100)
+  const offset = p.offset ?? 0
   const where = whereOf(p)
+  const q = norm(p.q || '')
+
+  // без текстового запроса сортировка задаётся базой — берём ровно страницу
+  if (!q) {
+    const [total, rows] = await Promise.all([
+      prisma.book.count({ where }),
+      prisma.book.findMany({
+        where,
+        include: { owner: OWNER_SELECT },
+        orderBy: [{ addedAt: 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        skip: offset,
+      }),
+    ])
+    return { total, items: rows.map(toCard) }
+  }
+
+  // с запросом ранжируем весь набор совпадений и только потом режем на страницы:
+  // иначе точное совпадение, попавшее по дате на вторую страницу, не всплывёт
   const [total, rows] = await Promise.all([
     prisma.book.count({ where }),
     prisma.book.findMany({
       where,
       include: { owner: OWNER_SELECT },
       orderBy: [{ addedAt: 'desc' }, { createdAt: 'desc' }],
-      take: limit,
-      skip: p.offset ?? 0,
+      take: SCORE_WINDOW,
     }),
   ])
 
-  // подтягиваем точные совпадения по названию наверх — дешевле, чем FTS,
-  // и на 3000 книг незаметно
-  const q = norm(p.q || '')
-  const scored = q
-    ? rows
-        .map((b) => {
-          const title = norm(b.title)
-          const author = norm(b.author || '')
-          let score = 0
-          if (title === q) score += 100
-          if (title.startsWith(q)) score += 50
-          if (title.includes(q)) score += 25
-          if (author.includes(q)) score += 15
-          return { b, score }
-        })
-        .sort((x, y) => y.score - x.score)
-        .map((x) => x.b)
-    : rows
+  const items = rows
+    .map((b) => ({ b, score: relevance(b, q) }))
+    .sort((x, y) => y.score - x.score)
+    .slice(offset, offset + limit)
+    .map((x) => toCard(x.b))
 
-  return { total, items: scored.map(toCard) }
+  return { total, items }
 }
 
 export async function bookById(id: string) {
@@ -125,7 +150,27 @@ export async function bookById(id: string) {
   return b ? toCard(b) : null
 }
 
+/**
+ * Справочники читаются целиком по всей библиотеке, а спрашивают их часто:
+ * фильтры Mini App, каждый запрос к ИИ-помощнику, каждое распознавание фото.
+ * Держим готовый ответ до правки библиотеки (синк, новая книга на полке).
+ */
+type Facets = Awaited<ReturnType<typeof computeFacets>>
+const facetsCache = new Map<string, Facets>()
+
+/** Библиотека изменилась — справочники пересчитаем при следующем запросе. */
+export const invalidateFacets = () => facetsCache.clear()
+
 export async function facets(city?: string) {
+  const key = city ?? '*'
+  const hit = facetsCache.get(key)
+  if (hit) return hit
+  const fresh = await computeFacets(city)
+  facetsCache.set(key, fresh)
+  return fresh
+}
+
+async function computeFacets(city?: string) {
   const where: Prisma.BookWhereInput = { active: true, ...(city ? { city } : {}) }
   const rows = await prisma.book.findMany({
     where,

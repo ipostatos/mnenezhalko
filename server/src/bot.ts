@@ -40,7 +40,9 @@ import {
 } from './publish.js'
 import { notionWriteEnabled, whoAmI } from './notion-write.js'
 
-export const bot = new Bot(env.botToken)
+// при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
+// (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
+export const bot = new Bot(env.botToken || '0:disabled')
 
 // ошибка в одном апдейте не должна ронять процесс
 bot.catch((err) => {
@@ -1099,6 +1101,60 @@ async function handleMarketPost(ctx: any, text: string) {
   })
   if (saved) {
     console.log(`[market] объявление из чата: «${saved.title}» (${saved.city})`)
+  }
+}
+
+/* ── здоровье канала записи в Notion ──────────────────────── */
+
+/** Отправляет сообщение всем админам; молчит, если админов нет. */
+async function tellAdmins(text: string) {
+  for (const id of env.adminIds) {
+    await bot.api
+      .sendMessage(String(id), text, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+      })
+      .catch(() => {})
+  }
+}
+
+/** null — ещё не проверяли; иначе последнее известное состояние токена. */
+let notionTokenOk: boolean | null = null
+
+/**
+ * NOTION_TOKEN_V2 — cookie живого аккаунта: живёт около года и слетает молча
+ * (логаут, смена пароля). Раньше об этом узнавали по накопившимся карточкам
+ * `pending`, то есть сильно позже. Проверяем сами и говорим админам при
+ * изменении состояния — и когда сломалось, и когда починили.
+ */
+export async function checkNotionToken() {
+  if (!notionWriteEnabled()) return
+  const ok = await whoAmI()
+    .then(() => true)
+    .catch((e) => {
+      console.error('[notion] токен не отвечает:', e?.message ?? e)
+      return false
+    })
+
+  if (notionTokenOk === ok) return
+  const first = notionTokenOk === null
+  notionTokenOk = ok
+
+  if (!ok) {
+    const waiting = await pendingCount()
+    await tellAdmins(
+      [
+        '🔴 <b>Notion больше не пускает</b>',
+        '',
+        'Cookie NOTION_TOKEN_V2 протух — новые книги в общую таблицу проекта не уходят.',
+        `Уже ждут отправки: ${waiting}.`,
+        '',
+        'Обновите токен в <code>/opt/mnenezhalko/server/.env</code> и перезапустите службу,',
+        'затем дожмите накопившееся командой /notionpush. Состояние — /notion.',
+      ].join('\n'),
+    )
+  } else if (!first) {
+    await tellAdmins('🟢 Notion снова пускает — можно дожать накопившееся: /notionpush')
   }
 }
 

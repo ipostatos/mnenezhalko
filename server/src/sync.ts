@@ -2,6 +2,7 @@ import { prisma, buildSearch } from './db.js'
 import { env } from './env.js'
 import { fetchBooks, fetchGames, fetchLibrarians } from './notion.js'
 import { flushPending } from './publish.js'
+import { invalidateFacets } from './search.js'
 
 export type SyncReport = {
   librarians: number
@@ -119,6 +120,7 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     create: { key: 'notion', value: new Date().toISOString() },
     update: { value: new Date().toISOString() },
   })
+  invalidateFacets()
 
   const report: SyncReport = {
     librarians: librarians.length,

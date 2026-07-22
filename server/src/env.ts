@@ -7,7 +7,12 @@ function req(name: string): string {
   return v
 }
 
-const botToken = req('BOT_TOKEN')
+/** DISABLE_BOT=1 — поднимаем только API и Mini App, бот не нужен. */
+export const botDisabled = process.env.DISABLE_BOT === '1'
+
+// без бота токен не нужен: локально так удобно править веб-часть, не держа
+// на машине рабочий токен (подпись initData при этом, конечно, не проверяется)
+const botToken = botDisabled ? (process.env.BOT_TOKEN ?? '') : req('BOT_TOKEN')
 
 /**
  * Секрет вебхука: Telegram шлёт его в заголовке X-Telegram-Bot-Api-Secret-Token,

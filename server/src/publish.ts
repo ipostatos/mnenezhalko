@@ -10,7 +10,7 @@
  */
 import { prisma, buildSearch } from './db.js'
 import { isAdmin } from './env.js'
-import { toCard, searchBooks, type BookCard } from './search.js'
+import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
 import { createBook, createOwner, notionWriteEnabled } from './notion-write.js'
 
 export type ShelfDraft = {
@@ -119,6 +119,7 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
   let book = await prisma.book.create({
     data: { ...data, search: buildSearch(data) },
   })
+  invalidateFacets()
 
   // 4. строка в общей таблице
   const pushed = await pushToNotion(book.id, notionError)

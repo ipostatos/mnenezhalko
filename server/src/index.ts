@@ -4,10 +4,10 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import fastifyStatic from '@fastify/static'
 import { webhookCallback } from 'grammy'
-import { env } from './env.js'
+import { env, botDisabled } from './env.js'
 import { prisma } from './db.js'
 import { registerRoutes } from './routes.js'
-import { bot, remindOverdueLoans, setupBotCommands } from './bot.js'
+import { bot, checkNotionToken, remindOverdueLoans, setupBotCommands } from './bot.js'
 import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
 
@@ -26,9 +26,6 @@ app.setNotFoundHandler((req, reply) => {
   if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'not_found' })
   return reply.sendFile('index.html')
 })
-
-// DISABLE_BOT=1 — поднять только API/Mini App, не отбирая long polling у прода
-const botDisabled = process.env.DISABLE_BOT === '1'
 
 const WEBHOOK_PATH = '/tg/webhook'
 if (env.botMode === 'webhook' && !botDisabled) {
@@ -70,6 +67,22 @@ if (botDisabled) {
   })
   app.log.info(`webhook: ${env.publicUrl}${WEBHOOK_PATH}`)
 } else {
+  /**
+   * Предохранитель: запуск с BOT_MODE=polling делает deleteWebhook и молча
+   * забирает апдейты у прода — бот в Telegram один, и «локальный» запуск
+   * с рабочим токеном означает, что живой бот замолкает, пока не заметят.
+   * Поэтому: увидели чужой вебхук — не трогаем его и не поднимаем polling.
+   */
+  const hook = await bot.api.getWebhookInfo().catch(() => null)
+  const foreign = hook?.url && hook.url !== `${env.publicUrl}${WEBHOOK_PATH}`
+  if (foreign && process.env.ALLOW_STEAL_WEBHOOK !== '1') {
+    throw new Error(
+      `У этого бота уже настроен вебхук ${hook!.url} — polling отобрал бы у него ` +
+        'апдейты. Заведите для разработки отдельного бота у @BotFather, ' +
+        'или поднимите только веб-часть (DISABLE_BOT=1). ' +
+        'Осознанно перехватить: ALLOW_STEAL_WEBHOOK=1.',
+    )
+  }
   await bot.api.deleteWebhook().catch(() => {})
   // 409 «terminated by other getUpdates» приходит, когда где-то запущен второй
   // экземпляр — падать из-за этого веб-часть не должна
@@ -88,6 +101,13 @@ if (!botDisabled) {
     24 * 3600_000,
   )
   loansTimer.unref?.()
+
+  // cookie Notion слетает молча — узнаём об этом сами, а не по жалобам
+  const notionCheck = () =>
+    checkNotionToken().catch((e) => app.log.error(`[notion] ${e?.message ?? e}`))
+  void notionCheck()
+  const notionTimer = setInterval(notionCheck, 24 * 3600_000)
+  notionTimer.unref?.()
 }
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
