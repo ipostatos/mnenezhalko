@@ -959,13 +959,14 @@ input.input[type='date'] {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  overflow: hidden;
+  /* overflow не режем: бейдж настроения выходит за угол обложки */
 }
 
 .loan-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: calc(var(--r-sm) - 1px);
 }
 
 .loan-face {
