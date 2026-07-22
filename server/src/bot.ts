@@ -47,6 +47,27 @@ bot.catch((err) => {
   console.error('[bot] ошибка обработчика:', err.error)
 })
 
+/**
+ * Один апдейт — один ответ.
+ * Telegram повторяет доставку, если вебхук ответил не 200 (а он отвечал 500
+ * по таймауту на долгих ИИ-ответах) — и бот отвечал заново на то же сообщение.
+ * Держим id обработанных апдейтов 15 минут: этого хватает на всю цепочку повторов.
+ */
+const SEEN_TTL_MS = 15 * 60_000
+const seenUpdates = new Map<number, number>()
+
+bot.use(async (ctx, next) => {
+  const id = ctx.update.update_id
+  const now = Date.now()
+  for (const [seen, at] of seenUpdates) if (now - at > SEEN_TTL_MS) seenUpdates.delete(seen)
+  if (seenUpdates.has(id)) {
+    console.warn(`[bot] повторная доставка апдейта ${id} — пропускаю`)
+    return
+  }
+  seenUpdates.set(id, now)
+  await next()
+})
+
 const webAppUrl = () => env.publicUrl || ''
 
 /** Ник бота нужен для ссылок-приглашений; уточняем его при старте. */
@@ -184,18 +205,37 @@ bot.command('find', async (ctx) => {
   })
 })
 
+/**
+ * Кто сейчас ждёт ответ помощника: пока думаем над одним запросом, второй
+ * не запускаем — иначе человек получает пачку подборок вместо одной.
+ * Значение — предупредили ли уже «секунду», чтобы не сыпать и этим.
+ */
+const aiBusy = new Map<number, { warned: boolean }>()
+
 async function handleAi(ctx: any, text: string) {
-  const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
-  await ctx.replyWithChatAction('typing')
-  const res = await askAi(text, user?.city ?? undefined)
-  if (!res.items.length) {
-    return ctx.reply('Пока ничего похожего не нашлось. Попробуйте описать иначе.')
+  const tgId = ctx.from.id as number
+  const busy = aiBusy.get(tgId)
+  if (busy) {
+    if (busy.warned) return
+    busy.warned = true
+    return ctx.reply('Секунду, уже подбираю книги 🙂')
   }
-  await ctx.reply(`${res.intro}\n\n${renderList(res.items.slice(0, 5))}`, {
-    parse_mode: 'HTML',
-    link_preview_options: { is_disabled: true },
-    reply_markup: mainKeyboard(),
-  })
+  aiBusy.set(tgId, { warned: false })
+  try {
+    const user = await prisma.user.findUnique({ where: { tgId: BigInt(tgId) } })
+    await ctx.replyWithChatAction('typing')
+    const res = await askAi(text, user?.city ?? undefined)
+    if (!res.items.length) {
+      return await ctx.reply('Пока ничего похожего не нашлось. Попробуйте описать иначе.')
+    }
+    await ctx.reply(`${res.intro}\n\n${renderList(res.items.slice(0, 5))}`, {
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      reply_markup: mainKeyboard(),
+    })
+  } finally {
+    aiBusy.delete(tgId)
+  }
 }
 
 bot.command('ai', async (ctx) => {

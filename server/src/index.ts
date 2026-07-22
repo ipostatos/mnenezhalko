@@ -32,7 +32,13 @@ const botDisabled = process.env.DISABLE_BOT === '1'
 
 const WEBHOOK_PATH = '/tg/webhook'
 if (env.botMode === 'webhook' && !botDisabled) {
-  app.post(WEBHOOK_PATH, webhookCallback(bot, 'fastify'))
+  // ⚠️ Дефолт grammY — ответить 500 через 10 с. ИИ-подбор и распознавание фото
+  // длятся дольше, Telegram считал апдейт недоставленным и слал его снова и снова,
+  // а бот на каждый повтор отвечал в чат. Отдаём 200 сразу, работа идёт дальше.
+  app.post(
+    WEBHOOK_PATH,
+    webhookCallback(bot, 'fastify', { onTimeout: 'return', timeoutMilliseconds: 8_000 }),
+  )
 }
 
 await seedCityGroups()
@@ -52,6 +58,9 @@ if (botDisabled) {
   if (!env.publicUrl) throw new Error('Для BOT_MODE=webhook нужен PUBLIC_URL')
   await bot.api.setWebhook(`${env.publicUrl}${WEBHOOK_PATH}`, {
     allowed_updates: ['message', 'callback_query', 'my_chat_member'],
+    // очередь повторов, накопленная за простой, при старте не нужна:
+    // это ровно те апдейты, на которые бот уже отвечал
+    drop_pending_updates: true,
   })
   app.log.info(`webhook: ${env.publicUrl}${WEBHOOK_PATH}`)
 } else {
