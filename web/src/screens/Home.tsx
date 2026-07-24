@@ -116,7 +116,14 @@ export function Home({
 
   return (
     <>
-      <MoodBoard summary={loans} onOpen={() => go({ name: 'loans' })} />
+      <button className="promo" onClick={() => { haptic(); go({ name: 'add' }) }}>
+        <img src="/il/girl-book.jpg" alt="" loading="lazy" />
+        <div className="grow">
+          <div className="t">Поделись книгой</div>
+          <div className="d">Поставь свою книгу на полку — подари кому-то вдохновение 🐝</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
 
       <div className="hero">
         <span className="logo">🌿</span>
@@ -141,14 +148,7 @@ export function Home({
         </div>
       )}
 
-      <button className="promo" onClick={() => { haptic(); go({ name: 'add' }) }}>
-        <img src="/il/girl-book.jpg" alt="" loading="lazy" />
-        <div className="grow">
-          <div className="t">Поделись книгой</div>
-          <div className="d">Поставь свою книгу на полку — подари кому-то вдохновение 🐝</div>
-        </div>
-        <div className="chev">›</div>
-      </button>
+      <MoodBoard summary={loans} onOpen={() => go({ name: 'loans' })} />
 
       <div className="section-title">Что можно сделать</div>
       {tiles.map((t) => (
