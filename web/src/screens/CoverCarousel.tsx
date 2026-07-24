@@ -79,6 +79,7 @@ export function CoverCarousel({
             src={b.coverUrl}
             alt=""
             loading="lazy"
+            decoding="async"
             draggable={false}
             onError={() => setBroken((s) => new Set(s).add(b.id))}
           />

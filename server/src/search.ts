@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { norm, prisma } from './db.js'
+import { proxyCover } from './imgcache.js'
 
 export type SearchParams = {
   q?: string
@@ -66,7 +67,7 @@ export function toCard(b: any): BookCard {
     languages: split(b.languages),
     city: b.city,
     district: b.district,
-    coverUrl: b.coverUrl,
+    coverUrl: proxyCover(b.coverUrl),
     status: b.status,
     source: b.source,
     reviewStatus: b.reviewStatus ?? 'approved',

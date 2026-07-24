@@ -17,7 +17,7 @@ export function BookRow({ book, onOpen }: { book: Book; onOpen: () => void }) {
     >
       <div className="cover">
         {book.coverUrl ? (
-          <img src={book.coverUrl} alt="" loading="lazy" onError={hideImage} />
+          <img src={book.coverUrl} alt="" loading="lazy" decoding="async" onError={hideImage} />
         ) : (
           <span>{initials}</span>
         )}

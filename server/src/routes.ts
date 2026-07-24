@@ -30,6 +30,7 @@ import {
 import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
+import { cachedImage, proxyCover } from './imgcache.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
 function who(req: FastifyRequest): TgUser | null {
@@ -136,7 +137,18 @@ export async function registerRoutes(app: FastifyInstance) {
       : await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
           WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
           ORDER BY RANDOM() LIMIT 80`
-    return json(rows)
+    return json(rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl) })))
+  })
+
+  /** Кэширующий прокси внешних обложек (подписанный) — ускоряет их загрузку. */
+  app.get('/api/img', async (req, reply) => {
+    const { u, s } = req.query as { u?: string; s?: string }
+    if (!u || !s) return reply.code(400).send({ error: 'bad_request' })
+    const img = await cachedImage(u, s)
+    if (!img) return reply.code(404).send({ error: 'not_found' })
+    reply.header('Cache-Control', 'public, max-age=31536000, immutable')
+    reply.type(img.type)
+    return reply.send(img.body)
   })
 
   app.get('/api/books/:id', async (req, reply) => {
