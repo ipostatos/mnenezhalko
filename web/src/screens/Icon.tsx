@@ -1,8 +1,24 @@
 /**
- * Набор тонких линейных иконок под фирменный стиль (рисованные иллюстрации,
- * мягкая палитра). Инлайн-SVG, stroke=currentColor — цвет задаёт .ic-tile через
- * --tone. Без внешних зависимостей: работает офлайн и не спорит с CSP.
+ * Иконки под фирменный стиль — готовый набор Lucide (MIT), тонкие линейные,
+ * бандлятся в приложение (без внешних CDN). Обёртка сохраняет прежний API
+ * <Icon name="…" />: цвет из .ic-tile через currentColor, размер задаёт CSS.
  */
+import {
+  BookOpen,
+  Wand2,
+  Sparkles,
+  MapPin,
+  CalendarDays,
+  Tag,
+  BookHeart,
+  Library,
+  PlusCircle,
+  Leaf,
+  MessageCircle,
+  Camera,
+  type LucideIcon,
+} from 'lucide-react'
+
 export type IconName =
   | 'book'
   | 'wand'
@@ -17,41 +33,22 @@ export type IconName =
   | 'chat'
   | 'camera'
 
-const P: Record<IconName, string> = {
-  // раскрытая книга
-  book: 'M12 7.2C10.1 5.9 7.6 5.3 5 5.3V18c2.6 0 5.1.6 7 2 1.9-1.4 4.4-2 7-2V5.3c-2.6 0-5.1.6-7 1.9Z M12 7.2V20',
-  // волшебная палочка + искра — подбор книги
-  wand: 'M15 4.2l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1 1-2.6Z M13 9L5 17l2 2 8-8',
-  // искра-звезда — новинки
-  sparkle: 'M12 3.5l1.7 4.4 4.8.7-3.5 3.3.9 4.7L12 18.2l-4.6 2.4.9-4.7-3.5-3.3 4.8-.7L12 3.5Z',
-  // геометка — города
-  pin: 'M12 21s6-5.4 6-10a6 6 0 1 0-12 0c0 4.6 6 10 6 10Z M12 13.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z',
-  // календарь — встречи
-  calendar: 'M6 6h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z M8 3.6v4 M16 3.6v4 M4 10.5h16',
-  // ценник — барахолка
-  tag: 'M4 12.6 12.4 4.2 20 4.2 20 11.8 11.6 20 4 12.6Z M15.8 8.3a1.2 1.2 0 1 0 0-.1Z',
-  // книга с сердцем — у кого моя книга
-  bookHeart:
-    'M12 8.4C10.2 7 7.8 6.4 5 6.4V19c2.6 0 5.1.6 7 2 1.9-1.4 4.4-2 7-2v-6.5 M12 8.4V21 M17.2 3.7c-.8-.8-2-.7-2.7 0-.6.7-.5 1.8.2 2.5L17.2 9l2.5-2.8c.7-.7.8-1.8.2-2.5-.7-.7-1.9-.8-2.7 0Z',
-  // книги на полке — моя полка
-  shelf: 'M4 20h16 M7.5 20V9 M11 20V6.5 M14.5 20V10 M18 20V8',
-  // плюс — добавить
-  plus: 'M12 4.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Z M12 8.6v6.8 M8.6 12h6.8',
-  // листок — о проекте
-  leaf: 'M5 19C5 11.3 11.3 5 19 5c0 7.7-6.3 14-14 14Z M5.5 18.5c2.8-5.5 6.6-7.6 9.5-8.6',
-  // чат
-  chat: 'M20 12.2a7 7 0 0 1-7 7H8l-4 2.2V16.5A7 7 0 0 1 4 12.2 7 7 0 0 1 11 5.2h2a7 7 0 0 1 7 7Z',
-  // камера — инстаграм
-  camera: 'M7.5 6.5h9A3.5 3.5 0 0 1 20 10v6.5A3.5 3.5 0 0 1 16.5 20h-9A3.5 3.5 0 0 1 4 16.5V10a3.5 3.5 0 0 1 3.5-3.5Z M12 16.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z M16.6 8.6h.01',
+const MAP: Record<IconName, LucideIcon> = {
+  book: BookOpen,
+  wand: Wand2,
+  sparkle: Sparkles,
+  pin: MapPin,
+  calendar: CalendarDays,
+  tag: Tag,
+  bookHeart: BookHeart,
+  shelf: Library,
+  plus: PlusCircle,
+  leaf: Leaf,
+  chat: MessageCircle,
+  camera: Camera,
 }
 
 export function Icon({ name }: { name: IconName }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
-      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {P[name].split(' M').map((d, i) => (
-        <path key={i} d={i === 0 ? d : 'M' + d} />
-      ))}
-    </svg>
-  )
+  const C = MAP[name]
+  return <C strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
 }
