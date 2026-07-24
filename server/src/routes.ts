@@ -16,7 +16,17 @@ import {
   shelfState,
 } from './publish.js'
 import { digest } from './digest.js'
-import { createLoan, decorate, listBorrowed, listLoans, markReturned, summarize } from './loans.js'
+import {
+  createLoan,
+  decorate,
+  listBorrowed,
+  listLoans,
+  listHistory,
+  markReturned,
+  reopenLoan,
+  canUndoLoan,
+  summarize,
+} from './loans.js'
 import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
@@ -174,16 +184,34 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/loans', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
-    const { status } = req.query as { status?: string }
-    const [given, taken] = await Promise.all([
-      listLoans(u.id, status === 'all' ? 'all' : status === 'returned' ? 'returned' : 'active'),
+    const [given, taken, history] = await Promise.all([
+      listLoans(u.id, 'active'),
       listBorrowed(u.id),
+      listHistory(u.id),
     ])
     return json({
       given: given.map(decorate),
       taken: taken.map(decorate),
+      history: history.map((l) => ({
+        ...l,
+        role: l.ownerTg === u.id ? 'given' : 'taken',
+        canUndo: canUndoLoan(l),
+      })),
       summary: summarize(given.filter((l) => l.status === 'active')),
     })
+  })
+
+  /** Отменить возврат (undo) — в окне 24 ч, если книгу не выдали другому. */
+  app.post('/api/loans/:id/reopen', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const r = await reopenLoan(id, u.id)
+    if ('error' in r) {
+      const code = r.error === 'not_found' ? 404 : r.error === 'forbidden' ? 403 : 409
+      return reply.code(code).send({ error: r.error })
+    }
+    return json({ loan: r.loan })
   })
 
   /** Отметить, что книга ушла почитать: название + ник читателя. */

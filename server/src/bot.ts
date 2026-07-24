@@ -25,6 +25,7 @@ import {
   loanMood,
   markReminded,
   markReturned,
+  reopenLoan,
   summarize,
 } from './loans.js'
 import { digest, type DigestPeriod } from './digest.js'
@@ -577,19 +578,74 @@ async function notifyHolder(loan: any): Promise<boolean> {
     .catch(() => false)
 }
 
+// шаг 1 — спрашиваем подтверждение, чтобы не закрыть выдачу случайным тапом
 bot.callbackQuery(/^loan:back:(.+)$/, async (ctx) => {
-  const loan = await markReturned(ctx.match![1], BigInt(ctx.from.id))
+  const id = ctx.match![1]
+  const loan = await loanById(id)
+  if (!loan || loan.status !== 'active') {
+    return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })
+  }
+  await ctx.answerCallbackQuery()
+  await ctx
+    .editMessageReplyMarkup({
+      reply_markup: new InlineKeyboard()
+        .text('Да, вернулась', `loan:yes:${id}`)
+        .text('Отмена', `loan:no:${id}`),
+    })
+    .catch(() => {})
+})
+
+// шаг 2 — подтверждено: закрываем выдачу и даём отменить в течение суток
+bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
+  const id = ctx.match![1]
+  const loan = await markReturned(id, BigInt(ctx.from.id))
   if (!loan) return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })
-
   await ctx.answerCallbackQuery({ text: 'Книга дома 🎉' })
-  await ctx.editMessageText(`✅ «${esc(loan.title)}» вернулась. Спасибо!`, { parse_mode: 'HTML' })
-
-  // вторая сторона тоже должна узнать
+  await ctx.editMessageText(`✅ «${esc(loan.title)}» вернулась. Спасибо!`, {
+    parse_mode: 'HTML',
+    reply_markup: new InlineKeyboard().text('↩️ Отменить возврат', `loan:undo:${id}`),
+  })
   const other = ctx.from.id === Number(loan.ownerTg) ? loan.holderTg : loan.ownerTg
   if (other) {
     await bot.api
       .sendMessage(String(other), `✅ «${loan.title}» отмечена как вернувшаяся.`)
       .catch(() => {})
+  }
+})
+
+// отмена подтверждения — возвращаем обычную кнопку
+bot.callbackQuery(/^loan:no:(.+)$/, async (ctx) => {
+  const id = ctx.match![1]
+  await ctx.answerCallbackQuery({ text: 'Оставил как есть' })
+  await ctx
+    .editMessageReplyMarkup({
+      reply_markup: new InlineKeyboard().text('✅ Книга вернулась', `loan:back:${id}`),
+    })
+    .catch(() => {})
+})
+
+// undo возврата
+bot.callbackQuery(/^loan:undo:(.+)$/, async (ctx) => {
+  const id = ctx.match![1]
+  const r = await reopenLoan(id, BigInt(ctx.from.id))
+  if ('error' in r) {
+    const msg: Record<string, string> = {
+      too_late: 'Отменить уже нельзя — прошло больше суток',
+      book_relent: 'Книга уже выдана другому',
+      not_returned: 'Эта выдача снова активна',
+      forbidden: 'Это не ваша выдача',
+      not_found: 'Не нашёл выдачу',
+    }
+    return ctx.answerCallbackQuery({ text: msg[r.error as string] ?? 'Не получилось' })
+  }
+  await ctx.answerCallbackQuery({ text: 'Возврат отменён' })
+  await ctx.editMessageText(`↩️ «${esc(r.loan.title)}» снова числится у читателя.`, {
+    parse_mode: 'HTML',
+    reply_markup: new InlineKeyboard().text('✅ Книга вернулась', `loan:back:${id}`),
+  })
+  const other = ctx.from.id === Number(r.loan.ownerTg) ? r.loan.holderTg : r.loan.ownerTg
+  if (other) {
+    await bot.api.sendMessage(String(other), `↩️ Возврат «${r.loan.title}» отменён.`).catch(() => {})
   }
 })
 

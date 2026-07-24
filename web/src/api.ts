@@ -14,6 +14,7 @@ import type {
   DigestResult,
   Loan,
   LoanSummary,
+  HistoryLoan,
   ShelfBook,
 } from './types'
 
@@ -67,7 +68,11 @@ export const api = {
   ai: (text: string, city?: string) =>
     req<{ intro: string; items: Book[]; usedAi: boolean }>('POST', '/api/ai', { text, city }),
   loans: () =>
-    req<{ given: Loan[]; taken: Loan[]; summary: LoanSummary }>('GET', '/api/loans'),
+    req<{ given: Loan[]; taken: Loan[]; history: HistoryLoan[]; summary: LoanSummary }>(
+      'GET',
+      '/api/loans',
+    ),
+  loanReopen: (id: string) => req<{ loan: Loan }>('POST', `/api/loans/${id}/reopen`, {}),
   lend: (data: {
     title: string
     holder: string

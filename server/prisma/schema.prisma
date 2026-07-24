@@ -125,8 +125,24 @@ model Loan {
   remindedAt DateTime?
   note       String?
 
+  events LoanEvent[]
+
   @@index([ownerTg, status])
   @@index([holderTg, status])
+}
+
+/// Событие в жизни выдачи — честная история вместо реконструкции из состояния.
+model LoanEvent {
+  id     String   @id @default(cuid())
+  loanId String
+  loan   Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  /// created | claimed | reminded | returned | reopened | cancelled
+  kind   String
+  byTg   BigInt?
+  at     DateTime @default(now())
+  meta   String?
+
+  @@index([loanId])
 }
 
 /// Городские чаты и каналы проекта

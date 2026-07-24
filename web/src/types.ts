@@ -139,6 +139,19 @@ export type Loan = {
   returnedAt: string | null
 }
 
+/** Закрытая выдача для вкладки «История». */
+export type HistoryLoan = {
+  id: string
+  title: string
+  book: { id: string; title: string; coverUrl: string | null } | null
+  holderUsername: string | null
+  holderName: string | null
+  takenAt: string
+  returnedAt: string | null
+  role: 'given' | 'taken'
+  canUndo: boolean
+}
+
 export type DigestResult = {
   period: 'day' | 'month'
   since: string

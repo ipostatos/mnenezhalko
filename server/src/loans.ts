@@ -18,6 +18,24 @@ import { invalidateFacets } from './search.js'
 /** Срок по умолчанию — месяц: столько обычно и держат книгу. */
 const DEFAULT_DAYS = 30
 
+/** Окно, в которое можно отменить возврат. */
+const UNDO_WINDOW_MS = 24 * 3600_000
+
+export type LoanEventKind =
+  | 'created'
+  | 'claimed'
+  | 'reminded'
+  | 'returned'
+  | 'reopened'
+  | 'cancelled'
+
+/** Пишет событие выдачи; не роняет основной путь, если запись не удалась. */
+export function logLoanEvent(loanId: string, kind: LoanEventKind, byTg?: bigint | null, meta?: string) {
+  return prisma.loanEvent
+    .create({ data: { loanId, kind, byTg: byTg ?? null, meta: meta ?? null } })
+    .catch((e) => console.error('[loans] событие не записалось:', e?.message ?? e))
+}
+
 export type LoanDraft = {
   ownerTg: bigint
   title: string
@@ -80,6 +98,7 @@ export async function createLoan(d: LoanDraft) {
   if (loan.bookId) {
     await prisma.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
   }
+  await logLoanEvent(loan.id, 'created', d.ownerTg)
   return loan
 }
 
@@ -111,6 +130,7 @@ export async function markReturned(id: string, byTg: bigint) {
     data: { status: 'returned', returnedAt: new Date() },
     include: { book: true },
   })
+  await logLoanEvent(id, 'returned', byTg)
   if (updated.bookId) {
     const stillOut = await prisma.loan.count({
       where: { bookId: updated.bookId, status: 'active' },
@@ -147,23 +167,68 @@ export async function markReturned(id: string, byTg: bigint) {
  * Заодно подхватывает все прочие его выдачи по нику.
  */
 export async function claimLoans(tgId: bigint, username?: string | null, loanId?: string) {
-  let claimed = 0
+  const ids = new Set<string>()
   if (loanId) {
-    const { count } = await prisma.loan.updateMany({
+    const l = await prisma.loan.findFirst({
       where: { id: loanId, holderTg: null },
-      data: { holderTg: tgId },
+      select: { id: true },
     })
-    claimed += count
+    if (l) ids.add(l.id)
   }
   if (username) {
-    const { count } = await prisma.loan.updateMany({
+    const rows = await prisma.loan.findMany({
       where: { holderUsername: username, holderTg: null, status: 'active' },
-      data: { holderTg: tgId },
+      select: { id: true },
     })
-    claimed += count
+    rows.forEach((r) => ids.add(r.id))
   }
-  return claimed
+  if (!ids.size) return 0
+  await prisma.loan.updateMany({ where: { id: { in: [...ids] } }, data: { holderTg: tgId } })
+  for (const id of ids) await logLoanEvent(id, 'claimed', tgId)
+  return ids.size
 }
+
+/**
+ * Отменить возврат (undo): в окне 24 ч и только если книгу за это время не
+ * выдали кому-то ещё. Возвращает обновлённую выдачу либо код ошибки.
+ */
+export async function reopenLoan(id: string, byTg: bigint) {
+  const loan = await prisma.loan.findUnique({ where: { id }, include: { book: true } })
+  if (!loan) return { error: 'not_found' as const }
+  if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return { error: 'forbidden' as const }
+  if (loan.status !== 'returned') return { error: 'not_returned' as const }
+  if (!loan.returnedAt || Date.now() - loan.returnedAt.getTime() > UNDO_WINDOW_MS) {
+    return { error: 'too_late' as const }
+  }
+  if (loan.bookId) {
+    const relent = await prisma.loan.count({
+      where: { bookId: loan.bookId, status: 'active', id: { not: id } },
+    })
+    if (relent) return { error: 'book_relent' as const }
+    const book = await prisma.book.findUnique({ where: { id: loan.bookId } })
+    if (book?.active) await prisma.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
+  }
+  const updated = await prisma.loan.update({
+    where: { id },
+    data: { status: 'active', returnedAt: null },
+    include: { book: true },
+  })
+  await logLoanEvent(id, 'reopened', byTg)
+  return { loan: updated }
+}
+
+/** Закрытые выдачи (обе стороны) — для вкладки «История». */
+export const listHistory = (tgId: bigint) =>
+  prisma.loan.findMany({
+    where: { status: 'returned', OR: [{ ownerTg: tgId }, { holderTg: tgId }] },
+    orderBy: { returnedAt: 'desc' },
+    include: { book: { select: { id: true, title: true, coverUrl: true } } },
+    take: 40,
+  })
+
+/** Можно ли ещё отменить возврат этой выдачи. */
+export const canUndoLoan = (loan: { returnedAt: Date | null }, now = new Date()) =>
+  !!loan.returnedAt && now.getTime() - loan.returnedAt.getTime() <= UNDO_WINDOW_MS
 
 export const loanById = (id: string) =>
   prisma.loan.findUnique({ where: { id }, include: { book: true } })
@@ -186,8 +251,11 @@ export async function dueLoans(now = new Date()) {
   })
 }
 
-export const markReminded = (id: string) =>
-  prisma.loan.update({ where: { id }, data: { remindedAt: new Date() } })
+export async function markReminded(id: string) {
+  const loan = await prisma.loan.update({ where: { id }, data: { remindedAt: new Date() } })
+  await logLoanEvent(id, 'reminded')
+  return loan
+}
 
 /** Сколько дней книга на руках. */
 export const daysOut = (takenAt: Date, now = new Date()) =>

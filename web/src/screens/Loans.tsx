@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
-import type { Book, Loan, LoanSummary } from '../types'
-import { haptic, openTg, showAlert } from '../telegram'
+import type { Book, Loan, LoanSummary, HistoryLoan } from '../types'
+import { haptic, openTg, showAlert, showConfirm } from '../telegram'
 import { MoodBoard } from './MoodBoard'
+
+const UNDO_ERRORS: Record<string, string> = {
+  too_late: 'Отменить уже нельзя — прошло больше суток.',
+  book_relent: 'Книга уже выдана другому человеку.',
+  not_returned: 'Эта выдача снова активна.',
+  forbidden: 'Это не ваша выдача.',
+}
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
@@ -18,6 +25,8 @@ const TERMS: { label: string; days: number | null }[] = [
 export function Loans({ go }: { go: (r: Route) => void }) {
   const [given, setGiven] = useState<Loan[]>([])
   const [taken, setTaken] = useState<Loan[]>([])
+  const [history, setHistory] = useState<HistoryLoan[]>([])
+  const [tab, setTab] = useState<'given' | 'taken' | 'history'>('given')
   const [summary, setSummary] = useState<LoanSummary | null>(null)
   const [myBooks, setMyBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
@@ -36,6 +45,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       .then((r) => {
         setGiven(r.given)
         setTaken(r.taken)
+        setHistory(r.history)
         setSummary(r.summary)
       })
       .catch(() => {})
@@ -74,13 +84,24 @@ export function Loans({ go }: { go: (r: Route) => void }) {
     }
   }
 
-  async function markBack(id: string) {
+  async function markBack(l: { id: string; title: string }) {
+    if (!(await showConfirm(`Точно отметить «${l.title}» как возвращённую?`))) return
     try {
-      await api.loanReturn(id)
+      await api.loanReturn(l.id)
       haptic('success')
       await load()
     } catch (e: any) {
       showAlert(e.message)
+    }
+  }
+
+  async function undo(l: HistoryLoan) {
+    try {
+      await api.loanReopen(l.id)
+      haptic('success')
+      await load()
+    } catch (e: any) {
+      showAlert(UNDO_ERRORS[e.message] ?? e.message)
     }
   }
 
@@ -180,69 +201,119 @@ export function Loans({ go }: { go: (r: Route) => void }) {
 
       {loading && <div className="muted" style={{ marginTop: 'var(--sp-5)' }}>Загружаю…</div>}
 
-      {given.length > 0 && (
+      {!loading && (given.length > 0 || taken.length > 0 || history.length > 0) && (
         <>
-          <div className="section-title">Сейчас у читателей ({given.length})</div>
-          {given.map((l) => (
-            <div key={l.id} className={`loan-card level-${l.mood.level}`}>
-              <div className="loan-top">
-                <div className="loan-cover">
-                  {l.book?.coverUrl ? (
-                    <img src={l.book.coverUrl} alt="" loading="lazy" />
-                  ) : (
-                    <span>📕</span>
+          <div className="chips" style={{ margin: 'var(--sp-5) 0 var(--sp-4)' }}>
+            <button className={`chip ${tab === 'given' ? 'active' : ''}`} onClick={() => setTab('given')}>
+              На руках{given.length ? ` · ${given.length}` : ''}
+            </button>
+            <button className={`chip ${tab === 'taken' ? 'active' : ''}`} onClick={() => setTab('taken')}>
+              Я читаю{taken.length ? ` · ${taken.length}` : ''}
+            </button>
+            <button
+              className={`chip ${tab === 'history' ? 'active' : ''}`}
+              onClick={() => setTab('history')}
+            >
+              История
+            </button>
+          </div>
+
+          {tab === 'given' &&
+            (given.length ? (
+              given.map((l) => (
+                <div key={l.id} className={`loan-card level-${l.mood.level}`}>
+                  <div className="loan-top">
+                    <div className="loan-cover">
+                      {l.book?.coverUrl ? (
+                        <img src={l.book.coverUrl} alt="" loading="lazy" />
+                      ) : (
+                        <span>📕</span>
+                      )}
+                      <span className="loan-face">{l.mood.emoji}</span>
+                    </div>
+                    <div className="grow">
+                      <div className="loan-title">{l.title}</div>
+                      <div className="loan-who">
+                        у @{l.holderUsername ?? 'читателя'} · с {fmtDate(l.takenAt)}
+                      </div>
+                      <div className="market-meta">
+                        <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн.</span>
+                        <span className={`tag mood-${l.mood.level}`}>{l.mood.label}</span>
+                        {l.mood.overdueDays > 0 && (
+                          <span className="tag sell">просрочка {l.mood.overdueDays} дн.</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button className="btn ghost sm" onClick={() => markBack(l)}>
+                    ✅ Книга вернулась
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="foot">Сейчас у читателей ничего нет.</div>
+            ))}
+
+          {tab === 'taken' &&
+            (taken.length ? (
+              taken.map((l) => (
+                <div key={l.id} className={`loan-card level-${l.mood.level}`}>
+                  <div className="loan-top">
+                    <div className="loan-cover">
+                      <span>📗</span>
+                    </div>
+                    <div className="grow">
+                      <div className="loan-title">{l.title}</div>
+                      <div className="loan-who">взял(а) {fmtDate(l.takenAt)}</div>
+                      <div className="market-meta">
+                        <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн. у меня</span>
+                        {l.mood.level >= 2 && <span className="tag sell">пора вернуть</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <button className="btn ghost sm" onClick={() => markBack(l)}>
+                    ✅ Вернул(а) книгу
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="foot">Вы сейчас ничего не читаете из библиотеки.</div>
+            ))}
+
+          {tab === 'history' &&
+            (history.length ? (
+              history.map((l) => (
+                <div key={l.id} className="loan-card level-0">
+                  <div className="loan-top">
+                    <div className="loan-cover">
+                      {l.book?.coverUrl ? (
+                        <img src={l.book.coverUrl} alt="" loading="lazy" />
+                      ) : (
+                        <span>📚</span>
+                      )}
+                    </div>
+                    <div className="grow">
+                      <div className="loan-title">{l.title}</div>
+                      <div className="loan-who">
+                        {l.role === 'given' ? `отдавали @${l.holderUsername ?? 'читателю'}` : 'вы читали'}
+                        {l.returnedAt ? ` · вернулась ${fmtDate(l.returnedAt)}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  {l.canUndo && (
+                    <button className="btn ghost sm" onClick={() => undo(l)}>
+                      ↩️ Отменить возврат
+                    </button>
                   )}
-                  <span className="loan-face">{l.mood.emoji}</span>
                 </div>
-                <div className="grow">
-                  <div className="loan-title">{l.title}</div>
-                  <div className="loan-who">
-                    у @{l.holderUsername ?? 'читателя'} · с {fmtDate(l.takenAt)}
-                  </div>
-                  <div className="market-meta">
-                    <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн.</span>
-                    <span className={`tag mood-${l.mood.level}`}>{l.mood.label}</span>
-                    {l.mood.overdueDays > 0 && (
-                      <span className="tag sell">просрочка {l.mood.overdueDays} дн.</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <button className="btn ghost sm" onClick={() => markBack(l.id)}>
-                ✅ Книга вернулась
-              </button>
-            </div>
-          ))}
+              ))
+            ) : (
+              <div className="foot">Закрытых выдач пока нет.</div>
+            ))}
         </>
       )}
 
-      {taken.length > 0 && (
-        <>
-          <div className="section-title">Читаю сейчас ({taken.length})</div>
-          {taken.map((l) => (
-            <div key={l.id} className={`loan-card level-${l.mood.level}`}>
-              <div className="loan-top">
-                <div className="loan-cover">
-                  <span>📗</span>
-                </div>
-                <div className="grow">
-                  <div className="loan-title">{l.title}</div>
-                  <div className="loan-who">взял(а) {fmtDate(l.takenAt)}</div>
-                  <div className="market-meta">
-                    <span className={`tag mood-${l.mood.level}`}>{l.mood.days} дн. у меня</span>
-                    {l.mood.level >= 2 && <span className="tag sell">пора вернуть</span>}
-                  </div>
-                </div>
-              </div>
-              <button className="btn ghost sm" onClick={() => markBack(l.id)}>
-                ✅ Вернул(а) книгу
-              </button>
-            </div>
-          ))}
-        </>
-      )}
-
-      {!loading && given.length === 0 && taken.length === 0 && (
+      {!loading && given.length === 0 && taken.length === 0 && history.length === 0 && (
         <div className="foot">
           Пока пусто. Как отдадите книгу почитать — запишите здесь, чтобы не держать в голове.
         </div>
