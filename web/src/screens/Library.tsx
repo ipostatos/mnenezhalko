@@ -114,7 +114,7 @@ export function Library({
 
       {!loading && items.length === 0 && (
         <div className="empty">
-          <div className="big">🔍</div>
+          <img className="illus sm" src="/il/stack.jpg" alt="" loading="lazy" />
           Ничего не нашлось. Попробуйте другое слово или снимите фильтры.
         </div>
       )}

@@ -176,6 +176,7 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
 
   return (
     <>
+      <img className="illus" src="/il/add.jpg" alt="" loading="lazy" />
       <h1>Добавить на полку</h1>
       <div className="sub">Книга останется у вас — просто станет видна библиотекарям.</div>
 

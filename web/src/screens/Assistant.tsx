@@ -53,7 +53,7 @@ export function Assistant({
 
   return (
     <>
-      <img className="illus" src="/il/mood.jpg" alt="" loading="lazy" />
+      <img className="illus" src="/il/choose.jpg" alt="" loading="lazy" />
       <div className="hero">
         <span className="logo">✨</span>
         <h1>Подбор книги</h1>

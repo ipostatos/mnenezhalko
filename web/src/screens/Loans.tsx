@@ -314,7 +314,8 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       )}
 
       {!loading && given.length === 0 && taken.length === 0 && history.length === 0 && (
-        <div className="foot">
+        <div className="empty">
+          <img className="illus sm" src="/il/handoff.jpg" alt="" loading="lazy" />
           Пока пусто. Как отдадите книгу почитать — запишите здесь, чтобы не держать в голове.
         </div>
       )}
