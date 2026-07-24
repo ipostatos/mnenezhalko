@@ -887,6 +887,53 @@ textarea.input {
   border-left: 2px solid var(--border);
 }
 
+/* ── карусель обложек (коверфлоу) ───────────── */
+
+.cover-carousel {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  /* почти во всю ширину: выходим за боковые паддинги колонки */
+  margin: var(--sp-2) calc(-1 * var(--sp-4)) var(--sp-4);
+  /* края позволяют центрировать первую и последнюю обложку (полширины обложки) */
+  padding: var(--sp-4) calc(50% - 78px);
+  scroll-padding-left: calc(50% - 78px);
+  scroll-padding-right: calc(50% - 78px);
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+}
+
+.cover-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.cc-item {
+  flex: 0 0 156px;
+  scroll-snap-align: center;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+
+.cc-item img {
+  width: 156px;
+  height: 234px;
+  object-fit: cover;
+  border-radius: var(--r-md);
+  box-shadow: 0 8px 22px rgba(70, 55, 40, 0.22);
+  display: block;
+  pointer-events: none;
+  background: var(--accent-soft);
+}
+
 /* ── иллюстрации и промо-баннер ─────────────── */
 
 .illus {

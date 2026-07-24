@@ -124,6 +124,20 @@ export async function registerRoutes(app: FastifyInstance) {
     })
   })
 
+  /** Витрина для карусели: случайные одобренные книги с обложкой. */
+  app.get('/api/showcase', async (req) => {
+    const { city } = req.query as { city?: string }
+    type Row = { id: string; title: string; coverUrl: string }
+    const rows = city
+      ? await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
+          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND city = ${city}
+          ORDER BY RANDOM() LIMIT 30`
+      : await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
+          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL
+          ORDER BY RANDOM() LIMIT 30`
+    return json(rows)
+  })
+
   app.get('/api/books/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
     const book = await bookById(id)

@@ -66,6 +66,8 @@ export const api = {
     offset?: number
   }) => req<{ total: number; items: Book[] }>('GET', `/api/books${qs(p)}`),
   book: (id: string) => req<Book>('GET', `/api/books/${id}`),
+  showcase: (city?: string) =>
+    req<{ id: string; title: string; coverUrl: string }[]>('GET', `/api/showcase${qs({ city })}`),
   librarian: (id: string) =>
     req<{ owner: Owner; books: Book[] }>('GET', `/api/librarians/${id}`),
   ai: (text: string, city?: string) =>

@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Facets } from '../types'
 import { BookRow } from './BookRow'
+import { CoverCarousel, type CarouselBook } from './CoverCarousel'
 
 export function Library({
   go,
@@ -23,11 +24,16 @@ export function Library({
   const [items, setItems] = useState<Book[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [showcase, setShowcase] = useState<CarouselBook[]>([])
   const seq = useRef(0)
 
   useEffect(() => {
     api.facets(onlyMyCity ? city : undefined).then(setFacets).catch(() => {})
   }, [city, onlyMyCity])
+
+  useEffect(() => {
+    api.showcase().then(setShowcase).catch(() => {})
+  }, [])
 
   const params = useMemo(
     () => ({
@@ -63,6 +69,8 @@ export function Library({
       <div className="sub">
         {loading ? 'Ищу…' : `${total} ${kind === 'game' ? 'игр' : 'книг'} на полках библиотекарей`}
       </div>
+
+      <CoverCarousel books={showcase} onOpen={(id) => go({ name: 'book', id })} />
 
       <input
         className="input"
