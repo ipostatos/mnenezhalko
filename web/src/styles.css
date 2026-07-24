@@ -1,5 +1,6 @@
-/* Дизайн-система в стиле ISSA Trainer: Telegram-нативные токены, тёмный дефолт,
-   плоские карточки с волосяными бордерами, единые шкалы отступов/радиусов. */
+/* Фирменная дизайн-система «МнеНеЖалко»: тёплый крем + индиго-акцент + нежная
+   пастель, мягкие карточки и крупные скругления. Палитра фиксированная (не зависит
+   от темы Telegram), чтобы вид совпадал с макетом заказчика. Иллюстрации — /il/. */
 
 * {
   margin: 0;
@@ -9,18 +10,29 @@
 }
 
 :root {
-  /* цвета из темы Telegram, тёмный fallback по умолчанию */
-  --bg: var(--tg-theme-bg-color, #17212b);
-  --text: var(--tg-theme-text-color, #fff);
-  --hint: var(--tg-theme-hint-color, #8a9aa9);
-  --card: var(--tg-theme-secondary-bg-color, #232e3c);
-  --accent: var(--tg-theme-button-color, #50a8eb);
-  --accent-text: var(--tg-theme-button-text-color, #fff);
-  --link: var(--tg-theme-link-color, var(--accent));
-  --border: rgba(255, 255, 255, 0.1);
-  --ok: #4caf72;
-  --warn: #e0a13a;
-  --bad: #e5544b;
+  /* базовая палитра — тёплый крем и индиго */
+  --bg: #f7f1e8;
+  --bg-tint: #fbf7f0;
+  --text: #2b3440;
+  --hint: #8f8578;
+  --card: #ffffff;
+  --accent: #1c3a5e;
+  --accent-soft: #edeff4;
+  --accent-text: #ffffff;
+  --link: #1c3a5e;
+  --border: rgba(43, 52, 64, 0.1);
+  --ok: #5a9d6b;
+  --warn: #e0a44a;
+  --bad: #d9584b;
+
+  /* нежные пастельные тона для чипов/плашек */
+  --tone-sage: #e4ebd8;
+  --tone-peach: #f7e2d3;
+  --tone-lav: #eae4f2;
+  --tone-blush: #f6dee1;
+  --tone-sky: #dce8f0;
+  --terracotta: #d98a62;
+  --honey: #e0a44a;
 
   /* шкала отступов и радиусов */
   --sp-1: 4px;
@@ -29,11 +41,11 @@
   --sp-4: 16px;
   --sp-5: 20px;
   --sp-6: 28px;
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 18px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 22px;
   --r-pill: 999px;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow: 0 2px 10px rgba(70, 55, 40, 0.06);
 
   /* типографика */
   --fs-h1: 22px;
@@ -41,19 +53,6 @@
   --fs-body: 15px;
   --fs-sm: 13px;
   --fs-xs: 11px;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: var(--tg-theme-bg-color, #ffffff);
-    --text: var(--tg-theme-text-color, #1a1a1a);
-    --hint: var(--tg-theme-hint-color, #7d8a99);
-    --card: var(--tg-theme-secondary-bg-color, #f1f3f5);
-    --accent: var(--tg-theme-button-color, #3390ec);
-    --accent-text: var(--tg-theme-button-text-color, #ffffff);
-    --border: rgba(0, 0, 0, 0.1);
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  }
 }
 
 html,
@@ -870,6 +869,64 @@ textarea.input {
 .about-list > div {
   padding-left: var(--sp-3);
   border-left: 2px solid var(--border);
+}
+
+/* ── иллюстрации и промо-баннер ─────────────── */
+
+.illus {
+  display: block;
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  margin: 0 auto var(--sp-4);
+  /* у иллюстраций белый фон — multiply растворяет его в кремовом полотне */
+  mix-blend-mode: multiply;
+}
+
+.illus.sm {
+  max-width: 150px;
+}
+
+.promo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text);
+  background: linear-gradient(135deg, var(--tone-peach), var(--tone-sage));
+  border: none;
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4);
+  margin: var(--sp-2) 0 var(--sp-4);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.promo:active {
+  transform: scale(0.99);
+}
+
+.promo img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  flex-shrink: 0;
+  mix-blend-mode: multiply;
+}
+
+.promo .t {
+  font-weight: 800;
+  font-size: var(--fs-h2);
+}
+
+.promo .d {
+  color: var(--text);
+  opacity: 0.7;
+  font-size: var(--fs-sm);
+  margin-top: 2px;
 }
 
 /* ── моя полка ─────────────────────────────── */

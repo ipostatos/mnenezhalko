@@ -39,6 +39,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
 
   return (
     <>
+      <img className="illus" src="/il/exchange.jpg" alt="" loading="lazy" />
       <div className="hero">
         <span className="logo">🌿</span>
         <h1>О проекте</h1>

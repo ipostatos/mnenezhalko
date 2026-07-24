@@ -7,3 +7,6 @@ server/prisma/*.db-journal
 server/data/
 web/dist/
 .DS_Store
+.playwright-mcp/
+# исходные референсы дизайна от заказчика — в приложение уходят копии в web/public/il/
+ui/

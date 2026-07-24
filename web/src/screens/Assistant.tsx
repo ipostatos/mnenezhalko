@@ -53,9 +53,10 @@ export function Assistant({
 
   return (
     <>
+      <img className="illus" src="/il/mood.jpg" alt="" loading="lazy" />
       <div className="hero">
-        <span className="logo">🤖</span>
-        <h1>Помощник</h1>
+        <span className="logo">✨</span>
+        <h1>Подбор книги</h1>
       </div>
       <div className="sub">
         Опишите настроение или тему — подберу книгу с полок соседей и дам контакт владельца.

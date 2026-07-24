@@ -91,7 +91,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
 
       {!books.length && (
         <div className="empty">
-          <div className="big">📚</div>
+          <img className="illus sm" src="/il/bee.jpg" alt="" loading="lazy" />
           На вашей полке пока нет книг. Поделитесь своими — они станут видны соседям.
           <div style={{ height: 'var(--sp-5)' }} />
           <button className="btn" onClick={() => go({ name: 'add' })}>
