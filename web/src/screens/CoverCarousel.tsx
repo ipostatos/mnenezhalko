@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { haptic } from '../telegram'
+import { haptic, hapticSelection } from '../telegram'
 
 export type CarouselBook = { id: string; title: string; coverUrl: string }
 
@@ -20,6 +20,7 @@ export function CoverCarousel({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const rafId = useRef(0)
+  const centeredIdx = useRef(-1)
   // обложки, которые не загрузились (битая ссылка) — убираем из карусели
   const [broken, setBroken] = useState<Set<string>>(new Set())
   const shown = books.filter((b) => !broken.has(b.id))
@@ -29,15 +30,24 @@ export function CoverCarousel({
     if (!el) return
     const mid = el.scrollLeft + el.clientWidth / 2
     const half = el.clientWidth / 2
-    for (const child of Array.from(el.children) as HTMLElement[]) {
+    let nearest = 0
+    let nearestPx = Infinity
+    const kids = Array.from(el.children) as HTMLElement[]
+    kids.forEach((child, i) => {
       const c = child.offsetLeft + child.offsetWidth / 2
-      const dist = Math.min(1, Math.abs(mid - c) / half)
-      const scale = 1 - dist * 0.4
-      const opacity = 1 - dist * 0.55
-      child.style.transform = `scale(${scale.toFixed(3)})`
-      child.style.opacity = opacity.toFixed(3)
+      const px = Math.abs(mid - c)
+      if (px < nearestPx) {
+        nearestPx = px
+        nearest = i
+      }
+      const dist = Math.min(1, px / half)
+      child.style.transform = `scale(${(1 - dist * 0.4).toFixed(3)})`
+      child.style.opacity = (1 - dist * 0.55).toFixed(3)
       child.style.zIndex = String(1000 - Math.round(dist * 1000))
-    }
+    })
+    // новая обложка встала в центр — лёгкий тактильный «щёлк» (не на первом кадре)
+    if (centeredIdx.current !== -1 && nearest !== centeredIdx.current) hapticSelection()
+    centeredIdx.current = nearest
   }
 
   const onScroll = () => {

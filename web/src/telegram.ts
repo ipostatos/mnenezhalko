@@ -47,6 +47,11 @@ export function haptic(style: 'light' | 'medium' | 'success' = 'light') {
   else tg?.HapticFeedback?.impactOccurred?.(style)
 }
 
+/** Лёгкий «щёлк» смены выбора — для колеса/карусели при прокрутке. */
+export function hapticSelection() {
+  tg?.HapticFeedback?.selectionChanged?.()
+}
+
 export function openTg(url: string) {
   if (tg?.openTelegramLink && url.startsWith('https://t.me/')) tg.openTelegramLink(url)
   else if (tg?.openLink) tg.openLink(url)
