@@ -116,6 +116,12 @@ export function Home({
 
   return (
     <>
+      <div className="hero">
+        <span className="logo">🌿</span>
+        <h1>МнеНеЖалко</h1>
+      </div>
+      <div className="sub">Книжный обмен между своими — в Польше</div>
+
       <button className="promo" onClick={() => { haptic(); go({ name: 'add' }) }}>
         <img src="/il/girl-book.jpg" alt="" loading="lazy" />
         <div className="grow">
@@ -124,12 +130,6 @@ export function Home({
         </div>
         <div className="chev">›</div>
       </button>
-
-      <div className="hero">
-        <span className="logo">🌿</span>
-        <h1>МнеНеЖалко</h1>
-      </div>
-      <div className="sub">Книжный обмен между своими — в Польше</div>
 
       {health && (
         <div className="stat-tiles">
