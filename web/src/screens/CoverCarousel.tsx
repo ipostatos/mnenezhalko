@@ -11,9 +11,12 @@ export type CarouselBook = { id: string; title: string; coverUrl: string }
 export function CoverCarousel({
   books,
   onOpen,
+  centerId,
 }: {
   books: CarouselBook[]
   onOpen: (id: string) => void
+  /** id книги, которую подвести в центр (например, найденную поиском) */
+  centerId?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const rafId = useRef(0)
@@ -45,12 +48,18 @@ export function CoverCarousel({
   useEffect(() => {
     const el = ref.current
     if (!el || !shown.length) return
-    const center = el.children[Math.floor(shown.length / 2)] as HTMLElement | undefined
-    if (center) el.scrollLeft = center.offsetLeft + center.offsetWidth / 2 - el.clientWidth / 2
+    const found = centerId ? shown.findIndex((b) => b.id === centerId) : -1
+    const idx = found >= 0 ? found : Math.floor(shown.length / 2)
+    const target = el.children[idx] as HTMLElement | undefined
+    if (target) {
+      const left = target.offsetLeft + target.offsetWidth / 2 - el.clientWidth / 2
+      // найденную книгу подводим плавно, стартовую середину — сразу
+      el.scrollTo({ left, behavior: found >= 0 ? 'smooth' : 'auto' })
+    }
     update()
     return () => cancelAnimationFrame(rafId.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown.length])
+  }, [shown.length, centerId])
 
   if (!shown.length) return null
 

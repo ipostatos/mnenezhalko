@@ -890,6 +890,8 @@ textarea.input {
 /* ── карусель обложек (коверфлоу) ───────────── */
 
 .cover-carousel {
+  /* relative: чтобы offsetLeft дочерних мерялся от карусели (иначе центр сбивается) */
+  position: relative;
   display: flex;
   gap: var(--sp-2);
   overflow-x: auto;

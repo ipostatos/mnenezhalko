@@ -63,6 +63,14 @@ export function Library({
     return () => clearTimeout(timer)
   }, [params])
 
+  // при поиске подводим найденную книгу (с обложкой) в центр карусели;
+  // если её нет в витрине — добавляем в начало
+  const firstMatch = q.trim().length >= 2 ? items.find((b) => b.coverUrl) : undefined
+  const carouselBooks: CarouselBook[] =
+    firstMatch && !showcase.some((b) => b.id === firstMatch.id)
+      ? [{ id: firstMatch.id, title: firstMatch.title, coverUrl: firstMatch.coverUrl! }, ...showcase]
+      : showcase
+
   return (
     <>
       <h1>Библиотека</h1>
@@ -70,7 +78,11 @@ export function Library({
         {loading ? 'Ищу…' : `${total} ${kind === 'game' ? 'игр' : 'книг'} на полках библиотекарей`}
       </div>
 
-      <CoverCarousel books={showcase} onOpen={(id) => go({ name: 'book', id })} />
+      <CoverCarousel
+        books={carouselBooks}
+        centerId={firstMatch?.id}
+        onOpen={(id) => go({ name: 'book', id })}
+      />
 
       <input
         className="input"
