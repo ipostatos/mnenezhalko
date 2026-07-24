@@ -2,12 +2,13 @@ import type { Route } from '../App'
 import type { Health, LoanSummary, Me } from '../types'
 import { haptic, openTg } from '../telegram'
 import { MoodBoard } from './MoodBoard'
+import { Icon, type IconName } from './Icon'
 
 const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
 const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
 
 type Tile = {
-  icon: string
+  icon: IconName
   tone: string
   title: string
   sub: string
@@ -28,84 +29,84 @@ export function Home({
 }) {
   const tiles: Tile[] = [
     {
-      icon: '📚',
+      icon: 'book',
       tone: 'var(--accent)',
       title: 'Библиотека',
       sub: health ? `${health.books} книг и игр у соседей` : 'Поиск по полкам проекта',
       route: { name: 'library' },
     },
     {
-      icon: '🤖',
-      tone: '#a77bf0',
+      icon: 'wand',
+      tone: '#a48fd0',
       title: 'Подобрать книгу',
       sub: 'Расскажите, чего хочется — найду',
       route: { name: 'ai' },
     },
     {
-      icon: '🆕',
-      tone: '#5ac8d8',
+      icon: 'sparkle',
+      tone: '#e0a44a',
       title: 'Новинки',
       sub: 'Что появилось за сутки и за месяц',
       route: { name: 'digest' },
     },
     {
-      icon: '🏙',
-      tone: '#4caf72',
+      icon: 'pin',
+      tone: '#8fae86',
       title: 'Города и чаты',
       sub: me?.user.city ? `Ваш город: ${me.user.city}` : 'Выберите свой город',
       route: { name: 'cities' },
     },
     {
-      icon: '📅',
-      tone: '#e0a13a',
+      icon: 'calendar',
+      tone: '#6f9fc4',
       title: 'Ближайшие встречи',
       sub: 'Что и когда происходит рядом',
       route: { name: 'events' },
     },
     {
-      icon: '🛍',
-      tone: '#e5544b',
+      icon: 'tag',
+      tone: '#d98a62',
       title: 'Барахолка',
       sub: 'Отдам, продам, ищу — по городам',
       route: { name: 'market' },
     },
     {
-      icon: '📕',
-      tone: '#c98a3a',
+      icon: 'bookHeart',
+      tone: '#d98aa0',
       title: 'У кого моя книга',
       sub: 'Кому отдали почитать и когда ждать назад',
       route: { name: 'loans' },
     },
     {
-      icon: '🗂',
+      icon: 'shelf',
       tone: '#6a8caf',
       title: 'Моя полка',
       sub: 'Мои книги, статусы, редактирование',
       route: { name: 'myshelf' },
     },
     {
-      icon: '➕',
-      tone: '#50a8eb',
+      icon: 'plus',
+      tone: 'var(--accent)',
       title: 'Добавить книгу',
       sub: 'Поставить свою книгу на полку',
       route: { name: 'add' },
     },
     {
-      icon: '🌿',
+      icon: 'leaf',
       tone: '#7bb37a',
       title: 'О проекте',
       sub: 'Как всё устроено и с чего начать',
       route: { name: 'about' },
     },
     {
-      icon: '💬',
-      tone: '#8a9aa9',
+      icon: 'chat',
+      tone: '#8a94a0',
       title: 'Чат проекта',
       sub: 'МнеНеЖалко в Польше',
       url: MAIN_CHAT,
     },
     {
-      icon: '📸',
+      icon: 'camera',
       tone: '#d95c8a',
       title: 'Инстаграм',
       sub: '@mne_ne_zhalko_pl',
@@ -161,7 +162,7 @@ export function Home({
           }}
         >
           <div className="ic-tile" style={{ ['--tone' as any]: t.tone }}>
-            {t.icon}
+            <Icon name={t.icon} />
           </div>
           <div className="grow">
             <div className="t">{t.title}</div>
