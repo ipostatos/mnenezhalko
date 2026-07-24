@@ -65,6 +65,13 @@ export const env = {
     .map((s) => BigInt(s)),
 
   mainChatUrl: process.env.MAIN_CHAT_URL || 'https://t.me/+hlRk_HGIDcE4M2Vi',
+
+  /**
+   * Модерация книг: при MODERATION_ON=1 книга обычного пользователя уходит на
+   * проверку (reviewStatus=pending) и не попадает в каталог/Notion до одобрения.
+   * Админы (ADMIN_IDS) всегда autoApprove. По умолчанию выкл — поведение как было.
+   */
+  moderation: process.env.MODERATION_ON === '1',
 }
 
 export const isAdmin = (tgId: bigint | number) =>

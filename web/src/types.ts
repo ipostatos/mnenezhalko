@@ -19,6 +19,9 @@ export type Book = {
   coverUrl: string | null
   status: string
   source: string
+  /** состояние модерации: pending | approved | rejected | deleted */
+  reviewStatus?: string
+  rejectionReason?: string | null
   owner: Owner | null
   why?: string
 }

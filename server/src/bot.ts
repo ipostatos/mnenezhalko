@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, Keyboard } from 'grammy'
 import { env, isAdmin } from './env.js'
 import { prisma } from './db.js'
-import { searchBooks, type BookCard } from './search.js'
+import { searchBooks, toCard, type BookCard } from './search.js'
 import { askAi } from './ai.js'
 import { syncFromNotion } from './sync.js'
 import {
@@ -32,10 +32,14 @@ import { parseAnnouncement, saveAnnouncement } from './announce.js'
 import { saveCoverFromTelegram } from './covers.js'
 import { recognizeCover, visionEnabled, type Recognized } from './vision.js'
 import {
+  approveBook,
   findDuplicates,
   flushPending,
+  moderationQueueCount,
   pendingCount,
   putOnShelf,
+  rejectBook,
+  setModerationNotifier,
   setPendingNotifier,
 } from './publish.js'
 import { notionWriteEnabled, whoAmI } from './notion-write.js'
@@ -163,7 +167,7 @@ bot.command('start', async (ctx) => {
     )
   }
 
-  const total = await prisma.book.count({ where: { active: true, kind: 'book' } })
+  const total = await prisma.book.count({ where: { active: true, kind: 'book', reviewStatus: 'approved' } })
   await ctx.reply(
     [
       '<b>Добро пожаловать в «МнеНеЖалко»!</b> 👋',
@@ -998,6 +1002,14 @@ async function saveShelfDraft(ctx: any, d: ShelfDraft, city: string) {
     coverUrl: d.coverUrl,
   })
 
+  if (res.book.reviewStatus === 'pending') {
+    return ctx.reply(
+      `📖 «${esc(res.book.title)}» отправил на проверку модератору. ` +
+        'Как одобрят — книга появится в библиотеке, и я вам сообщу.',
+      { parse_mode: 'HTML', reply_markup: mainKeyboard() },
+    )
+  }
+
   const inNotion =
     res.notionStatus === 'synced'
       ? 'Книга уже в общей таблице проекта.'
@@ -1008,6 +1020,117 @@ async function saveShelfDraft(ctx: any, d: ShelfDraft, city: string) {
     reply_markup: mainKeyboard(),
   })
 }
+
+/* ── модерация книг ───────────────────────────────────────── */
+
+/** Карточка на модерацию с кнопками — для уведомления и для /queue. */
+function moderationCard(b: BookCard, owner: { name: string; telegram: string | null } | null) {
+  const lines = ['🔍 <b>Книга на проверку</b>', '', `<b>${esc(b.title)}</b>`]
+  if (b.author) lines.push(esc(b.author))
+  const meta = [b.genres.join(', '), b.languages.join(', ')].filter(Boolean).join(' · ')
+  if (meta) lines.push(`<i>${esc(meta)}</i>`)
+  if (b.kind === 'game') lines.push('<i>Настольная игра</i>')
+  if (b.city) lines.push(`📍 ${esc(b.city)}${b.district ? ' / ' + esc(b.district) : ''}`)
+  if (owner) {
+    lines.push(
+      `Библиотекарь: ${esc(owner.name)}${owner.telegram ? ` (@${esc(owner.telegram)})` : ''}`,
+    )
+  }
+  const kb = new InlineKeyboard()
+    .text('✅ Одобрить', `mod:ok:${b.id}`)
+    .text('❌ Отклонить', `mod:no:${b.id}`)
+    .row()
+    .text('🔍 Дубли', `mod:dups:${b.id}`)
+  return { text: lines.join('\n'), kb }
+}
+
+// новая книга ушла на модерацию — показываем админам карточку с кнопками
+setModerationNotifier(async (book, owner) => {
+  if (!env.adminIds.length) return
+  const { text, kb } = moderationCard(book, owner)
+  for (const id of env.adminIds) {
+    await bot.api
+      .sendMessage(String(id), text, {
+        parse_mode: 'HTML',
+        reply_markup: kb,
+        link_preview_options: { is_disabled: true },
+      })
+      .catch(() => {})
+  }
+})
+
+bot.callbackQuery(/^mod:ok:(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const res = await approveBook(ctx.match![1], BigInt(ctx.from.id))
+  if (!res) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  await ctx.answerCallbackQuery({ text: 'Одобрено ✅' })
+  await ctx.editMessageText(`✅ Одобрено: «${esc(res.card.title)}» — теперь в каталоге.`, {
+    parse_mode: 'HTML',
+  })
+  if (res.addedByTg) {
+    await bot.api
+      .sendMessage(
+        String(res.addedByTg),
+        `✅ Ваша книга «${esc(res.card.title)}» прошла проверку и появилась в библиотеке. Спасибо!`,
+        { parse_mode: 'HTML', reply_markup: mainKeyboard() },
+      )
+      .catch(() => {})
+  }
+})
+
+bot.callbackQuery(/^mod:no:(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const res = await rejectBook(ctx.match![1], BigInt(ctx.from.id), null)
+  if (!res) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  await ctx.answerCallbackQuery({ text: 'Отклонено' })
+  await ctx.editMessageText(`❌ Отклонено: «${esc(res.card.title)}».`, { parse_mode: 'HTML' })
+  if (res.addedByTg) {
+    await bot.api
+      .sendMessage(
+        String(res.addedByTg),
+        `К сожалению, книга «${esc(res.card.title)}» не прошла проверку. ` +
+          'Если это ошибка — напишите @LizavetaZh.',
+        { parse_mode: 'HTML' },
+      )
+      .catch(() => {})
+  }
+})
+
+bot.callbackQuery(/^mod:dups:(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const book = await prisma.book.findUnique({ where: { id: ctx.match![1] } })
+  if (!book) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  await ctx.answerCallbackQuery()
+  const dups = await findDuplicates(book.title, book.author)
+  const text = dups.length
+    ? 'Возможные дубли в каталоге:\n' +
+      dups.map((b) => `• ${esc(b.title)}${b.owner ? ` — ${esc(b.owner.name)}` : ''}`).join('\n')
+    : 'Дублей в каталоге не нашёл.'
+  await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+})
+
+/** Очередь модерации: показать книги, ждущие проверки. */
+bot.command('queue', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const count = await moderationQueueCount()
+  if (!count) return ctx.reply('Очередь модерации пуста.')
+  const rows = await prisma.book.findMany({
+    where: { reviewStatus: 'pending' },
+    include: { owner: true },
+    orderBy: { submittedAt: 'asc' },
+    take: 10,
+  })
+  await ctx.reply(`На проверке: ${count}. Показываю ${rows.length}:`)
+  for (const b of rows) {
+    const { text, kb } = moderationCard(toCard({ ...b, owner: b.owner }), b.owner)
+    await ctx.reply(text, {
+      parse_mode: 'HTML',
+      reply_markup: kb,
+      link_preview_options: { is_disabled: true },
+    })
+    await new Promise((r) => setTimeout(r, 40))
+  }
+})
 
 /* ── админские команды ────────────────────────────────────── */
 

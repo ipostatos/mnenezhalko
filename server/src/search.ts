@@ -24,6 +24,9 @@ export type BookCard = {
   coverUrl: string | null
   status: string
   source: string
+  /** состояние модерации: pending | approved | rejected | deleted */
+  reviewStatus: string
+  rejectionReason: string | null
   owner: {
     id: string
     name: string
@@ -64,12 +67,15 @@ export function toCard(b: any): BookCard {
     coverUrl: b.coverUrl,
     status: b.status,
     source: b.source,
+    reviewStatus: b.reviewStatus ?? 'approved',
+    rejectionReason: b.rejectionReason ?? null,
     owner: b.owner ?? null,
   }
 }
 
 function whereOf(p: SearchParams): Prisma.BookWhereInput {
-  const and: Prisma.BookWhereInput[] = [{ active: true }]
+  // в каталог попадают только одобренные (без модерации все книги одобрены по дефолту)
+  const and: Prisma.BookWhereInput[] = [{ active: true, reviewStatus: 'approved' }]
   if (p.kind) and.push({ kind: p.kind })
   if (p.city) and.push({ city: p.city })
   if (p.ownerId) and.push({ ownerId: p.ownerId })
@@ -144,7 +150,7 @@ export async function searchBooks(p: SearchParams) {
 
 export async function bookById(id: string) {
   const b = await prisma.book.findFirst({
-    where: { id, active: true },
+    where: { id, active: true, reviewStatus: 'approved' },
     include: { owner: OWNER_SELECT },
   })
   return b ? toCard(b) : null
@@ -171,7 +177,11 @@ export async function facets(city?: string) {
 }
 
 async function computeFacets(city?: string) {
-  const where: Prisma.BookWhereInput = { active: true, ...(city ? { city } : {}) }
+  const where: Prisma.BookWhereInput = {
+    active: true,
+    reviewStatus: 'approved',
+    ...(city ? { city } : {}),
+  }
   const rows = await prisma.book.findMany({
     where,
     select: { genres: true, languages: true, city: true, kind: true },

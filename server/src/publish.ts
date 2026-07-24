@@ -8,8 +8,9 @@
  * остаётся со статусом `pending`/`failed` и уходит в общую таблицу позже —
  * ручным «дожимом» или автоматически перед очередным синком.
  */
+import type { Librarian } from '@prisma/client'
 import { prisma, buildSearch } from './db.js'
-import { isAdmin } from './env.js'
+import { env, isAdmin } from './env.js'
 import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
 import { createBook, createOwner, notionWriteEnabled } from './notion-write.js'
 import { linkLibrarian } from './librarian.js'
@@ -41,8 +42,38 @@ export const setPendingNotifier = (fn: PendingNotifier) => {
   notifier = fn
 }
 
+/** Карточка ушла на модерацию — показываем админам с кнопками одобрить/отклонить. */
+type ModerationNotifier = (book: BookCard, owner: Librarian) => void | Promise<void>
+let moderationNotifier: ModerationNotifier | null = null
+export const setModerationNotifier = (fn: ModerationNotifier) => {
+  moderationNotifier = fn
+}
+
 const cityDistrictOf = (city?: string | null, district?: string | null) =>
   city ? (district ? `${city}/${district}` : city) : null
+
+/**
+ * Заводит владельца в Owners (если ещё нет) и льёт книгу в общую таблицу.
+ * Общий путь для мгновенного добавления и для одобрения после модерации.
+ */
+async function sendBookToNotion(bookId: string, librarian: Librarian) {
+  let notionError: string | null = null
+  if (notionWriteEnabled() && !librarian.notionId) {
+    try {
+      const notionId = await createOwner({
+        name: librarian.name,
+        telegram: librarian.telegram,
+        instagram: librarian.instagram,
+        cityDistrict: cityDistrictOf(librarian.city, librarian.district),
+      })
+      await prisma.librarian.update({ where: { id: librarian.id }, data: { notionId } })
+    } catch (e: any) {
+      notionError = `Owners: ${e?.message ?? e}`
+      console.error('[notion] не удалось завести библиотекаря:', notionError)
+    }
+  }
+  return (await pushToNotion(bookId, notionError)).book
+}
 
 export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
   const user = await prisma.user.upsert({
@@ -57,8 +88,8 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     update: { username: d.username ?? undefined, city: d.city ?? undefined },
   })
 
-  // 1. библиотекарь у нас — единая идентификация: по tgId, затем по нику, затем создание
-  let librarian = (await linkLibrarian(
+  // библиотекарь у нас — единая идентификация: по tgId, затем по нику, затем создание
+  const librarian = (await linkLibrarian(
     {
       tgId: d.tgId,
       username: d.username,
@@ -69,27 +100,11 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     { allowCreate: true },
   ))!
 
-  // 2. библиотекарь в Owners
-  let notionError: string | null = null
-  if (notionWriteEnabled() && !librarian.notionId) {
-    try {
-      const notionId = await createOwner({
-        name: librarian.name,
-        telegram: librarian.telegram,
-        instagram: librarian.instagram,
-        cityDistrict: cityDistrictOf(librarian.city, librarian.district),
-      })
-      librarian = await prisma.librarian.update({
-        where: { id: librarian.id },
-        data: { notionId },
-      })
-    } catch (e: any) {
-      notionError = `Owners: ${e?.message ?? e}`
-      console.error('[notion] не удалось завести библиотекаря:', notionError)
-    }
-  }
+  // модерация: свои книги (админ) и режим без модерации одобряются сразу
+  const autoApprove = !env.moderation || isAdmin(d.tgId)
+  const now = new Date()
 
-  // 3. карточка у нас — всегда, чтобы поиск видел её сразу
+  // карточка у нас — всегда, чтобы полка/поиск видели её сразу
   const city = d.city ?? librarian.city ?? null
   const district = d.district ?? librarian.district ?? null
   const data = {
@@ -103,19 +118,26 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     coverUrl: d.coverUrl?.slice(0, 1000) || null,
     source: 'bot',
     addedByTg: d.tgId,
-    addedAt: new Date(),
+    addedAt: now,
     ownerId: librarian.id,
     notionStatus: 'pending',
+    reviewStatus: autoApprove ? 'approved' : 'pending',
+    submittedAt: now,
+    reviewedAt: autoApprove ? now : null,
+    reviewedByTg: autoApprove ? d.tgId : null,
   }
-  let book = await prisma.book.create({
-    data: { ...data, search: buildSearch(data) },
-  })
+  let book = await prisma.book.create({ data: { ...data, search: buildSearch(data) } })
   invalidateFacets()
 
-  // 4. строка в общей таблице
-  const pushed = await pushToNotion(book.id, notionError)
-  book = pushed.book
+  // на проверку: в каталог и Notion не пускаем, показываем админам карточку
+  if (!autoApprove) {
+    const card = toCard({ ...book, owner: librarian })
+    await Promise.resolve(moderationNotifier?.(card, librarian)).catch(() => {})
+    return { book: card, notionStatus: book.notionStatus, notionError: null }
+  }
 
+  // одобрено сразу — заводим владельца и льём книгу в общую таблицу
+  book = await sendBookToNotion(book.id, librarian)
   const card = toCard({ ...book, owner: librarian })
   if (book.notionStatus !== 'synced') {
     await Promise.resolve(
@@ -123,6 +145,45 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     ).catch(() => {})
   }
   return { book: card, notionStatus: book.notionStatus, notionError: book.notionError }
+}
+
+export type ReviewResult = { card: BookCard; addedByTg: bigint | null }
+
+/** Одобрить книгу с модерации: пускаем в каталог и в общую таблицу Notion. */
+export async function approveBook(bookId: string, adminTg: bigint): Promise<ReviewResult | null> {
+  const book = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
+  if (!book) return null
+  if (book.reviewStatus !== 'approved') {
+    await prisma.book.update({
+      where: { id: bookId },
+      data: { reviewStatus: 'approved', reviewedByTg: adminTg, reviewedAt: new Date() },
+    })
+    invalidateFacets()
+  }
+  let updated = await prisma.book.findUniqueOrThrow({ where: { id: bookId } })
+  if (book.owner) updated = await sendBookToNotion(bookId, book.owner)
+  return { card: toCard({ ...updated, owner: book.owner }), addedByTg: book.addedByTg }
+}
+
+/** Отклонить книгу: остаётся у владельца с причиной, в каталог/Notion не идёт. */
+export async function rejectBook(
+  bookId: string,
+  adminTg: bigint,
+  reason: string | null,
+): Promise<ReviewResult | null> {
+  const book = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
+  if (!book) return null
+  const updated = await prisma.book.update({
+    where: { id: bookId },
+    data: {
+      reviewStatus: 'rejected',
+      reviewedByTg: adminTg,
+      reviewedAt: new Date(),
+      rejectionReason: reason?.slice(0, 300) ?? null,
+    },
+  })
+  invalidateFacets()
+  return { card: toCard({ ...updated, owner: book.owner }), addedByTg: book.addedByTg }
 }
 
 /** Одна попытка положить уже созданную карточку в общую таблицу. */
@@ -179,7 +240,13 @@ async function pushToNotion(bookId: string, previousError: string | null = null)
 export async function flushPending(limit = 50): Promise<{ ok: number; failed: number }> {
   if (!notionWriteEnabled()) return { ok: 0, failed: 0 }
   const rows = await prisma.book.findMany({
-    where: { source: 'bot', notionId: null, notionStatus: { in: ['pending', 'failed'] } },
+    // только одобренные — книги на модерации/отклонённые в общую таблицу не уходят
+    where: {
+      source: 'bot',
+      reviewStatus: 'approved',
+      notionId: null,
+      notionStatus: { in: ['pending', 'failed'] },
+    },
     select: { id: true },
     take: limit,
   })
@@ -194,8 +261,17 @@ export async function flushPending(limit = 50): Promise<{ ok: number; failed: nu
 
 export const pendingCount = () =>
   prisma.book.count({
-    where: { source: 'bot', notionId: null, notionStatus: { in: ['pending', 'failed'] } },
+    where: {
+      source: 'bot',
+      reviewStatus: 'approved',
+      notionId: null,
+      notionStatus: { in: ['pending', 'failed'] },
+    },
   })
+
+/** Сколько книг ждёт модерации. */
+export const moderationQueueCount = () =>
+  prisma.book.count({ where: { reviewStatus: 'pending' } })
 
 /**
  * Лайфхак из инструкции: та же книга уже может быть у кого-то —

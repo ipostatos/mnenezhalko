@@ -49,7 +49,7 @@ function tooOften(key: string, limit: number, windowMs: number): boolean {
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/health', async () => {
     const [books, librarians, sync] = await Promise.all([
-      prisma.book.count({ where: { active: true } }),
+      prisma.book.count({ where: { active: true, reviewStatus: 'approved' } }),
       prisma.librarian.count(),
       prisma.syncState.findUnique({ where: { key: 'notion' } }),
     ])
@@ -120,7 +120,7 @@ export async function registerRoutes(app: FastifyInstance) {
       where: { id },
       include: {
         books: {
-          where: { active: true },
+          where: { active: true, reviewStatus: 'approved' },
           orderBy: { title: 'asc' },
           take: 200,
         },
@@ -238,7 +238,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const counts = await prisma.book.groupBy({
       by: ['city'],
       _count: true,
-      where: { active: true },
+      where: { active: true, reviewStatus: 'approved' },
     })
     const byCity = new Map(counts.map((c) => [c.city ?? '', c._count]))
     const groups = await prisma.cityGroup.findMany({ orderBy: [{ city: 'asc' }, { sort: 'asc' }] })

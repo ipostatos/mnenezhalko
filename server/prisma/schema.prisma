@@ -72,6 +72,15 @@ model Book {
   /// путь карточки в общую таблицу: local | pending | synced | failed
   notionStatus String @default("local")
   notionError  String?
+  /// состояние модерации: pending | approved | rejected | deleted.
+  /// Дефолт approved — книги из Notion и режим без модерации попадают в каталог сразу.
+  reviewStatus    String    @default("approved")
+  reviewedByTg    BigInt?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  submittedAt     DateTime?
+  deletedAt       DateTime?
+  deletedByTg     BigInt?
   addedByTg BigInt?
   search    String    @default("") // нормализованная строка для поиска
   active    Boolean   @default(true)
@@ -85,6 +94,7 @@ model Book {
   @@index([kind])
   @@index([city])
   @@index([ownerId])
+  @@index([reviewStatus])
 }
 
 /// «У кого моя книга сейчас»: выдача книги из рук в руки

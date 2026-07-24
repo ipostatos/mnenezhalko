@@ -42,7 +42,9 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   const [kind, setKind] = useState('book')
   const [facets, setFacets] = useState<Facets | null>(null)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState<{ id: string; inNotion: boolean } | null>(null)
+  const [saved, setSaved] = useState<{ id: string; inNotion: boolean; pending: boolean } | null>(
+    null,
+  )
 
   const [cover, setCover] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -117,7 +119,11 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
         coverImage: cover && cover.startsWith('data:') ? cover : undefined,
       })
       haptic('success')
-      setSaved({ id: res.book.id, inNotion: res.notionStatus === 'synced' })
+      setSaved({
+        id: res.book.id,
+        inNotion: res.notionStatus === 'synced',
+        pending: res.book.reviewStatus === 'pending',
+      })
     } catch (e: any) {
       showAlert(e.message === 'unauthorized' ? 'Откройте приложение через бота' : e.message)
     } finally {
@@ -128,17 +134,28 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   if (saved) {
     return (
       <div className="empty">
-        <div className="big">🎉</div>
-        Книга на полке! Теперь её видно в поиске, а с вами свяжутся напрямую в Telegram.
-        <div className="sub" style={{ marginTop: 'var(--sp-2)' }}>
-          {saved.inNotion
-            ? 'Карточка уже в общей таблице проекта.'
-            : 'В общую таблицу проекта карточка уйдёт чуть позже — админы получили уведомление.'}
-        </div>
+        <div className="big">{saved.pending ? '📖' : '🎉'}</div>
+        {saved.pending ? (
+          <>
+            Книга отправлена на проверку модератору. Как одобрят — она появится в библиотеке, и бот
+            вам сообщит.
+          </>
+        ) : (
+          <>
+            Книга на полке! Теперь её видно в поиске, а с вами свяжутся напрямую в Telegram.
+            <div className="sub" style={{ marginTop: 'var(--sp-2)' }}>
+              {saved.inNotion
+                ? 'Карточка уже в общей таблице проекта.'
+                : 'В общую таблицу проекта карточка уйдёт чуть позже — админы получили уведомление.'}
+            </div>
+          </>
+        )}
         <div style={{ height: 'var(--sp-5)' }} />
-        <button className="btn" onClick={() => go({ name: 'book', id: saved.id })}>
-          Посмотреть карточку
-        </button>
+        {!saved.pending && (
+          <button className="btn" onClick={() => go({ name: 'book', id: saved.id })}>
+            Посмотреть карточку
+          </button>
+        )}
         <div style={{ height: 'var(--sp-2)' }} />
         <button
           className="btn ghost"

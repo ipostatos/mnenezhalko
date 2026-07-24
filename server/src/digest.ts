@@ -29,6 +29,7 @@ export async function digest(
   const since = new Date(Date.now() - PERIOD_HOURS[period] * 3600_000)
   const where = {
     active: true,
+    reviewStatus: 'approved',
     addedAt: { gte: since },
     ...(city ? { city } : {}),
   }
