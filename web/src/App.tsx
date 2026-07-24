@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api'
-import { backButton } from './telegram'
+import { backButton, onAppShow } from './telegram'
 import type { Health, LoanSummary, Me } from './types'
 import { Home } from './screens/Home'
 import { Library } from './screens/Library'
@@ -51,9 +51,14 @@ export function App() {
   const back = () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
 
   useEffect(() => {
-    api.health().then(setHealth).catch(() => {})
-    api.me().then(setMe).catch(() => {})
-    api.loans().then((r) => setLoans(r.summary)).catch(() => {})
+    const refresh = () => {
+      api.health().then(setHealth).catch(() => {})
+      api.me().then(setMe).catch(() => {})
+      api.loans().then((r) => setLoans(r.summary)).catch(() => {})
+    }
+    refresh()
+    // вернулись из фона — подтянуть свежие данные вместо устаревших
+    return onAppShow(refresh)
   }, [])
 
   useEffect(() => backButton(stack.length > 1, back), [stack.length])

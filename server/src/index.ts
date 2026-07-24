@@ -18,12 +18,39 @@ const webDist = path.resolve(here, '../../web/dist')
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 12 * 1024 * 1024 })
 
 await app.register(cors, { origin: true })
+
+// API не кэшируем — данные меняются (кроме ручек, что сами выставили Cache-Control,
+// например обложки: они адресуются по хэшу и живут долго)
+app.addHook('onSend', (req, reply, payload, done) => {
+  if (req.url.startsWith('/api/') && !reply.getHeader('cache-control')) {
+    reply.header('Cache-Control', 'no-store')
+  }
+  done(null, payload)
+})
+
 await registerRoutes(app)
 
 // Mini App раздаём тем же сервером
-await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false })
+await app.register(fastifyStatic, {
+  root: webDist,
+  prefix: '/',
+  wildcard: false,
+  setHeaders: (res: any, filePath: string) => {
+    if (filePath.endsWith('index.html')) {
+      // всегда свежий: тянет за собой актуальные хэшированные ассеты
+      res.setHeader('Cache-Control', 'no-store')
+    } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      // имена ассетов хэшированы — кэшируем навсегда
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    } else {
+      // прочее (иллюстрации /il) — имена не хэшированы, умеренный кэш на сутки
+      res.setHeader('Cache-Control', 'public, max-age=86400')
+    }
+  },
+})
 app.setNotFoundHandler((req, reply) => {
   if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'not_found' })
+  reply.header('Cache-Control', 'no-store')
   return reply.sendFile('index.html')
 })
 

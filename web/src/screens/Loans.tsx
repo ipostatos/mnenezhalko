@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Loan, LoanSummary, HistoryLoan } from '../types'
-import { haptic, openTg, showAlert, showConfirm } from '../telegram'
+import { haptic, openTg, showAlert, showConfirm, onAppShow } from '../telegram'
 import { MoodBoard } from './MoodBoard'
 
 const UNDO_ERRORS: Record<string, string> = {
@@ -54,6 +54,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
   useEffect(() => {
     load()
     api.myBooks().then(setMyBooks).catch(() => {})
+    return onAppShow(load)
   }, [])
 
   async function lend() {

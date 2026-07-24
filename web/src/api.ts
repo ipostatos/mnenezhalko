@@ -27,6 +27,8 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   const res = await fetch(path, {
     method,
     headers,
+    // Mini App живёт в вебвью Telegram — без этого он может отдать устаревший ответ
+    cache: 'no-store',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {

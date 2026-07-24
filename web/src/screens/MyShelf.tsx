@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
 import type { ShelfBook, ShelfState } from '../types'
-import { haptic, showAlert, showConfirm } from '../telegram'
+import { haptic, showAlert, showConfirm, onAppShow } from '../telegram'
 
 const STATE: Record<ShelfState, { label: string; tone: string }> = {
   active: { label: 'На полке', tone: '#4caf72' },
@@ -29,6 +29,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
 
   useEffect(() => {
     load()
+    return onAppShow(load)
   }, [])
 
   if (error) return <div className="error-banner">{error}</div>

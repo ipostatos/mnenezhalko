@@ -29,6 +29,19 @@ export function initTelegram() {
   } catch {}
 }
 
+/**
+ * Вызывает fn, когда Mini App снова становится видимым (вернулись из фона или
+ * переключились обратно во вкладку) — чтобы обновить данные, а не показывать
+ * устаревшие. Возвращает функцию отписки для cleanup в useEffect.
+ */
+export function onAppShow(fn: () => void) {
+  const handler = () => {
+    if (document.visibilityState === 'visible') fn()
+  }
+  document.addEventListener('visibilitychange', handler)
+  return () => document.removeEventListener('visibilitychange', handler)
+}
+
 export function haptic(style: 'light' | 'medium' | 'success' = 'light') {
   if (style === 'success') tg?.HapticFeedback?.notificationOccurred?.('success')
   else tg?.HapticFeedback?.impactOccurred?.(style)
