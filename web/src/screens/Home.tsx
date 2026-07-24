@@ -106,7 +106,7 @@ export function Home({
       url: MAIN_CHAT,
     },
     {
-      icon: 'camera',
+      icon: 'instagram',
       tone: '#d95c8a',
       title: 'Инстаграм',
       sub: '@mne_ne_zhalko_pl',
