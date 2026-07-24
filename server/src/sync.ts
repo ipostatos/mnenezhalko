@@ -2,6 +2,7 @@ import { prisma, buildSearch } from './db.js'
 import { env } from './env.js'
 import { fetchBooks, fetchGames, fetchLibrarians, normHandle } from './notion.js'
 import { flushPending } from './publish.js'
+import { flushTelegramUpdates } from './librarian.js'
 import { invalidateFacets } from './search.js'
 
 export type SyncReport = {
@@ -28,23 +29,38 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     log(`[sync] отправлено в Notion: ${pushed.ok}, с ошибкой: ${pushed.failed}`)
   }
 
+  // и обновлённые контакты — тоже до чтения, чтобы не затянуть их же старыми значениями
+  const contacts = await flushTelegramUpdates().catch((e) => {
+    log(`[sync] отправка контактов не удалась: ${e?.message ?? e}`)
+    return { ok: 0, failed: 0 }
+  })
+  if (contacts.ok || contacts.failed) {
+    log(`[sync] контактов обновлено: ${contacts.ok}, с ошибкой: ${contacts.failed}`)
+  }
+
   log('[sync] тяну библиотекарей…')
   const librarians = await fetchLibrarians()
   log(`[sync] библиотекарей: ${librarians.length}`)
 
+  // контакты, чьё локальное изменение ещё не уехало в Notion: их telegram синком
+  // НЕ перезаписываем, иначе откатим свежий ник старым значением из Notion
+  const pendingContacts = new Set(
+    (
+      await prisma.librarian.findMany({
+        where: { telegramSyncPending: true, notionId: { not: null } },
+        select: { notionId: true },
+      })
+    ).map((l) => l.notionId!),
+  )
+
   for (const l of librarians) {
-    const fields = {
-      name: l.name,
-      telegram: l.telegram,
-      telegramNorm: normHandle(l.telegram),
-      instagram: l.instagram,
-      city: l.city,
-      district: l.district,
-    }
+    const contact = { telegram: l.telegram, telegramNorm: normHandle(l.telegram) }
+    const common = { name: l.name, instagram: l.instagram, city: l.city, district: l.district }
     await prisma.librarian.upsert({
       where: { notionId: l.notionId },
-      create: { notionId: l.notionId, ...fields },
-      update: fields,
+      create: { notionId: l.notionId, ...common, ...contact },
+      // у записи с невыполненной отправкой локальный контакт — источник правды
+      update: pendingContacts.has(l.notionId) ? common : { ...common, ...contact },
     })
   }
 

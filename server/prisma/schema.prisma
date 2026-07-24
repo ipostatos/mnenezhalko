@@ -43,6 +43,8 @@ model Librarian {
   mergedIntoId String?
   /// когда последний раз сверяли Telegram-контакт с этой записью
   lastTelegramSyncAt DateTime?
+  /// локальный telegram изменился, но ещё не отправлен в Notion (дожать flushTelegramUpdates)
+  telegramSyncPending Boolean @default(false)
   createdAt DateTime @default(now())
 
   user  User?  @relation(fields: [tgId], references: [tgId])

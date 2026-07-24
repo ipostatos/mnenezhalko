@@ -17,6 +17,7 @@
 import type { Librarian } from '@prisma/client'
 import { prisma } from './db.js'
 import { normHandle } from './notion.js'
+import { notionWriteEnabled, updateOwnerTelegram } from './notion-write.js'
 
 export type LibIdentity = {
   tgId: bigint
@@ -36,6 +37,59 @@ let mergeNotifier: MergeNotifier | null = null
 export const setMergeNotifier = (fn: MergeNotifier) => {
   mergeNotifier = fn
 }
+
+/** Уведомление админам, когда обновлённый контакт не удалось отправить в Notion. */
+type TelegramFailNotifier = (lib: Librarian, error: string) => void | Promise<void>
+let telegramFailNotifier: TelegramFailNotifier | null = null
+export const setTelegramFailNotifier = (fn: TelegramFailNotifier) => {
+  telegramFailNotifier = fn
+}
+
+/**
+ * Отправляет обновлённый @Telegram в Notion. При успехе снимает флаг очереди,
+ * при ошибке — оставляет (дожмём позже) и говорит админам. Ничего не бросает:
+ * зовётся «в фоне», не блокируя ответ пользователю.
+ */
+async function syncTelegramToNotion(lib: Librarian): Promise<void> {
+  if (!lib.notionId || !notionWriteEnabled()) return
+  try {
+    await updateOwnerTelegram(lib.notionId, lib.telegram)
+    await prisma.librarian.update({
+      where: { id: lib.id },
+      data: { telegramSyncPending: false },
+    })
+  } catch (e: any) {
+    // флаг telegramSyncPending остаётся — дожмёт flushTelegramUpdates
+    await Promise.resolve(telegramFailNotifier?.(lib, e?.message ?? String(e))).catch(() => {})
+  }
+}
+
+/**
+ * Дожимает контакты, не уехавшие в Notion (нет сети, протух токен).
+ * Зовётся из синка и админской команды — как flushPending для книг.
+ */
+export async function flushTelegramUpdates(limit = 100): Promise<{ ok: number; failed: number }> {
+  if (!notionWriteEnabled()) return { ok: 0, failed: 0 }
+  const rows = await prisma.librarian.findMany({
+    where: { telegramSyncPending: true, notionId: { not: null } },
+    take: limit,
+  })
+  let ok = 0
+  let failed = 0
+  for (const lib of rows) {
+    try {
+      await updateOwnerTelegram(lib.notionId!, lib.telegram)
+      await prisma.librarian.update({ where: { id: lib.id }, data: { telegramSyncPending: false } })
+      ok++
+    } catch {
+      failed++
+    }
+  }
+  return { ok, failed }
+}
+
+export const pendingTelegramCount = () =>
+  prisma.librarian.count({ where: { telegramSyncPending: true, notionId: { not: null } } })
 
 /**
  * Главная запись из группы дублей: с `notionId` (она останется в синке),
@@ -78,10 +132,19 @@ export async function linkLibrarian(
   // 1. уже привязан по tgId
   const byTgId = await prisma.librarian.findUnique({ where: { tgId: input.tgId } })
   if (byTgId) {
-    return prisma.librarian.update({
-      where: { id: byTgId.id },
-      data: backfill(byTgId, input, norm),
-    })
+    const data = backfill(byTgId, input, norm)
+    // #2: ник в Telegram сменился — контакт правим сразу (tgId надёжен, ник изменчив)
+    const storedNorm = byTgId.telegramNorm ?? normHandle(byTgId.telegram)
+    const changed = norm !== null && norm !== storedNorm
+    if (changed) {
+      data.telegram = input.username
+      data.telegramNorm = norm
+      if (byTgId.notionId && notionWriteEnabled()) data.telegramSyncPending = true
+    }
+    const updated = await prisma.librarian.update({ where: { id: byTgId.id }, data })
+    // отправку в Notion не ждём — ответ пользователю не должен зависеть от неё
+    if (changed && updated.telegramSyncPending) void syncTelegramToNotion(updated)
+    return updated
   }
 
   // 2. по нормализованному нику — среди не-архивных и ещё не занятых записей

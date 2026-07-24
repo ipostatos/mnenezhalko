@@ -39,7 +39,13 @@ import {
   setPendingNotifier,
 } from './publish.js'
 import { notionWriteEnabled, whoAmI } from './notion-write.js'
-import { linkLibrarian, setMergeNotifier } from './librarian.js'
+import {
+  linkLibrarian,
+  setMergeNotifier,
+  setTelegramFailNotifier,
+  flushTelegramUpdates,
+  pendingTelegramCount,
+} from './librarian.js'
 
 // при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
 // (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
@@ -1022,7 +1028,7 @@ bot.command('sync', async (ctx) => {
 /** Состояние канала записи в общую таблицу Notion. */
 bot.command('notion', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
-  const waiting = await pendingCount()
+  const [waiting, contacts] = await Promise.all([pendingCount(), pendingTelegramCount()])
   if (!notionWriteEnabled()) {
     return ctx.reply(
       `Запись в Notion выключена — нет NOTION_TOKEN_V2.\nЖдут отправки карточек: ${waiting}.`,
@@ -1032,20 +1038,23 @@ bot.command('notion', async (ctx) => {
     const me = await whoAmI()
     await ctx.reply(
       `Запись в Notion включена, аккаунт: ${me?.email ?? me?.id ?? 'неизвестен'}.\n` +
-        `Ждут отправки карточек: ${waiting}.\nДожать: /notionpush`,
+        `Ждут отправки: карточек ${waiting}, контактов ${contacts}.\nДожать: /notionpush`,
     )
   } catch (e: any) {
     await ctx.reply(`Токен Notion не работает: ${e?.message ?? e}\nЖдут отправки: ${waiting}.`)
   }
 })
 
-/** Дожать карточки, которые ещё не уехали в общую таблицу. */
+/** Дожать карточки и контакты, которые ещё не уехали в общую таблицу. */
 bot.command('notionpush', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
   if (!notionWriteEnabled()) return ctx.reply('Нет NOTION_TOKEN_V2 — отправлять нечем.')
   await ctx.reply('Отправляю…')
-  const r = await flushPending()
-  await ctx.reply(`Ушло в Notion: ${r.ok}, не получилось: ${r.failed}.`)
+  const [books, contacts] = await Promise.all([flushPending(), flushTelegramUpdates()])
+  await ctx.reply(
+    `Карточки: ушло ${books.ok}, не получилось ${books.failed}.\n` +
+      `Контакты: ушло ${contacts.ok}, не получилось ${contacts.failed}.`,
+  )
 })
 
 /**
@@ -1275,6 +1284,22 @@ setMergeNotifier(async (primary, others, input) => {
       .sendMessage(String(id), text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
       .catch(() => {})
   }
+})
+
+/**
+ * Обновлённый контакт библиотекаря не уехал в Notion (протух токен, нет сети).
+ * Локально он уже поправлен и стоит в очереди дожатия — сообщаем админам.
+ */
+setTelegramFailNotifier(async (lib, error) => {
+  if (!env.adminIds.length) return
+  const text = [
+    '🔴 <b>Контакт не ушёл в Notion</b>',
+    '',
+    `Библиотекарь <b>${esc(lib.name)}</b>: новый Telegram ${lib.telegram ? '@' + esc(lib.telegram) : '—'}.`,
+    'Локально поправлен и стоит в очереди. Дожать: /notionpush, состояние: /notion.',
+    `Причина: ${esc(error)}`,
+  ].join('\n')
+  await tellAdmins(text)
 })
 
 setPendingNotifier(async (book, reason) => {

@@ -166,6 +166,15 @@ export async function createOwner(o: OwnerDraft): Promise<string> {
   return id
 }
 
+/** Обновляет @Telegram у уже существующей строки Owners (контакт сменился). */
+export async function updateOwnerTelegram(notionId: string, telegram: string | null): Promise<void> {
+  const { owners } = await schemas()
+  const pid = owners.byName['@Telegram']
+  if (!pid) throw new Error('Owners: нет свойства @Telegram')
+  const value = telegram ? vUrl(`https://t.me/${telegram.replace(/^@/, '')}`) : [['']]
+  await submit([op(notionId, ['properties', pid], 'set', value)])
+}
+
 export type BookDraft = {
   kind: 'book' | 'game'
   title: string
