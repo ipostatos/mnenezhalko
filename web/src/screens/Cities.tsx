@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { CityInfo } from '../types'
 import { haptic, openTg } from '../telegram'
+import { Icon } from './Icon'
 
 export function Cities({
   city,
@@ -27,18 +28,21 @@ export function Cities({
       {cities.map((c) => (
         <div key={c.city}>
           <button
-            className="row-card"
+            className="row-card tile"
+            style={{ ['--tone' as any]: c.city === city ? 'var(--accent)' : '#3e9e6d' }}
             onClick={() => {
               haptic()
               setOpen((v) => (v === c.city ? null : c.city))
             }}
           >
-            <div className="ic-tile" style={{ ['--tone' as any]: c.city === city ? '#4caf72' : undefined }}>
-              {c.city === city ? '📍' : '🏙'}
+            <div className="ic-tile">
+              <Icon name="pin" />
             </div>
             <div className="grow">
               <div className="t">{c.city}</div>
-              <div className="d">{c.books} книг</div>
+              <div className="d">
+                {c.books} книг{c.city === city ? ' · ваш город' : ''}
+              </div>
             </div>
             <div className="chev">{open === c.city ? '⌄' : '›'}</div>
           </button>
@@ -46,8 +50,15 @@ export function Cities({
           {open === c.city && (
             <div style={{ padding: '0 0 var(--sp-3)' }}>
               {c.groups.map((g) => (
-                <button key={g.id} className="row-card" onClick={() => openTg(g.url)}>
-                  <div className="ic-tile sm">💬</div>
+                <button
+                  key={g.id}
+                  className="row-card tile"
+                  style={{ ['--tone' as any]: '#6d7bb5' }}
+                  onClick={() => openTg(g.url)}
+                >
+                  <div className="ic-tile sm">
+                    <Icon name="chat" />
+                  </div>
                   <div className="grow">
                     <div className="t-sm">{g.title}</div>
                     <div className="d">Открыть чат</div>
