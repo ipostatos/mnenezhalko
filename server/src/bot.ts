@@ -17,15 +17,13 @@ import { parseOffer, saveOffer } from './market.js'
 import {
   claimLoans,
   createLoan,
-  daysOut,
-  dueLoans,
   listBorrowed,
   listLoans,
   loanById,
   loanMood,
-  markReminded,
   markReturned,
   reopenLoan,
+  runOverdueReminders,
   summarize,
 } from './loans.js'
 import { digest, type DigestPeriod } from './digest.js'
@@ -653,34 +651,15 @@ bot.callbackQuery(/^loan:undo:(.+)$/, async (ctx) => {
  * Раз в сутки напоминаем про просроченные книги — мягко, обеим сторонам,
  * и не чаще раза в неделю по одной выдаче.
  */
-export async function remindOverdueLoans() {
-  const loans = await dueLoans()
-  for (const loan of loans) {
-    const days = daysOut(loan.takenAt)
-    const kb = new InlineKeyboard().text('✅ Книга вернулась', `loan:back:${loan.id}`)
-
-    if (loan.holderTg) {
-      await bot.api
-        .sendMessage(
-          String(loan.holderTg),
-          `📗 Напоминание: книга «${loan.title}» у вас уже ${days} дн. ` +
-            'Если дочитали — самое время вернуть её владельцу 🙂',
-          { reply_markup: kb },
-        )
-        .catch(() => {})
-    }
-    await bot.api
-      .sendMessage(
-        String(loan.ownerTg),
-        `📕 Ваша книга «${loan.title}» у @${loan.holderUsername ?? 'читателя'} уже ${days} дн.` +
-          (loan.holderTg ? '\nЯ напомнил читателю.' : `\nЧитатель пока не в боте: ${loanLink(loan.id)}`),
-        { reply_markup: kb, link_preview_options: { is_disabled: true } },
-      )
-      .catch(() => {})
-    await markReminded(loan.id)
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  if (loans.length) console.log(`[loans] напомнил по ${loans.length} выдачам`)
+export async function remindOverdueLoans(now?: Date) {
+  const r = await runOverdueReminders({
+    now,
+    botUsername: BOT_USERNAME,
+    delayMs: 50, // Telegram не любит больше ~30 сообщений в секунду
+    send: (chatId, text, opts) => bot.api.sendMessage(chatId, text, opts as any),
+  })
+  if (r.loans) console.log(`[loans] напомнил по ${r.loans} выдачам`)
+  return r
 }
 
 /* ── дайджест новинок ─────────────────────────────────────── */

@@ -257,6 +257,66 @@ export async function markReminded(id: string) {
   return loan
 }
 
+/** Адаптер отправки: в проде — bot.api.sendMessage, в тестах — фейковый сборщик. */
+export type ReminderSend = (
+  chatId: string,
+  text: string,
+  opts?: { reply_markup?: unknown; link_preview_options?: unknown },
+) => Promise<unknown>
+
+/**
+ * Рассылка напоминаний по просроченным выдачам. Ядро без grammY: время (`now`)
+ * и отправку (`send`) инъектируем, поэтому логику можно проверить тестом, а не
+ * ждать реальный месяц. Ошибка отправки одному получателю не срывает остальных.
+ */
+export async function runOverdueReminders(opts: {
+  send: ReminderSend
+  botUsername: string
+  now?: Date
+  delayMs?: number
+}): Promise<{ loans: number; sent: number; failed: number }> {
+  const now = opts.now ?? new Date()
+  const loans = await dueLoans(now)
+  let sent = 0
+  let failed = 0
+  const track = (p: Promise<unknown>) =>
+    p.then(() => {
+      sent++
+    }).catch(() => {
+      failed++
+    })
+
+  for (const loan of loans) {
+    const days = daysOut(loan.takenAt, now)
+    const kb = {
+      inline_keyboard: [[{ text: '✅ Книга вернулась', callback_data: `loan:back:${loan.id}` }]],
+    }
+    const link = `https://t.me/${opts.botUsername}?start=loan_${loan.id}`
+
+    if (loan.holderTg) {
+      await track(
+        opts.send(
+          String(loan.holderTg),
+          `📗 Напоминание: книга «${loan.title}» у вас уже ${days} дн. ` +
+            'Если дочитали — самое время вернуть её владельцу 🙂',
+          { reply_markup: kb },
+        ),
+      )
+    }
+    await track(
+      opts.send(
+        String(loan.ownerTg),
+        `📕 Ваша книга «${loan.title}» у @${loan.holderUsername ?? 'читателя'} уже ${days} дн.` +
+          (loan.holderTg ? '\nЯ напомнил читателю.' : `\nЧитатель пока не в боте: ${link}`),
+        { reply_markup: kb, link_preview_options: { is_disabled: true } },
+      ),
+    )
+    await markReminded(loan.id)
+    if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs))
+  }
+  return { loans: loans.length, sent, failed }
+}
+
 /** Сколько дней книга на руках. */
 export const daysOut = (takenAt: Date, now = new Date()) =>
   Math.max(0, Math.floor((now.getTime() - takenAt.getTime()) / day))
