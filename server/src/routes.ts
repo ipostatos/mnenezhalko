@@ -130,11 +130,12 @@ export async function registerRoutes(app: FastifyInstance) {
     type Row = { id: string; title: string; coverUrl: string }
     const rows = city
       ? await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
-          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND city = ${city}
-          ORDER BY RANDOM() LIMIT 30`
+          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
+          AND city = ${city}
+          ORDER BY RANDOM() LIMIT 40`
       : await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
-          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL
-          ORDER BY RANDOM() LIMIT 30`
+          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
+          ORDER BY RANDOM() LIMIT 40`
     return json(rows)
   })
 

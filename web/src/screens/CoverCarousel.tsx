@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { haptic } from '../telegram'
 
 export type CarouselBook = { id: string; title: string; coverUrl: string }
@@ -17,6 +17,9 @@ export function CoverCarousel({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const rafId = useRef(0)
+  // обложки, которые не загрузились (битая ссылка) — убираем из карусели
+  const [broken, setBroken] = useState<Set<string>>(new Set())
+  const shown = books.filter((b) => !broken.has(b.id))
 
   const update = () => {
     const el = ref.current
@@ -41,19 +44,19 @@ export function CoverCarousel({
 
   useEffect(() => {
     const el = ref.current
-    if (!el || !books.length) return
-    const center = el.children[Math.floor(books.length / 2)] as HTMLElement | undefined
+    if (!el || !shown.length) return
+    const center = el.children[Math.floor(shown.length / 2)] as HTMLElement | undefined
     if (center) el.scrollLeft = center.offsetLeft + center.offsetWidth / 2 - el.clientWidth / 2
     update()
     return () => cancelAnimationFrame(rafId.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [books])
+  }, [shown.length])
 
-  if (!books.length) return null
+  if (!shown.length) return null
 
   return (
     <div className="cover-carousel" ref={ref} onScroll={onScroll}>
-      {books.map((b) => (
+      {shown.map((b) => (
         <button
           key={b.id}
           className="cc-item"
@@ -63,7 +66,13 @@ export function CoverCarousel({
             onOpen(b.id)
           }}
         >
-          <img src={b.coverUrl} alt="" loading="lazy" draggable={false} />
+          <img
+            src={b.coverUrl}
+            alt=""
+            loading="lazy"
+            draggable={false}
+            onError={() => setBroken((s) => new Set(s).add(b.id))}
+          />
         </button>
       ))}
     </div>
