@@ -126,6 +126,10 @@ bot.command('start', async (ctx) => {
     },
     update: { username: ctx.from!.username },
   })
+
+  // пришёл по кнопке «поддержать» из Mini App вне Telegram — сразу меню сумм
+  if (payload === 'donate') return showDonateMenu(ctx)
+
   const claimed = await claimLoans(BigInt(ctx.from!.id), ctx.from!.username, loanId)
 
   if (loanId) {
@@ -184,6 +188,7 @@ bot.command('help', (ctx) =>
       '/events — ближайшие встречи',
       '/alerts — анонсы новых встреч: включить или выключить',
       '/baraholka — барахолка города',
+      '/donate — поддержать проект звёздами Telegram',
       '',
       'Пришлите <b>фото книги или настолки</b> — распознаю название, автора, язык и жанр,',
       'заведу вас библиотекарем и добавлю книгу в общую таблицу проекта.',
@@ -193,6 +198,88 @@ bot.command('help', (ctx) =>
     { parse_mode: 'HTML' },
   ),
 )
+
+/* ── донат Telegram Stars ─────────────────────────────────── */
+
+/**
+ * Разрешённые суммы доната в звёздах (XTR). Whitelist: и в боте, и в /api/donate/link
+ * счёт выставляется только на эти суммы, произвольную через API не подсунуть.
+ * Держать синхронно с DONATE_AMOUNTS в web/src/screens/About.tsx.
+ */
+export const DONATE_AMOUNTS = [50, 150, 500] as const
+export type DonateAmount = (typeof DONATE_AMOUNTS)[number]
+export const isDonateAmount = (n: unknown): n is DonateAmount =>
+  typeof n === 'number' && (DONATE_AMOUNTS as readonly number[]).includes(n)
+
+const DONATE_TITLE = 'Поддержать «МнеНеЖалко»'
+const DONATE_DESC =
+  'Спасибо! Взнос идёт на домен, сервер и ИИ-подбор книг — то, на чём живёт библиотека проекта.'
+
+/**
+ * Ссылка на счёт Telegram Stars для openInvoice в Mini App.
+ * Зовём сырой метод: provider_token для XTR не нужен, а сигнатура Bot API
+ * стабильна между версиями grammY (позиционная обёртка временами меняется).
+ */
+export function createDonateLink(amount: DonateAmount): Promise<string> {
+  return bot.api.raw.createInvoiceLink({
+    title: DONATE_TITLE,
+    description: DONATE_DESC,
+    payload: `donate:${amount}`,
+    provider_token: '', // для Stars (XTR) не нужен; пустая строка — так документирует Telegram
+    currency: 'XTR',
+    prices: [{ label: `${amount} ⭐`, amount }],
+  })
+}
+
+const donateKeyboard = () => {
+  const kb = new InlineKeyboard()
+  DONATE_AMOUNTS.forEach((a) => kb.text(`${a} ⭐`, `donate:${a}`))
+  return kb
+}
+
+/** Меню сумм — для команды /donate и диплинка ?start=donate внутри чата бота. */
+async function showDonateMenu(ctx: any) {
+  await ctx.reply(
+    [
+      '⭐ <b>Поддержать «МнеНеЖалко»</b>',
+      '',
+      'Проект некоммерческий и держится на энтузиазме. Звёзды идут на домен, сервер',
+      'и ИИ-подбор книг — то, без чего библиотека не живёт. Совсем не обязательно 🌿',
+      '',
+      'Выберите сумму — счёт откроется прямо здесь:',
+    ].join('\n'),
+    { parse_mode: 'HTML', reply_markup: donateKeyboard() },
+  )
+}
+
+bot.command('donate', showDonateMenu)
+
+bot.callbackQuery(/^donate:(\d+)$/, async (ctx) => {
+  const amount = Number(ctx.match![1])
+  if (!isDonateAmount(amount)) return ctx.answerCallbackQuery({ text: 'Такой суммы нет' })
+  await ctx.answerCallbackQuery()
+  await ctx.api.raw.sendInvoice({
+    chat_id: ctx.chat!.id,
+    title: DONATE_TITLE,
+    description: DONATE_DESC,
+    payload: `donate:${amount}`,
+    provider_token: '', // Stars (XTR): провайдер не нужен
+    currency: 'XTR',
+    prices: [{ label: `${amount} ⭐`, amount }],
+  })
+})
+
+// перед списанием Telegram спрашивает подтверждение — соглашаемся (нет склада/доставки)
+bot.on('pre_checkout_query', (ctx) => ctx.answerPreCheckoutQuery(true).catch(() => {}))
+
+// оплата прошла (в т.ч. из openInvoice в Mini App) — благодарим
+bot.on('message:successful_payment', async (ctx) => {
+  const stars = ctx.message.successful_payment.total_amount
+  await ctx.reply(
+    `🌿 Спасибо за поддержку — ${stars} ⭐! Благодаря вам библиотека проекта живёт и растёт.`,
+    { reply_markup: mainKeyboard() },
+  )
+})
 
 bot.command('find', async (ctx) => {
   const q = ctx.match?.toString().trim()
@@ -1205,6 +1292,7 @@ export async function setupBotCommands() {
     { command: 'events', description: 'Ближайшие встречи' },
     { command: 'alerts', description: 'Анонсы новых встреч' },
     { command: 'baraholka', description: 'Барахолка по городам' },
+    { command: 'donate', description: 'Поддержать проект звёздами' },
     { command: 'help', description: 'Помощь' },
   ])
   // постоянная кнопка Mini App слева от поля ввода

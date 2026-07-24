@@ -98,4 +98,6 @@ export const api = {
   recognize: (image: string) => req<RecognizeResult>('POST', '/api/recognize', { image }),
   duplicates: (title: string, author?: string) =>
     req<Book[]>('GET', `/api/duplicates${qs({ title, author })}`),
+  /** Ссылка на счёт Telegram Stars для доната прямо в Mini App. */
+  donateLink: (amount: number) => req<{ link: string }>('POST', '/api/donate/link', { amount }),
 }

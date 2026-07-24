@@ -872,6 +872,26 @@ textarea.input {
   border-left: 2px solid var(--border);
 }
 
+.donate-row {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+
+.donate-btn {
+  flex: 1;
+}
+
+.donate-thanks {
+  margin-bottom: var(--sp-4);
+  padding: var(--sp-4);
+  text-align: center;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  border: 1px solid var(--accent);
+  border-radius: var(--r-lg);
+}
+
 .curator {
   margin: var(--sp-6) 0 var(--sp-5);
   padding: var(--sp-4);

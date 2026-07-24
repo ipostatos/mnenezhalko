@@ -1,15 +1,42 @@
+import { useState } from 'react'
 import type { Route } from '../App'
 import type { Health } from '../types'
-import { openTg } from '../telegram'
+import { openTg, openInvoice, haptic, showAlert, tg } from '../telegram'
+import { api } from '../api'
 
 const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
 const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
 const GUIDE = 'https://mnenezhalko.notion.site/3fcdfa8ed57444d7ae2129bf5c0299f7'
 const PROJECT = 'https://mnenezhalko.notion.site/in-Poland-e4f29a5687c449f79581add35f17791b'
 const CURATOR = 'https://t.me/LizavetaZh'
+const DONATE_BOT = 'https://t.me/mnenezhalkobot?start=donate'
+// держать синхронно с DONATE_AMOUNTS на сервере (server/src/bot.ts)
+const DONATE_AMOUNTS = [50, 150, 500]
 
 /** О проекте: что это, как устроено и как участвовать. */
 export function About({ go, health }: { go: (r: Route) => void; health: Health | null }) {
+  const [donating, setDonating] = useState(0)
+  const [thanked, setThanked] = useState(false)
+
+  async function donate(amount: number) {
+    // нативный счёт есть только внутри Telegram — иначе уводим в бота
+    if (!tg?.initData || !tg?.openInvoice) return openTg(DONATE_BOT)
+    if (donating) return
+    setDonating(amount)
+    try {
+      const { link } = await api.donateLink(amount)
+      const status = await openInvoice(link)
+      if (status === 'paid') {
+        haptic('success')
+        setThanked(true)
+      }
+    } catch {
+      showAlert('Не получилось открыть счёт. Попробуйте позже или через бота: /donate')
+    } finally {
+      setDonating(0)
+    }
+  }
+
   return (
     <>
       <div className="hero">
@@ -107,6 +134,29 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         <div>Книга не вернулась вовремя — обычно это просто жизнь, напомните по-доброму.</div>
         <div>Пишите библиотекарю по-человечески: кто вы, откуда узнали, когда удобно встретиться.</div>
       </div>
+
+      <div className="section-title">Поддержать проект</div>
+      <p className="lead">
+        «МнеНеЖалко» некоммерческий и держится на энтузиазме. Если приложение пригодилось — можно
+        сказать спасибо звёздами Telegram: они идут на домен, сервер и ИИ-подбор книг. Совсем не
+        обязательно 🌿
+      </p>
+      {thanked ? (
+        <div className="donate-thanks">🌿 Спасибо за поддержку! Вы очень помогаете проекту.</div>
+      ) : (
+        <div className="donate-row">
+          {DONATE_AMOUNTS.map((a) => (
+            <button
+              key={a}
+              className="btn ghost donate-btn"
+              disabled={donating !== 0}
+              onClick={() => donate(a)}
+            >
+              {donating === a ? '…' : `${a} ⭐`}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="section-title">Куда идти дальше</div>
       <button className="row-card" onClick={() => openTg(MAIN_CHAT)}>

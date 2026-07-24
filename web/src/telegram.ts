@@ -34,6 +34,17 @@ export function openTg(url: string) {
   else window.open(url, '_blank')
 }
 
+/**
+ * Нативный платёжный лист Telegram Stars. Резолвится статусом из колбэка
+ * (`paid` | `cancelled` | `failed` | `pending`); вне Telegram — `unsupported`.
+ */
+export function openInvoice(link: string): Promise<string> {
+  return new Promise((resolve) => {
+    if (tg?.openInvoice) tg.openInvoice(link, (status: string) => resolve(status))
+    else resolve('unsupported')
+  })
+}
+
 export function showAlert(message: string) {
   if (tg?.showAlert) tg.showAlert(message)
   else alert(message)

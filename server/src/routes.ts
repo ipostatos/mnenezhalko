@@ -10,7 +10,7 @@ import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
 import { findDuplicates, putOnShelf } from './publish.js'
 import { digest } from './digest.js'
 import { createLoan, decorate, listBorrowed, listLoans, markReturned, summarize } from './loans.js'
-import { botUsername } from './bot.js'
+import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { notionWriteEnabled } from './notion-write.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -137,6 +137,24 @@ export async function registerRoutes(app: FastifyInstance) {
     const { text, city } = req.body as { text?: string; city?: string }
     if (!text || text.trim().length < 2) return reply.code(400).send({ error: 'empty' })
     return askAi(text.trim().slice(0, 500), city || undefined)
+  })
+
+  /**
+   * Счёт Telegram Stars для доната прямо в Mini App (openInvoice).
+   * Только своим (подпись Telegram) и с лимитом — как у прочих пишущих ручек.
+   */
+  app.post('/api/donate/link', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (tooOften(`donate:${u.id}`, 20, 60_000)) return reply.code(429).send({ error: 'too_many' })
+    const { amount } = req.body as { amount?: number }
+    if (!isDonateAmount(amount)) return reply.code(400).send({ error: 'bad_amount' })
+    try {
+      return { link: await createDonateLink(amount) }
+    } catch (e: any) {
+      req.log.error(`донат: не удалось создать счёт: ${e?.message ?? e}`)
+      return reply.code(502).send({ error: 'invoice_failed' })
+    }
   })
 
   /* ── «у кого моя книга сейчас» ──────────────────────────── */
