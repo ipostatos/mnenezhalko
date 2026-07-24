@@ -1,6 +1,6 @@
 import { prisma, buildSearch } from './db.js'
 import { env } from './env.js'
-import { fetchBooks, fetchGames, fetchLibrarians } from './notion.js'
+import { fetchBooks, fetchGames, fetchLibrarians, normHandle } from './notion.js'
 import { flushPending } from './publish.js'
 import { invalidateFacets } from './search.js'
 
@@ -33,34 +33,42 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
   log(`[sync] библиотекарей: ${librarians.length}`)
 
   for (const l of librarians) {
+    const fields = {
+      name: l.name,
+      telegram: l.telegram,
+      telegramNorm: normHandle(l.telegram),
+      instagram: l.instagram,
+      city: l.city,
+      district: l.district,
+    }
     await prisma.librarian.upsert({
       where: { notionId: l.notionId },
-      create: {
-        notionId: l.notionId,
-        name: l.name,
-        telegram: l.telegram,
-        instagram: l.instagram,
-        city: l.city,
-        district: l.district,
-      },
-      update: {
-        name: l.name,
-        telegram: l.telegram,
-        instagram: l.instagram,
-        city: l.city,
-        district: l.district,
-      },
+      create: { notionId: l.notionId, ...fields },
+      update: fields,
     })
   }
 
-  const ownerByNotion = new Map(
-    (
-      await prisma.librarian.findMany({
-        where: { notionId: { not: null } },
-        select: { id: true, notionId: true, city: true, district: true },
-      })
-    ).map((l) => [l.notionId!, l]),
-  )
+  // владелец по notionId, но с учётом слияния дублей: если запись объединена в
+  // другую, книги должны привязываться к главной — иначе синк вернёт их назад
+  const allLibs = await prisma.librarian.findMany({
+    select: { id: true, notionId: true, city: true, district: true, mergedIntoId: true },
+  })
+  const libById = new Map(allLibs.map((l) => [l.id, l]))
+  const resolvePrimary = (l: (typeof allLibs)[number]) => {
+    let cur = l
+    const seen = new Set<string>()
+    while (cur.mergedIntoId && libById.has(cur.mergedIntoId) && !seen.has(cur.id)) {
+      seen.add(cur.id)
+      cur = libById.get(cur.mergedIntoId)!
+    }
+    return cur
+  }
+  const ownerByNotion = new Map<string, { id: string; city: string | null; district: string | null }>()
+  for (const l of allLibs) {
+    if (!l.notionId) continue
+    const p = resolvePrimary(l)
+    ownerByNotion.set(l.notionId, { id: p.id, city: p.city ?? l.city, district: p.district ?? l.district })
+  }
 
   log('[sync] тяну книги…')
   const books = await fetchBooks()

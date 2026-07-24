@@ -39,6 +39,7 @@ import {
   setPendingNotifier,
 } from './publish.js'
 import { notionWriteEnabled, whoAmI } from './notion-write.js'
+import { linkLibrarian, setMergeNotifier } from './librarian.js'
 
 // при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
 // (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
@@ -481,7 +482,10 @@ bot.command('lend', async (ctx) => {
   })
 
   // если книга есть на полке владельца — привяжем карточку
-  const own = await prisma.librarian.findUnique({ where: { tgId: BigInt(ctx.from!.id) } })
+  const own = await linkLibrarian(
+    { tgId: BigInt(ctx.from!.id), username: ctx.from!.username, firstName: ctx.from!.first_name },
+    { allowCreate: false },
+  )
   const book = own
     ? await prisma.book.findFirst({
         where: { ownerId: own.id, active: true, title: { contains: title } },
@@ -1249,6 +1253,30 @@ export async function checkNotionToken() {
  * Карточки, не уехавшие в общую таблицу, показываем админам —
  * это ровно тот случай из инструкции, когда «админы внесут сами».
  */
+/**
+ * По одному нику нашлось несколько незанятых записей библиотекаря — привязались
+ * к главной, но остальные стоит свести вручную (или проверить, что это не разные
+ * люди с похожим ником). Показываем админам, чтобы разобрались.
+ */
+setMergeNotifier(async (primary, others, input) => {
+  if (!env.adminIds.length) return
+  const who = input.username ? `@${esc(input.username)}` : `id ${input.tgId}`
+  const text = [
+    '🔀 <b>Похоже, дубли библиотекаря</b>',
+    '',
+    `Пользователь ${who} привязан к записи <b>${esc(primary.name)}</b> (${primary.id}).`,
+    `Но по этому нику есть ещё записей: ${others.length}.`,
+    ...others.map((o) => `• ${esc(o.name)} (${o.id})${o.notionId ? ' — в Notion' : ''}`),
+    '',
+    'Проверьте и при необходимости сведите записи (перенос книг на одну).',
+  ].join('\n')
+  for (const id of env.adminIds) {
+    await bot.api
+      .sendMessage(String(id), text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+      .catch(() => {})
+  }
+})
+
 setPendingNotifier(async (book, reason) => {
   if (!env.adminIds.length) return
   const text = [

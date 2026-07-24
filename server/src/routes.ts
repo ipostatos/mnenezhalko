@@ -11,6 +11,7 @@ import { findDuplicates, putOnShelf } from './publish.js'
 import { digest } from './digest.js'
 import { createLoan, decorate, listBorrowed, listLoans, markReturned, summarize } from './loans.js'
 import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
+import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -67,7 +68,11 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const user = await upsertUser(u)
-    const librarian = await prisma.librarian.findUnique({ where: { tgId: u.id } })
+    // заодно привязываем импортированную из Notion запись по нику — полка подтянется
+    const librarian = await linkLibrarian(
+      { tgId: u.id, username: u.username, firstName: u.firstName },
+      { allowCreate: false },
+    )
     return json({ user, librarian })
   })
 
@@ -210,7 +215,10 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/my-books', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
-    const librarian = await prisma.librarian.findUnique({ where: { tgId: u.id } })
+    const librarian = await linkLibrarian(
+      { tgId: u.id, username: u.username, firstName: u.firstName },
+      { allowCreate: false },
+    )
     if (!librarian) return json([])
     const books = await prisma.book.findMany({
       where: { ownerId: librarian.id, active: true },

@@ -33,16 +33,23 @@ model Librarian {
   notionId  String?  @unique
   name      String
   telegram  String? // @handle без ссылки
+  /// нормализованный ник для матчинга: lower-case, без @/ссылки (см. normHandle)
+  telegramNorm String?
   instagram String?
   city      String?
   district  String?
   tgId      BigInt?  @unique
+  /// куда объединён дубль; непусто — запись архивная, книги перенесены на главную
+  mergedIntoId String?
+  /// когда последний раз сверяли Telegram-контакт с этой записью
+  lastTelegramSyncAt DateTime?
   createdAt DateTime @default(now())
 
   user  User?  @relation(fields: [tgId], references: [tgId])
   books Book[]
 
   @@index([city])
+  @@index([telegramNorm])
 }
 
 /// Книга или настольная игра в библиотеке проекта

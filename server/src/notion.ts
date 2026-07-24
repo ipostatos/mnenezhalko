@@ -278,6 +278,13 @@ export function tgHandle(raw: string | null): string | null {
   return null
 }
 
+/**
+ * Ключ для матчинга библиотекаря по нику: канонический handle в нижнем регистре.
+ * Ники Telegram регистронезависимы, поэтому сравниваем именно нормализованные.
+ */
+export const normHandle = (raw: string | null): string | null =>
+  tgHandle(raw)?.toLowerCase() ?? null
+
 export async function fetchLibrarians(): Promise<NotionLibrarian[]> {
   const { rows, schema } = await fetchAll(
     env.notion.librarians.collection,

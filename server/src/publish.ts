@@ -12,6 +12,7 @@ import { prisma, buildSearch } from './db.js'
 import { isAdmin } from './env.js'
 import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
 import { createBook, createOwner, notionWriteEnabled } from './notion-write.js'
+import { linkLibrarian } from './librarian.js'
 
 export type ShelfDraft = {
   tgId: bigint
@@ -56,27 +57,17 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     update: { username: d.username ?? undefined, city: d.city ?? undefined },
   })
 
-  // 1. библиотекарь у нас
-  let librarian = await prisma.librarian.findUnique({ where: { tgId: d.tgId } })
-  if (!librarian) {
-    librarian = await prisma.librarian.create({
-      data: {
-        name: d.firstName || d.username || 'Библиотекарь',
-        telegram: d.username ?? null,
-        city: d.city ?? user.city ?? null,
-        district: d.district ?? null,
-        tgId: d.tgId,
-      },
-    })
-  } else if ((d.city && !librarian.city) || (d.district && !librarian.district)) {
-    librarian = await prisma.librarian.update({
-      where: { id: librarian.id },
-      data: {
-        city: librarian.city ?? d.city ?? null,
-        district: librarian.district ?? d.district ?? null,
-      },
-    })
-  }
+  // 1. библиотекарь у нас — единая идентификация: по tgId, затем по нику, затем создание
+  let librarian = (await linkLibrarian(
+    {
+      tgId: d.tgId,
+      username: d.username,
+      firstName: d.firstName,
+      city: d.city ?? user.city ?? null,
+      district: d.district,
+    },
+    { allowCreate: true },
+  ))!
 
   // 2. библиотекарь в Owners
   let notionError: string | null = null
