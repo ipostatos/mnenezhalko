@@ -212,6 +212,7 @@ bot.command('help', (ctx) =>
       '',
       'Пришлите <b>фото книги или настолки</b> — распознаю название, автора, язык и жанр,',
       'заведу вас библиотекарем и добавлю книгу в общую таблицу проекта.',
+      'Несколько книг сразу — пришлите обложки <b>альбомом</b> или списком через /import.',
       '',
       'Можно просто написать сообщение — я пойму это как запрос к помощнику.',
     ].join('\n'),
@@ -1001,6 +1002,145 @@ async function handleBookPhoto(ctx: any) {
   })
 }
 
+/* ── пакетное добавление: альбом фотографий и список ─────── */
+
+/**
+ * Фото из Telegram-альбома приходят отдельными апдейтами с общим media_group_id.
+ * Копим их с дебаунсом и обрабатываем всю пачку разом, а не как N отдельных книг.
+ */
+type AlbumBuf = { fileIds: string[]; timer: ReturnType<typeof setTimeout>; ctx: any }
+const albums = new Map<string, AlbumBuf>()
+const ALBUM_WAIT_MS = 1500
+
+function bufferAlbumPhoto(ctx: any) {
+  const key = `${ctx.chat.id}:${ctx.message.media_group_id}`
+  const fileId = ctx.message.photo.at(-1)!.file_id
+  const prev = albums.get(key)
+  if (prev) clearTimeout(prev.timer)
+  const fileIds = prev ? [...prev.fileIds, fileId] : [fileId]
+  const timer = setTimeout(() => {
+    albums.delete(key)
+    handlePhotoBatch(ctx, fileIds).catch((e) => console.error('[batch] альбом:', e?.message ?? e))
+  }, ALBUM_WAIT_MS)
+  albums.set(key, { fileIds, timer, ctx })
+}
+
+/** Распознаёт и ставит на полку пачку обложек; в конце — одна сводка. */
+async function handlePhotoBatch(ctx: any, fileIds: string[]) {
+  if (!visionEnabled()) {
+    return ctx.reply('Распознавание по фото сейчас недоступно. Добавьте книги вручную в приложении.')
+  }
+  const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
+  if (!user?.city) {
+    return ctx.reply(
+      'Чтобы добавить пачкой, сначала выберите город: /city — потом пришлите обложки книг альбомом.',
+    )
+  }
+  const ids = fileIds.slice(0, 10) // Telegram-альбом — максимум 10
+  await ctx.reply(`Разбираю ${ids.length} ${plural(ids.length, ['обложку', 'обложки', 'обложек'])}…`)
+  await ctx.replyWithChatAction('typing')
+
+  const added: string[] = []
+  const pending: string[] = []
+  let failed = 0
+  for (const fileId of ids) {
+    const saved = await saveCoverFromTelegram(fileId).catch(() => null)
+    const rec = saved
+      ? await recognizeCover(saved.decoded.data, saved.decoded.mediaType).catch(() => null)
+      : null
+    if (!saved || !rec || !rec.recognized || !rec.title) {
+      failed++
+      continue
+    }
+    const res = await putOnShelf({
+      tgId: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+      firstName: ctx.from.first_name ?? null,
+      kind: rec.kind,
+      title: rec.title,
+      author: rec.author,
+      genres: rec.genres,
+      languages: rec.languages,
+      city: user.city,
+      coverUrl: saved.url,
+    })
+    ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+  }
+  await sendBatchSummary(ctx, added, pending, failed)
+}
+
+/** Пакетное добавление списком: `/import` + строки «Название — Автор». */
+async function handleListImport(ctx: any, raw: string) {
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 1)
+    .slice(0, 30)
+  if (!lines.length) {
+    return ctx.reply(
+      [
+        '<b>Пакетное добавление</b>',
+        '',
+        'Пришлите обложки книг <b>альбомом</b> — распознаю и добавлю пачкой.',
+        'Или списком, по одной книге на строку:',
+        '<code>/import',
+        'Дюна — Фрэнк Герберт',
+        'Гиперион — Дэн Симмонс</code>',
+      ].join('\n'),
+      { parse_mode: 'HTML' },
+    )
+  }
+  const user = await prisma.user.upsert({
+    where: { tgId: BigInt(ctx.from.id) },
+    create: {
+      tgId: BigInt(ctx.from.id),
+      username: ctx.from.username,
+      firstName: ctx.from.first_name,
+      isAdmin: isAdmin(ctx.from.id),
+    },
+    update: { username: ctx.from.username },
+  })
+  if (!user.city) return ctx.reply('Сначала выберите город: /city — потом повторите список.')
+
+  const added: string[] = []
+  const pending: string[] = []
+  for (const line of lines) {
+    const [title, author] = line.split(/\s[—–-]\s|\s*\|\s*/).map((s) => s.trim())
+    if (!title || title.length < 2) continue
+    const res = await putOnShelf({
+      tgId: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+      firstName: ctx.from.first_name ?? null,
+      kind: 'book',
+      title,
+      author: author || null,
+      genres: [],
+      languages: [],
+      city: user.city,
+      coverUrl: null,
+    })
+    ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+  }
+  await sendBatchSummary(ctx, added, pending, 0)
+}
+
+/** Общая сводка после пакетного добавления. */
+async function sendBatchSummary(ctx: any, added: string[], pending: string[], failed: number) {
+  const blocks: string[] = []
+  if (added.length)
+    blocks.push(`🎉 На полке (${added.length}):\n` + added.map((t) => `• ${esc(t)}`).join('\n'))
+  if (pending.length)
+    blocks.push(
+      `📖 На проверке модератора (${pending.length}):\n` +
+        pending.map((t) => `• ${esc(t)}`).join('\n'),
+    )
+  if (failed) blocks.push(`⚠️ Не разобрал: ${failed}. Пришлите их поштучно и покрупнее.`)
+  if (!blocks.length) blocks.push('Ничего не удалось добавить.')
+  await ctx.reply(blocks.join('\n\n'), { parse_mode: 'HTML', reply_markup: mainKeyboard() })
+}
+
+bot.command('import', (ctx) => handleListImport(ctx, ctx.match?.toString() ?? ''))
+
 bot.callbackQuery('shelf:save', async (ctx) => {
   const d = shelfDrafts.get(ctx.from.id)
   if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
@@ -1337,6 +1477,8 @@ bot.on('message:photo', async (ctx) => {
   if (isMarketTopic(ctx)) return caption ? handleMarketPost(ctx, caption) : undefined
   // фото в личке считаем обложкой книги
   if (ctx.chat.type !== 'private') return
+  // альбом (несколько фото разом) — добавляем пачкой
+  if (ctx.message.media_group_id) return bufferAlbumPhoto(ctx)
   await handleBookPhoto(ctx)
 })
 
@@ -1520,6 +1662,7 @@ export async function setupBotCommands() {
     { command: 'events', description: 'Ближайшие встречи' },
     { command: 'alerts', description: 'Анонсы новых встреч' },
     { command: 'baraholka', description: 'Барахолка по городам' },
+    { command: 'import', description: 'Добавить книги пачкой (альбом или список)' },
     { command: 'donate', description: 'Поддержать проект звёздами' },
     { command: 'help', description: 'Помощь' },
   ])
