@@ -944,6 +944,40 @@ textarea.input {
   margin-top: 2px;
 }
 
+/* ── поля формы и режим редактирования ─────── */
+
+.field {
+  margin-bottom: var(--sp-3);
+}
+
+.field label {
+  display: block;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--hint);
+  margin: 0 0 6px 2px;
+}
+
+.edit-cover {
+  display: block;
+  width: 128px;
+  height: 180px;
+  object-fit: cover;
+  border-radius: var(--r-md);
+  margin: 0 auto var(--sp-5);
+  box-shadow: var(--shadow);
+}
+
+.edit-cover.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 52px;
+  font-weight: 800;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
 /* ── моя полка ─────────────────────────────── */
 
 .shelf-item {

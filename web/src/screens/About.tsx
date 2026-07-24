@@ -3,6 +3,7 @@ import type { Route } from '../App'
 import type { Health } from '../types'
 import { openTg, openInvoice, haptic, showAlert, tg } from '../telegram'
 import { api } from '../api'
+import { Icon } from './Icon'
 
 const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
 const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
@@ -160,9 +161,9 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
       )}
 
       <div className="section-title">Куда идти дальше</div>
-      <button className="row-card" onClick={() => openTg(MAIN_CHAT)}>
-        <div className="ic-tile" style={{ ['--tone' as any]: '#50a8eb' }}>
-          💬
+      <button className="row-card tile" style={{ ['--tone' as any]: '#6d7bb5' }} onClick={() => openTg(MAIN_CHAT)}>
+        <div className="ic-tile">
+          <Icon name="chat" />
         </div>
         <div className="grow">
           <div className="t">Чат проекта</div>
@@ -170,9 +171,9 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card" onClick={() => openTg(INSTAGRAM)}>
-        <div className="ic-tile" style={{ ['--tone' as any]: '#d95c8a' }}>
-          📸
+      <button className="row-card tile" style={{ ['--tone' as any]: '#d94a86' }} onClick={() => openTg(INSTAGRAM)}>
+        <div className="ic-tile">
+          <Icon name="instagram" />
         </div>
         <div className="grow">
           <div className="t">Инстаграм</div>
@@ -180,9 +181,9 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card" onClick={() => openTg(GUIDE)}>
-        <div className="ic-tile" style={{ ['--tone' as any]: '#4caf72' }}>
-          📖
+      <button className="row-card tile" style={{ ['--tone' as any]: '#e59429' }} onClick={() => openTg(GUIDE)}>
+        <div className="ic-tile">
+          <Icon name="compass" />
         </div>
         <div className="grow">
           <div className="t">Инструкция новичка</div>
@@ -190,9 +191,9 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card" onClick={() => openTg(PROJECT)}>
-        <div className="ic-tile" style={{ ['--tone' as any]: '#a77bf0' }}>
-          🌐
+      <button className="row-card tile" style={{ ['--tone' as any]: '#2f6db0' }} onClick={() => openTg(PROJECT)}>
+        <div className="ic-tile">
+          <Icon name="globe" />
         </div>
         <div className="grow">
           <div className="t">Страница проекта</div>
@@ -200,11 +201,16 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-
-      <div className="curator" onClick={() => openTg(CURATOR)}>
-        <div className="role">Главный по книгам</div>
-        <div className="who">@LizavetaZh</div>
-      </div>
+      <button className="row-card tile" style={{ ['--tone' as any]: '#d99a2b' }} onClick={() => openTg(CURATOR)}>
+        <div className="ic-tile">
+          <Icon name="crown" />
+        </div>
+        <div className="grow">
+          <div className="t">Главный по книгам</div>
+          <div className="d">@LizavetaZh</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
     </>
   )
 }

@@ -83,6 +83,21 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
     }
   }
 
+  const editingBook = editing ? books.find((b) => b.id === editing) : null
+  if (editingBook) {
+    return (
+      <EditForm
+        book={editingBook}
+        city={city}
+        onCancel={() => setEditing(null)}
+        onSaved={async () => {
+          setEditing(null)
+          await load()
+        }}
+      />
+    )
+  }
+
   return (
     <>
       <div className="hero">
@@ -106,19 +121,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
           <div className="section-title">
             {STATE[g.state].label} · {g.items.length}
           </div>
-          {g.items.map((b) =>
-            editing === b.id ? (
-              <EditForm
-                key={b.id}
-                book={b}
-                city={city}
-                onCancel={() => setEditing(null)}
-                onSaved={async () => {
-                  setEditing(null)
-                  await load()
-                }}
-              />
-            ) : (
+          {g.items.map((b) => (
               <div key={b.id} className={`shelf-item${b.state === 'deleted' ? ' dim' : ''}`}>
                 <div className="shelf-head">
                   <span className="badge" style={{ ['--tone' as any]: STATE[b.state].tone }}>
@@ -178,8 +181,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
                   </div>
                 )}
               </div>
-            ),
-          )}
+          ))}
         </div>
       ))}
     </>
@@ -232,35 +234,57 @@ function EditForm({
   }
 
   return (
-    <div className="shelf-item">
+    <>
+      <div className="hero">
+        <span className="logo">✏️</span>
+        <h1>Редактирование</h1>
+      </div>
+
+      {book.coverUrl ? (
+        <img className="edit-cover" src={book.coverUrl} alt="" />
+      ) : (
+        <div className="edit-cover placeholder">{book.title.slice(0, 1).toUpperCase()}</div>
+      )}
+
       <div className="field">
         <label>Название</label>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
       <div className="field">
         <label>Автор</label>
-        <input value={author} onChange={(e) => setAuthor(e.target.value)} />
+        <input className="input" value={author} onChange={(e) => setAuthor(e.target.value)} />
       </div>
       <div className="field">
-        <label>Жанры (через запятую)</label>
-        <input value={genres} onChange={(e) => setGenres(e.target.value)} />
+        <label>Жанры</label>
+        <input
+          className="input"
+          placeholder="через запятую"
+          value={genres}
+          onChange={(e) => setGenres(e.target.value)}
+        />
       </div>
       <div className="field">
-        <label>Языки (через запятую)</label>
-        <input value={langs} onChange={(e) => setLangs(e.target.value)} />
+        <label>Языки</label>
+        <input
+          className="input"
+          placeholder="через запятую"
+          value={langs}
+          onChange={(e) => setLangs(e.target.value)}
+        />
       </div>
       <div className="field">
         <label>Город</label>
-        <input value={place} onChange={(e) => setPlace(e.target.value)} />
+        <input className="input" value={place} onChange={(e) => setPlace(e.target.value)} />
       </div>
-      <div className="shelf-actions">
-        <button className="btn sm" disabled={saving} onClick={save}>
-          {saving ? 'Сохраняю…' : 'Сохранить'}
-        </button>
-        <button className="btn sm ghost" disabled={saving} onClick={onCancel}>
-          Отмена
-        </button>
-      </div>
-    </div>
+
+      <div style={{ height: 'var(--sp-3)' }} />
+      <button className="btn" disabled={saving} onClick={save}>
+        {saving ? 'Сохраняю…' : 'Сохранить'}
+      </button>
+      <div style={{ height: 'var(--sp-2)' }} />
+      <button className="btn ghost" disabled={saving} onClick={onCancel}>
+        Отмена
+      </button>
+    </>
   )
 }

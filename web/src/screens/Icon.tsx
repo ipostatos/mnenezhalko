@@ -16,6 +16,9 @@ import {
   Leaf,
   MessageCircle,
   Camera,
+  Compass,
+  Globe,
+  Crown,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -33,6 +36,9 @@ export type IconName =
   | 'chat'
   | 'camera'
   | 'instagram'
+  | 'compass'
+  | 'globe'
+  | 'crown'
 
 const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   book: BookOpen,
@@ -47,6 +53,9 @@ const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   leaf: Leaf,
   chat: MessageCircle,
   camera: Camera,
+  compass: Compass,
+  globe: Globe,
+  crown: Crown,
 }
 
 /** Instagram в lucide v1 убрали (бренд) — берём выверенную геометрию Feather. */
