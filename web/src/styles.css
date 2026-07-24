@@ -169,6 +169,16 @@ h1 {
   transform: scale(0.99);
 }
 
+/* плашки главной — мягкий градиент в свой цвет, как у баннера «Поделись книгой» */
+.row-card.tile {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 24%, #fff), #fff 82%);
+  border-color: color-mix(in srgb, var(--tone) 20%, var(--border));
+}
+
+.row-card.tile .ic-tile {
+  background: color-mix(in srgb, var(--tone) 22%, #fff);
+}
+
 .row-card.static {
   cursor: default;
 }

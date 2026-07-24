@@ -154,14 +154,15 @@ export function Home({
       {tiles.map((t) => (
         <button
           key={t.title}
-          className="row-card"
+          className="row-card tile"
+          style={{ ['--tone' as any]: t.tone }}
           onClick={() => {
             haptic()
             if (t.url) openTg(t.url)
             else if (t.route) go(t.route)
           }}
         >
-          <div className="ic-tile" style={{ ['--tone' as any]: t.tone }}>
+          <div className="ic-tile">
             <Icon name={t.icon} />
           </div>
           <div className="grow">
