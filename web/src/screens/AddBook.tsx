@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
-import type { Book, Facets } from '../types'
-import { haptic, showAlert } from '../telegram'
+import type { DupCheck, Facets } from '../types'
+import { haptic, showAlert, showConfirm } from '../telegram'
+
+/** Русское склонение по числу. */
+const plural = (n: number, forms: [string, string, string]) => {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return forms[0]
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1]
+  return forms[2]
+}
 
 const CITIES = [
   'Warszawa',
@@ -49,7 +58,7 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   const [cover, setCover] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
-  const [duplicates, setDuplicates] = useState<Book[]>([])
+  const [dup, setDup] = useState<DupCheck | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -71,7 +80,7 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
       setCover(image)
       const res = await api.recognize(image)
       setCover(res.cover)
-      setDuplicates(res.duplicates)
+      setDup(res.dup)
 
       const r = res.recognized
       if (!r || !r.recognized || !r.title) {
@@ -104,6 +113,16 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   }
 
   async function save() {
+    // свой дубль — предупреждаем и просим подтвердить (чужие экземпляры не мешают)
+    const check = await api.duplicates(title.trim(), author.trim() || undefined, kind).catch(() => null)
+    if (
+      check?.own &&
+      !(await showConfirm(
+        `У вас на полке уже есть «${check.own.title}». Всё равно добавить ещё один экземпляр?`,
+      ))
+    ) {
+      return
+    }
     setSaving(true)
     try {
       const res = await api.addBook({
@@ -165,7 +184,7 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
             setAuthor('')
             setCover(null)
             setHint(null)
-            setDuplicates([])
+            setDup(null)
           }}
         >
           Добавить ещё одну
@@ -209,16 +228,17 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
         </div>
       </div>
 
-      {duplicates.length > 0 && (
+      {dup?.own && (
+        <div className="warn-banner">
+          ⚠️ Такая книга уже есть на вашей полке — «{dup.own.title}». Добавляйте, только если это
+          второй экземпляр.
+        </div>
+      )}
+      {!dup?.own && dup && dup.others.count > 0 && (
         <div className="note">
-          Такая книга уже есть в библиотеке:
-          {duplicates.map((b) => (
-            <button key={b.id} className="link-row" onClick={() => go({ name: 'book', id: b.id })}>
-              {b.title}
-              {b.owner ? ` — ${b.owner.name}` : ''}
-            </button>
-          ))}
-          Всё равно можно добавить свою — экземпляров бывает несколько.
+          📚 В библиотеке уже есть ещё {dup.others.count}{' '}
+          {plural(dup.others.count, ['экземпляр', 'экземпляра', 'экземпляров'])}
+          {dup.others.city ? ` в ${dup.others.city}` : ''} — это нормально, добавляйте свой.
         </div>
       )}
 

@@ -9,7 +9,7 @@
  * ручным «дожимом» или автоматически перед очередным синком.
  */
 import type { Librarian } from '@prisma/client'
-import { prisma, buildSearch } from './db.js'
+import { prisma, buildSearch, norm } from './db.js'
 import { env, isAdmin } from './env.js'
 import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
 import { archiveRow, createBook, createOwner, notionWriteEnabled, updateBook } from './notion-write.js'
@@ -419,4 +419,61 @@ export async function findDuplicates(title: string, author?: string | null) {
   return items
     .filter((b) => b.title.toLowerCase().includes(q.toLowerCase()) || (a && (b.author || '').toLowerCase().includes(a)))
     .slice(0, 3)
+}
+
+export type DupCheck = {
+  /** такая же книга уже на полке самого пользователя — это ошибочный дубль */
+  own: BookCard | null
+  /** сколько таких же книг у ДРУГИХ библиотекарей — это нормальные экземпляры */
+  others: { count: number; city: string | null }
+}
+
+/**
+ * Различаем два случая: та же книга у самого пользователя (ошибочный дубль,
+ * предупреждаем) и та же книга у других (нормальные экземпляры, просто подсказка).
+ * Ключ совпадения: нормализованные название + автор + тип.
+ */
+export async function checkDuplicates(input: {
+  title: string
+  author?: string | null
+  kind: 'book' | 'game'
+  ownerTg?: bigint | null
+}): Promise<DupCheck> {
+  const nt = norm(input.title)
+  if (nt.length < 3) return { own: null, others: { count: 0, city: null } }
+  const na = norm(input.author || '')
+
+  const candidates = await prisma.book.findMany({
+    where: {
+      active: true,
+      kind: input.kind,
+      reviewStatus: { in: ['approved', 'pending'] },
+      search: { contains: nt },
+    },
+    include: { owner: true },
+    take: 200,
+  })
+
+  // точное совпадение по названию; автор — если задан у обоих
+  const matches = candidates.filter(
+    (b) => norm(b.title) === nt && (!na || !b.author || norm(b.author) === na),
+  )
+
+  const ownLib = input.ownerTg
+    ? await prisma.librarian.findUnique({ where: { tgId: input.ownerTg }, select: { id: true } })
+    : null
+
+  const own = ownLib ? matches.find((b) => b.ownerId === ownLib.id) : undefined
+  const others = matches.filter(
+    (b) => b.reviewStatus === 'approved' && (!ownLib || b.ownerId !== ownLib.id),
+  )
+
+  const cityCount = new Map<string, number>()
+  for (const b of others) if (b.city) cityCount.set(b.city, (cityCount.get(b.city) ?? 0) + 1)
+  const city = [...cityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+
+  return {
+    own: own ? toCard({ ...own, owner: own.owner }) : null,
+    others: { count: others.length, city },
+  }
 }

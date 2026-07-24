@@ -8,7 +8,7 @@ import { CITIES } from './seed.js'
 import { decodeDataUrl, readCover, saveCover } from './covers.js'
 import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
 import {
-  findDuplicates,
+  checkDuplicates,
   putOnShelf,
   editBook,
   softDeleteBook,
@@ -427,11 +427,16 @@ export async function registerRoutes(app: FastifyInstance) {
       }),
     ])
 
-    const duplicates = recognized?.title
-      ? await findDuplicates(recognized.title, recognized.author)
-      : []
+    const dup = recognized?.title
+      ? await checkDuplicates({
+          title: recognized.title,
+          author: recognized.author,
+          kind: recognized.kind === 'game' ? 'game' : 'book',
+          ownerTg: u.id,
+        })
+      : { own: null, others: { count: 0, city: null } }
 
-    return json({ cover: saved.url, recognized, duplicates, languages: LANGUAGES })
+    return json({ cover: saved.url, recognized, dup, languages: LANGUAGES })
   })
 
   app.get('/api/cover/:file', async (req, reply) => {
@@ -443,10 +448,21 @@ export async function registerRoutes(app: FastifyInstance) {
     return reply.send(found.body)
   })
 
-  /** Проверка дублей до сохранения — лайфхак из инструкции проекта. */
+  /**
+   * Проверка дублей до сохранения: свой повтор (предупреждаем) vs чужие
+   * экземпляры (подсказка). Подпись Telegram нужна, чтобы отличить «свою» книгу.
+   */
   app.get('/api/duplicates', async (req) => {
-    const { title, author } = req.query as { title?: string; author?: string }
-    return json(await findDuplicates(title || '', author))
+    const u = who(req)
+    const { title, author, kind } = req.query as { title?: string; author?: string; kind?: string }
+    return json(
+      await checkDuplicates({
+        title: title || '',
+        author,
+        kind: kind === 'game' ? 'game' : 'book',
+        ownerTg: u?.id ?? null,
+      }),
+    )
   })
 
   /**

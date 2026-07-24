@@ -100,10 +100,16 @@ export type Recognized = {
   note: string | null
 }
 
+/** Проверка дублей: свой повтор (предупреждение) vs чужие экземпляры (подсказка). */
+export type DupCheck = {
+  own: Book | null
+  others: { count: number; city: string | null }
+}
+
 export type RecognizeResult = {
   cover: string
   recognized: Recognized | null
-  duplicates: Book[]
+  dup: DupCheck
   languages: string[]
 }
 

@@ -32,6 +32,7 @@ import { saveCoverFromTelegram } from './covers.js'
 import { recognizeCover, visionEnabled, type Recognized } from './vision.js'
 import {
   approveBook,
+  checkDuplicates,
   findDuplicates,
   flushPending,
   moderationQueueCount,
@@ -99,6 +100,15 @@ const mainKeyboard = () => {
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/** Русское склонение по числу: plural(n, ['экземпляр','экземпляра','экземпляров']). */
+const plural = (n: number, forms: [string, string, string]) => {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return forms[0]
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1]
+  return forms[2]
+}
 
 /** Карточка книги для чата: название, автор, город и контакт владельца. */
 function bookLine(b: BookCard & { why?: string }): string {
@@ -970,13 +980,20 @@ async function handleBookPhoto(ctx: any) {
 
   shelfDrafts.set(ctx.from.id, { ...recognized, coverUrl: saved.url })
 
-  const dups = await findDuplicates(recognized.title, recognized.author)
-  const dupText = dups.length
-    ? '\n\nКстати, такая книга уже есть:\n' +
-      dups
-        .map((b) => `• ${esc(b.title)}${b.owner ? ` — ${esc(b.owner.name)}` : ''}`)
-        .join('\n')
-    : ''
+  const dup = await checkDuplicates({
+    title: recognized.title,
+    author: recognized.author,
+    kind: recognized.kind === 'game' ? 'game' : 'book',
+    ownerTg: BigInt(ctx.from.id),
+  })
+  let dupText = ''
+  if (dup.own) {
+    dupText += `\n\n⚠️ Такая книга у вас уже есть на полке. Добавляйте, только если это второй экземпляр.`
+  }
+  if (dup.others.count) {
+    const n = dup.others.count
+    dupText += `\n\n📚 В библиотеке уже есть ещё ${n} ${plural(n, ['экземпляр', 'экземпляра', 'экземпляров'])}${dup.others.city ? ' в ' + esc(dup.others.city) : ''}.`
+  }
 
   await ctx.reply(`Похоже, это:\n\n${shelfCard(shelfDrafts.get(ctx.from.id)!)}${dupText}`, {
     parse_mode: 'HTML',
