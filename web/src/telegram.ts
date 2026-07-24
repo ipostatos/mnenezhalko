@@ -50,6 +50,14 @@ export function showAlert(message: string) {
   else alert(message)
 }
 
+/** Нативное подтверждение Telegram (да/отмена). */
+export function showConfirm(message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (tg?.showConfirm) tg.showConfirm(message, (ok: boolean) => resolve(ok))
+    else resolve(window.confirm(message))
+  })
+}
+
 export function backButton(visible: boolean, onBack: () => void) {
   if (!tg?.BackButton) return () => {}
   if (!visible) {

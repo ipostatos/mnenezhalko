@@ -26,6 +26,10 @@ export type Book = {
   why?: string
 }
 
+/** Книга на моей полке с вычисленным состоянием. */
+export type ShelfState = 'active' | 'pending' | 'rejected' | 'onloan' | 'deleted' | 'syncerror'
+export type ShelfBook = Book & { state: ShelfState }
+
 export type Facets = {
   total: number
   genres: { value: string; count: number }[]

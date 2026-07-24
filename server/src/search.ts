@@ -27,6 +27,8 @@ export type BookCard = {
   /** состояние модерации: pending | approved | rejected | deleted */
   reviewStatus: string
   rejectionReason: string | null
+  /** путь в Notion: local | pending | synced | failed */
+  notionStatus: string
   owner: {
     id: string
     name: string
@@ -69,6 +71,7 @@ export function toCard(b: any): BookCard {
     source: b.source,
     reviewStatus: b.reviewStatus ?? 'approved',
     rejectionReason: b.rejectionReason ?? null,
+    notionStatus: b.notionStatus ?? 'local',
     owner: b.owner ?? null,
   }
 }

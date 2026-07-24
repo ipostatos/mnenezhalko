@@ -77,6 +77,13 @@ export function Home({
       route: { name: 'loans' },
     },
     {
+      icon: '🗂',
+      tone: '#6a8caf',
+      title: 'Моя полка',
+      sub: 'Мои книги, статусы, редактирование',
+      route: { name: 'myshelf' },
+    },
+    {
       icon: '➕',
       tone: '#50a8eb',
       title: 'Добавить книгу',

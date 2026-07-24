@@ -12,6 +12,8 @@
  */
 import { prisma } from './db.js'
 import { tgHandle } from './notion.js'
+import { archiveRow, notionWriteEnabled } from './notion-write.js'
+import { invalidateFacets } from './search.js'
 
 /** Срок по умолчанию — месяц: столько обычно и держат книгу. */
 const DEFAULT_DAYS = 30
@@ -114,7 +116,27 @@ export async function markReturned(id: string, byTg: bigint) {
       where: { bookId: updated.bookId, status: 'active' },
     })
     if (!stillOut) {
-      await prisma.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
+      const book = await prisma.book.findUnique({ where: { id: updated.bookId } })
+      // владелец просил скрыть книгу после возврата — мягко удаляем её сейчас
+      if (book?.hideAfterReturn) {
+        await prisma.book.update({
+          where: { id: book.id },
+          data: {
+            status: 'free',
+            active: false,
+            reviewStatus: 'deleted',
+            deletedAt: new Date(),
+            deletedByTg: loan.ownerTg,
+            hideAfterReturn: false,
+          },
+        })
+        invalidateFacets()
+        if (book.notionId && notionWriteEnabled()) {
+          await archiveRow(book.notionId).catch(() => {})
+        }
+      } else {
+        await prisma.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
+      }
     }
   }
   return updated

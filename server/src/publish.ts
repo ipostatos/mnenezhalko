@@ -12,7 +12,7 @@ import type { Librarian } from '@prisma/client'
 import { prisma, buildSearch } from './db.js'
 import { env, isAdmin } from './env.js'
 import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
-import { createBook, createOwner, notionWriteEnabled } from './notion-write.js'
+import { archiveRow, createBook, createOwner, notionWriteEnabled, updateBook } from './notion-write.js'
 import { linkLibrarian } from './librarian.js'
 
 export type ShelfDraft = {
@@ -184,6 +184,140 @@ export async function rejectBook(
   })
   invalidateFacets()
   return { card: toCard({ ...updated, owner: book.owner }), addedByTg: book.addedByTg }
+}
+
+/* ── личная полка: состояния и действия владельца ─────────── */
+
+/** Состояние книги на полке владельца — по нему группируем полку в Mini App. */
+export function shelfState(b: {
+  reviewStatus: string
+  status: string
+  notionStatus: string
+}): 'active' | 'pending' | 'rejected' | 'onloan' | 'deleted' | 'syncerror' {
+  if (b.reviewStatus === 'deleted') return 'deleted'
+  if (b.reviewStatus === 'rejected') return 'rejected'
+  if (b.reviewStatus === 'pending') return 'pending'
+  if (b.status === 'busy') return 'onloan'
+  if (b.notionStatus === 'failed') return 'syncerror'
+  return 'active'
+}
+
+/** Книга владельца, если она действительно его; иначе код ошибки. */
+async function ownedBook(bookId: string, ownerTg: bigint) {
+  const book = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
+  if (!book) return { error: 'not_found' as const }
+  const isOwner = book.owner?.tgId === ownerTg || book.addedByTg === ownerTg
+  if (!isOwner) return { error: 'forbidden' as const }
+  return { book }
+}
+
+export type ShelfEdit = {
+  title?: string
+  author?: string | null
+  genres?: string[]
+  languages?: string[]
+  city?: string | null
+  district?: string | null
+}
+
+/** Отредактировать книгу владельца: у нас и, для уже уехавших, в Notion. */
+export async function editBook(bookId: string, ownerTg: bigint, f: ShelfEdit) {
+  const r = await ownedBook(bookId, ownerTg)
+  if ('error' in r) return r
+  const b = r.book
+
+  const data: Record<string, unknown> = {}
+  if (f.title !== undefined) data.title = f.title.trim().slice(0, 300)
+  if (f.author !== undefined) data.author = f.author?.trim().slice(0, 200) || null
+  if (f.genres !== undefined) data.genres = f.genres.join(', ').slice(0, 300)
+  if (f.languages !== undefined) data.languages = f.languages.join(', ').slice(0, 200)
+  if (f.city !== undefined) data.city = f.city?.trim() || null
+  if (f.district !== undefined) data.district = f.district?.trim() || null
+
+  const merged = { ...b, ...data } as typeof b
+  data.search = buildSearch(merged)
+  const updated = await prisma.book.update({ where: { id: bookId }, data, include: { owner: true } })
+  invalidateFacets()
+
+  // синхронизированную книгу правим и в Notion, иначе синк вернёт старое значение
+  if (updated.notionId && notionWriteEnabled()) {
+    await updateBook(updated.notionId, updated.kind === 'game' ? 'game' : 'book', {
+      title: f.title !== undefined ? updated.title : undefined,
+      author: f.author !== undefined ? updated.author : undefined,
+      genres: f.genres,
+      languages: f.languages,
+      cityDistrict:
+        f.city !== undefined || f.district !== undefined
+          ? cityDistrictOf(updated.city, updated.district)
+          : undefined,
+    }).catch((e) => console.error('[notion] правка книги не уехала:', e?.message ?? e))
+  }
+  return { card: toCard({ ...updated, owner: updated.owner }) }
+}
+
+/**
+ * Мягкое удаление: запись остаётся (история/статистика), но уходит с полки и из
+ * каталога. Книгу на руках так просто не удалить — можно скрыть после возврата.
+ */
+export async function softDeleteBook(bookId: string, ownerTg: bigint, hideAfterReturn = false) {
+  const r = await ownedBook(bookId, ownerTg)
+  if ('error' in r) return r
+  const b = r.book
+
+  if (b.status === 'busy') {
+    if (!hideAfterReturn) return { error: 'has_active_loan' as const }
+    await prisma.book.update({ where: { id: bookId }, data: { hideAfterReturn: true } })
+    return { deferred: true as const }
+  }
+
+  const updated = await prisma.book.update({
+    where: { id: bookId },
+    data: {
+      active: false,
+      reviewStatus: 'deleted',
+      deletedAt: new Date(),
+      deletedByTg: ownerTg,
+      hideAfterReturn: false,
+    },
+    include: { owner: true },
+  })
+  invalidateFacets()
+  if (updated.notionId && notionWriteEnabled()) {
+    await archiveRow(updated.notionId).catch((e) =>
+      console.error('[notion] архивирование книги не удалось:', e?.message ?? e),
+    )
+  }
+  return { card: toCard({ ...updated, owner: updated.owner }) }
+}
+
+/** Повторно отправить отклонённую книгу — снова через модерацию (или сразу, если её нет). */
+export async function resubmitBook(bookId: string, ownerTg: bigint) {
+  const r = await ownedBook(bookId, ownerTg)
+  if ('error' in r) return r
+  const b = r.book
+  if (b.reviewStatus !== 'rejected') return { error: 'bad_state' as const }
+
+  const autoApprove = !env.moderation || isAdmin(ownerTg)
+  const now = new Date()
+  if (autoApprove) {
+    await prisma.book.update({
+      where: { id: bookId },
+      data: { reviewStatus: 'approved', reviewedAt: now, reviewedByTg: ownerTg, rejectionReason: null, submittedAt: now },
+    })
+    invalidateFacets()
+    const book = b.owner ? await sendBookToNotion(bookId, b.owner) : await prisma.book.findUniqueOrThrow({ where: { id: bookId } })
+    return { card: toCard({ ...book, owner: b.owner }), pending: false }
+  }
+
+  const updated = await prisma.book.update({
+    where: { id: bookId },
+    data: { reviewStatus: 'pending', submittedAt: now, rejectionReason: null },
+    include: { owner: true },
+  })
+  invalidateFacets()
+  const card = toCard({ ...updated, owner: updated.owner })
+  if (updated.owner) await Promise.resolve(moderationNotifier?.(card, updated.owner)).catch(() => {})
+  return { card, pending: true }
 }
 
 /** Одна попытка положить уже созданную карточку в общую таблицу. */

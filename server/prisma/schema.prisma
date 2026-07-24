@@ -81,6 +81,8 @@ model Book {
   submittedAt     DateTime?
   deletedAt       DateTime?
   deletedByTg     BigInt?
+  /// книга на руках, владелец попросил скрыть её после возврата
+  hideAfterReturn Boolean @default(false)
   addedByTg BigInt?
   search    String    @default("") // нормализованная строка для поиска
   active    Boolean   @default(true)

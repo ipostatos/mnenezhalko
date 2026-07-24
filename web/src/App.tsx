@@ -11,6 +11,7 @@ import { Events } from './screens/Events'
 import { Market } from './screens/Market'
 import { AddBook } from './screens/AddBook'
 import { Shelf } from './screens/Shelf'
+import { MyShelf } from './screens/MyShelf'
 import { Digest } from './screens/Digest'
 import { Loans } from './screens/Loans'
 import { About } from './screens/About'
@@ -28,11 +29,12 @@ export type Route =
   | { name: 'loans' }
   | { name: 'about' }
   | { name: 'shelf'; id: string }
+  | { name: 'myshelf' }
 
 /** Бот открывает Mini App сразу на нужном экране: `?screen=add|loans|digest`. */
 function initialStack(): Route[] {
   const screen = new URLSearchParams(window.location.search).get('screen')
-  const known = ['add', 'loans', 'digest', 'about'] as const
+  const known = ['add', 'loans', 'digest', 'about', 'myshelf'] as const
   return known.includes(screen as (typeof known)[number])
     ? [{ name: 'home' }, { name: screen } as Route]
     : [{ name: 'home' }]
@@ -87,6 +89,8 @@ export function App() {
       return <About go={go} health={health} />
     case 'shelf':
       return <Shelf id={route.id} go={go} />
+    case 'myshelf':
+      return <MyShelf go={go} city={city} />
     default:
       return <Home go={go} me={me} health={health} loans={loans} />
   }

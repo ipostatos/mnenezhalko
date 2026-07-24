@@ -872,6 +872,54 @@ textarea.input {
   border-left: 2px solid var(--border);
 }
 
+/* ── моя полка ─────────────────────────────── */
+
+.shelf-item {
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.shelf-item.dim {
+  opacity: 0.55;
+}
+
+.shelf-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.badge {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  color: var(--tone, var(--accent));
+  background: color-mix(in srgb, var(--tone, var(--accent)) 16%, transparent);
+}
+
+.shelf-note {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--hint);
+  line-height: 1.4;
+}
+
+.shelf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.shelf-actions .btn {
+  width: auto;
+}
+
 .donate-row {
   display: flex;
   gap: var(--sp-2);

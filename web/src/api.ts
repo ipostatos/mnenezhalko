@@ -14,6 +14,7 @@ import type {
   DigestResult,
   Loan,
   LoanSummary,
+  ShelfBook,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -77,6 +78,22 @@ export const api = {
     req<{ loan: Loan; inviteUrl: string }>('POST', '/api/loans', data),
   loanReturn: (id: string) => req<{ loan: Loan }>('POST', `/api/loans/${id}/return`, {}),
   myBooks: () => req<Book[]>('GET', '/api/my-books'),
+  myShelf: () => req<{ books: ShelfBook[] }>('GET', '/api/my-shelf'),
+  editBook: (
+    id: string,
+    data: {
+      title?: string
+      author?: string | null
+      genres?: string[]
+      languages?: string[]
+      city?: string | null
+      district?: string | null
+    },
+  ) => req<{ card: Book }>('PATCH', `/api/books/${id}`, data),
+  deleteBook: (id: string, hideAfterReturn?: boolean) =>
+    req<{ card?: Book; deferred?: boolean }>('POST', `/api/books/${id}/delete`, { hideAfterReturn }),
+  resubmitBook: (id: string) =>
+    req<{ card: Book; pending: boolean }>('POST', `/api/books/${id}/resubmit`, {}),
   digest: (period: 'day' | 'month', city?: string) =>
     req<DigestResult>('GET', `/api/digest${qs({ period, city })}`),
   cities: () => req<CityInfo[]>('GET', '/api/cities'),

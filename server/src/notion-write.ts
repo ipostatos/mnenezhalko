@@ -225,6 +225,37 @@ export async function createBook(b: BookDraft): Promise<string> {
   return id
 }
 
+/** Правит поля существующей строки книги/настолки (после редактирования у нас). */
+export async function updateBook(
+  notionId: string,
+  kind: 'book' | 'game',
+  f: {
+    title?: string
+    author?: string | null
+    genres?: string[]
+    languages?: string[]
+    cityDistrict?: string | null
+  },
+): Promise<void> {
+  const s = await schemas()
+  const ops: Op[] = []
+  const set = (pid: string | undefined, value: unknown) => {
+    if (pid && value !== undefined) ops.push(op(notionId, ['properties', pid], 'set', value))
+  }
+  set('title', f.title !== undefined ? vText(f.title) : undefined)
+  if (kind === 'game') {
+    set(
+      s.games.byName['City/District'],
+      f.cityDistrict !== undefined ? (f.cityDistrict ? vMulti([f.cityDistrict]) : [['']]) : undefined,
+    )
+  } else {
+    set(s.books.byName['Author'], f.author !== undefined ? (f.author ? vMulti([f.author]) : [['']]) : undefined)
+    set(s.books.byName['Genre'], f.genres !== undefined ? (f.genres.length ? vMulti(f.genres) : [['']]) : undefined)
+    set(s.books.byName['Language'], f.languages !== undefined ? (f.languages.length ? vMulti(f.languages) : [['']]) : undefined)
+  }
+  if (ops.length) await submit(ops)
+}
+
 /** Читает блок (строку таблицы) по id. */
 export async function loadBlock(id: string): Promise<any> {
   const res = await call('syncRecordValues', {

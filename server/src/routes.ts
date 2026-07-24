@@ -7,7 +7,14 @@ import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
 import { decodeDataUrl, readCover, saveCover } from './covers.js'
 import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
-import { findDuplicates, putOnShelf } from './publish.js'
+import {
+  findDuplicates,
+  putOnShelf,
+  editBook,
+  softDeleteBook,
+  resubmitBook,
+  shelfState,
+} from './publish.js'
 import { digest } from './digest.js'
 import { createLoan, decorate, listBorrowed, listLoans, markReturned, summarize } from './loans.js'
 import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
@@ -220,12 +227,82 @@ export async function registerRoutes(app: FastifyInstance) {
       { allowCreate: false },
     )
     if (!librarian) return json([])
+    // для выдачи предлагаем только реальные книги на полке (одобренные, свободные)
     const books = await prisma.book.findMany({
-      where: { ownerId: librarian.id, active: true },
+      where: { ownerId: librarian.id, active: true, reviewStatus: 'approved' },
       orderBy: { title: 'asc' },
       take: 200,
     })
     return json(books.map(toCard))
+  })
+
+  /**
+   * Моя полка целиком: со всеми состояниями (на полке, на проверке, отклонена,
+   * на руках, ошибка синка, удалена) — для управления в Mini App.
+   */
+  app.get('/api/my-shelf', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const librarian = await linkLibrarian(
+      { tgId: u.id, username: u.username, firstName: u.firstName },
+      { allowCreate: false },
+    )
+    if (!librarian) return json({ books: [] })
+    const rows = await prisma.book.findMany({
+      where: { ownerId: librarian.id, OR: [{ active: true }, { reviewStatus: 'deleted' }] },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 300,
+    })
+    return json({ books: rows.map((b) => ({ ...toCard(b), state: shelfState(b) })) })
+  })
+
+  /** Редактировать свою книгу. */
+  app.patch('/api/books/:id', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const b = req.body as Record<string, any>
+    const list = (v: unknown) =>
+      Array.isArray(v) ? v.map(String) : undefined
+    const r = await editBook(id, u.id, {
+      title: b.title !== undefined ? String(b.title) : undefined,
+      author: b.author !== undefined ? (b.author ? String(b.author) : null) : undefined,
+      genres: list(b.genres),
+      languages: list(b.languages),
+      city: b.city !== undefined ? (b.city ? String(b.city) : null) : undefined,
+      district: b.district !== undefined ? (b.district ? String(b.district) : null) : undefined,
+    })
+    if ('error' in r) {
+      return reply.code(r.error === 'forbidden' ? 403 : 404).send({ error: r.error })
+    }
+    return json(r)
+  })
+
+  /** Мягко удалить свою книгу (на руках — можно скрыть после возврата). */
+  app.post('/api/books/:id/delete', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const { hideAfterReturn } = req.body as { hideAfterReturn?: boolean }
+    const r = await softDeleteBook(id, u.id, Boolean(hideAfterReturn))
+    if ('error' in r) {
+      const code = r.error === 'forbidden' ? 403 : r.error === 'has_active_loan' ? 409 : 404
+      return reply.code(code).send({ error: r.error })
+    }
+    return json(r)
+  })
+
+  /** Повторно отправить отклонённую книгу на модерацию. */
+  app.post('/api/books/:id/resubmit', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const r = await resubmitBook(id, u.id)
+    if ('error' in r) {
+      const code = r.error === 'forbidden' ? 403 : r.error === 'bad_state' ? 409 : 404
+      return reply.code(code).send({ error: r.error })
+    }
+    return json(r)
   })
 
   /** Новинки библиотеки: `period=day|month`. */
