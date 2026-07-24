@@ -97,7 +97,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
       <div className="section-title">Как стать библиотекарем</div>
       <p className="lead">
         Библиотекарь — это любой участник, который поделился своими книгами. Никаких обязательств:
-        книга остаётся у вас дома, просто становится видна соседям.
+        книга остаётся у вас дома, просто становится видна библиотекарям.
       </p>
       <p className="lead">
         Проще всего — сфотографировать обложку в приложении: название, автор, язык и жанр
@@ -128,7 +128,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
       </div>
 
-      <div className="section-title">По-соседски</div>
+      <div className="section-title">По-доброму</div>
       <div className="about-list">
         <div>Берегите чужую книгу так же, как свою любимую.</div>
         <div>Договорились о сроке — предупредите, если не успеваете.</div>

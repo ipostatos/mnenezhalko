@@ -177,7 +177,7 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   return (
     <>
       <h1>Добавить на полку</h1>
-      <div className="sub">Книга останется у вас — просто станет видна соседям.</div>
+      <div className="sub">Книга останется у вас — просто станет видна библиотекарям.</div>
 
       <input
         ref={fileRef}

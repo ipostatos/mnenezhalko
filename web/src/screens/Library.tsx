@@ -61,7 +61,7 @@ export function Library({
     <>
       <h1>Библиотека</h1>
       <div className="sub">
-        {loading ? 'Ищу…' : `${total} ${kind === 'game' ? 'игр' : 'книг'} на полках соседей`}
+        {loading ? 'Ищу…' : `${total} ${kind === 'game' ? 'игр' : 'книг'} на полках библиотекарей`}
       </div>
 
       <input
