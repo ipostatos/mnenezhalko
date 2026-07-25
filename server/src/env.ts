@@ -48,6 +48,9 @@ export const env = {
       view: process.env.NOTION_GAMES_VIEW || '46806d71-df83-4412-9270-bde93c4692b8',
     },
     syncHours: Number(process.env.NOTION_SYNC_HOURS || 12),
+    /** предохранитель массовой деактивации (см. deactivationGuard в sync.ts) */
+    guardMinVolume: Number(process.env.NOTION_SYNC_GUARD_MIN || 20),
+    guardPercent: Number(process.env.NOTION_SYNC_GUARD_PCT || 0.15),
   },
 
   /** cookie token_v2 служебного аккаунта Notion — без него запись выключена */

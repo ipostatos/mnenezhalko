@@ -1,9 +1,28 @@
 import { prisma, buildSearch } from './db.js'
 import { env } from './env.js'
-import { fetchBooks, fetchGames, fetchLibrarians, normHandle } from './notion.js'
+import {
+  fetchBooks as realFetchBooks,
+  fetchGames as realFetchGames,
+  fetchLibrarians as realFetchLibrarians,
+  normHandle,
+  type NotionBook,
+  type NotionLibrarian,
+} from './notion.js'
 import { flushPending } from './publish.js'
 import { flushTelegramUpdates } from './librarian.js'
 import { invalidateFacets } from './search.js'
+
+/** Источники Notion — инъекция для тестов циркуит-брейкера, без реальной сети. */
+export type SyncDeps = {
+  fetchBooks: () => Promise<NotionBook[]>
+  fetchGames: () => Promise<NotionBook[]>
+  fetchLibrarians: () => Promise<NotionLibrarian[]>
+}
+const defaultDeps: SyncDeps = {
+  fetchBooks: realFetchBooks,
+  fetchGames: realFetchGames,
+  fetchLibrarians: realFetchLibrarians,
+}
 
 export type SyncReport = {
   librarians: number
@@ -18,10 +37,16 @@ export type SyncReport = {
 /**
  * Предохранитель от массового скрытия книг: неофициальный Notion API может
  * вернуть НЕПОЛНЫЙ, но формально успешный ответ — тогда «пропавшие» книги нельзя
- * деактивировать оптом. Порог 15% при заметном объёме библиотеки.
+ * деактивировать оптом. Пороги настраиваются через env (NOTION_SYNC_GUARD_MIN/PCT),
+ * по умолчанию 20 книг объёма и 15% потери.
  */
-export function deactivationGuard(activeBefore: number, goneCount: number): { skip: boolean } {
-  return { skip: activeBefore >= 20 && goneCount > Math.ceil(activeBefore * 0.15) }
+export function deactivationGuard(
+  activeBefore: number,
+  goneCount: number,
+  minVolume = env.notion.guardMinVolume,
+  pct = env.notion.guardPercent,
+): { skip: boolean } {
+  return { skip: activeBefore >= minVolume && goneCount > Math.ceil(activeBefore * pct) }
 }
 
 // Уведомление админам о подозрительном синке (регистрирует бот).
@@ -34,7 +59,7 @@ export function setSyncAlert(fn: (msg: string) => void) {
  * Полная синхронизация из Notion. Идемпотентна: строки матчатся по notionId,
  * записи, добавленные через бота (source = 'bot'), не трогаются.
  */
-export async function syncFromNotion(log = console.log): Promise<SyncReport> {
+export async function syncFromNotion(log = console.log, deps: SyncDeps = defaultDeps): Promise<SyncReport> {
   const started = Date.now()
 
   // сначала отдаём в Notion свои карточки, иначе синк их не увидит
@@ -56,7 +81,7 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
   }
 
   log('[sync] тяну библиотекарей…')
-  const librarians = await fetchLibrarians()
+  const librarians = await deps.fetchLibrarians()
   log(`[sync] библиотекарей: ${librarians.length}`)
 
   // контакты, чьё локальное изменение ещё не уехало в Notion: их telegram синком
@@ -103,12 +128,30 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     ownerByNotion.set(l.notionId, { id: p.id, city: p.city ?? l.city, district: p.district ?? l.district })
   }
 
-  log('[sync] тяну книги…')
-  const books = await fetchBooks()
-  log(`[sync] книг: ${books.length}`)
-  log('[sync] тяну настолки…')
-  const games = await fetchGames()
-  log(`[sync] настолок: ${games.length}`)
+  // Книги и настолки — независимые источники: если один упал, это не должно
+  // ни срывать другой (иначе одна временная ошибка games откатывает уже
+  // успешно прочитанные books), ни считаться «увидели всё» для упавшего —
+  // деактивация по нему в этом прогоне просто не выполняется (см. ниже).
+  let books: NotionBook[] = []
+  let games: NotionBook[] = []
+  let booksOk = true
+  let gamesOk = true
+  try {
+    log('[sync] тяну книги…')
+    books = await deps.fetchBooks()
+    log(`[sync] книг: ${books.length}`)
+  } catch (e: any) {
+    booksOk = false
+    log(`[sync] книги не загрузились: ${e?.message ?? e}`)
+  }
+  try {
+    log('[sync] тяну настолки…')
+    games = await deps.fetchGames()
+    log(`[sync] настолок: ${games.length}`)
+  } catch (e: any) {
+    gamesOk = false
+    log(`[sync] настолки не загрузились: ${e?.message ?? e}`)
+  }
 
   const seen = new Set<string>()
   for (const b of [...books, ...games]) {
@@ -146,33 +189,50 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     seen.add(b.notionId)
   }
 
-  // то, что пропало из Notion, прячем, но не удаляем
-  const stale = await prisma.book.findMany({
-    where: { source: 'notion', active: true, notionId: { not: null } },
-    select: { id: true, notionId: true },
-  })
-  const gone = stale.filter((b) => !seen.has(b.notionId!)).map((b) => b.id)
+  // То, что пропало из Notion, прячем, но не удаляем — отдельно для книг и
+  // настолок: у упавшего источника в этом прогоне мы деактивацию не трогаем
+  // вовсе (нет свежих данных — не считаем никого «пропавшим»), а не мешаем
+  // его в общий процент со здоровым источником.
   let deactivated = 0
   let suspicious = false
-  if (gone.length) {
+  for (const [kind, ok] of [['book', booksOk], ['game', gamesOk]] as const) {
+    if (!ok) {
+      log(`[sync] источник «${kind}» не загрузился — деактивация по нему в этом прогоне пропущена`)
+      continue
+    }
+    const stale = await prisma.book.findMany({
+      where: { source: 'notion', active: true, notionId: { not: null }, kind },
+      select: { id: true, notionId: true },
+    })
+    const gone = stale.filter((b) => !seen.has(b.notionId!)).map((b) => b.id)
+    if (!gone.length) continue
     if (deactivationGuard(stale.length, gone.length).skip) {
       suspicious = true
       const msg =
-        `⚠️ Синк Notion подозрителен: из ${stale.length} книг «пропало» ${gone.length} (> 15%). ` +
-        `Деактивация ПРОПУЩЕНА — вероятно, неполный ответ Notion. Проверьте таблицу и запустите синк вручную.`
+        `⚠️ Синк Notion подозрителен (${kind}): из ${stale.length} «пропало» ${gone.length} ` +
+        `(> ${Math.round(env.notion.guardPercent * 100)}%). Деактивация ПРОПУЩЕНА — вероятно, ` +
+        `неполный ответ Notion. Проверьте таблицу и запустите синк вручную.`
       log(`[sync] ${msg}`)
       syncAlert?.(msg)
     } else {
       await prisma.book.updateMany({ where: { id: { in: gone } }, data: { active: false } })
-      deactivated = gone.length
+      deactivated += gone.length
     }
   }
 
-  await prisma.syncState.upsert({
-    where: { key: 'notion' },
-    create: { key: 'notion', value: new Date().toISOString() },
-    update: { value: new Date().toISOString() },
-  })
+  // Baseline («последний ДОВЕРЕННЫЙ синк») продвигаем только если прогон был
+  // полностью успешным: ни один источник не упал и предохранитель нигде не
+  // сработал. Иначе /api/health продолжал бы честно показывать «недоверенные»
+  // данные как последний успешный синк — подозрительный или частично упавший
+  // прогон не должен маскироваться под штатный.
+  const trusted = booksOk && gamesOk && !suspicious
+  if (trusted) {
+    await prisma.syncState.upsert({
+      where: { key: 'notion' },
+      create: { key: 'notion', value: new Date().toISOString() },
+      update: { value: new Date().toISOString() },
+    })
+  }
   invalidateFacets()
 
   const report: SyncReport = {
@@ -183,7 +243,7 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     suspicious,
     ms: Date.now() - started,
   }
-  log(`[sync] готово за ${(report.ms / 1000).toFixed(1)}с, скрыто ${deactivated}`)
+  log(`[sync] готово за ${(report.ms / 1000).toFixed(1)}с, скрыто ${deactivated}${trusted ? '' : ' (baseline не обновлён)'}`)
   return report
 }
 
