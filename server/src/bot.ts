@@ -50,6 +50,8 @@ import {
   flushTelegramUpdates,
   pendingTelegramCount,
 } from './librarian.js'
+import { normHandle } from './notion.js'
+import { lookupIsbn, looksLikeIsbn } from './isbn.js'
 
 // при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
 // (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
@@ -1012,6 +1014,10 @@ type AlbumBuf = { fileIds: string[]; timer: ReturnType<typeof setTimeout>; ctx: 
 const albums = new Map<string, AlbumBuf>()
 const ALBUM_WAIT_MS = 1500
 
+/** Админ добавляет книги от имени библиотекаря (пока не сбросит /onbehalf off). */
+const onBehalf = new Map<number, { id: string; name: string; city: string | null }>()
+const behalfFor = (ctx: any) => (isAdmin(ctx.from.id) ? onBehalf.get(ctx.from.id) : undefined)
+
 function bufferAlbumPhoto(ctx: any) {
   const key = `${ctx.chat.id}:${ctx.message.media_group_id}`
   const fileId = ctx.message.photo.at(-1)!.file_id
@@ -1030,8 +1036,9 @@ async function handlePhotoBatch(ctx: any, fileIds: string[]) {
   if (!visionEnabled()) {
     return ctx.reply('Распознавание по фото сейчас недоступно. Добавьте книги вручную в приложении.')
   }
+  const ob = behalfFor(ctx)
   const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
-  if (!user?.city) {
+  if (!ob && !user?.city) {
     return ctx.reply(
       'Чтобы добавить пачкой, сначала выберите город: /city — потом пришлите обложки книг альбомом.',
     )
@@ -1061,12 +1068,13 @@ async function handlePhotoBatch(ctx: any, fileIds: string[]) {
       author: rec.author,
       genres: rec.genres,
       languages: rec.languages,
-      city: user.city,
+      city: ob ? null : user!.city,
       coverUrl: saved.url,
+      ownerLibrarianId: ob?.id,
     })
     ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
   }
-  await sendBatchSummary(ctx, added, pending, failed)
+  await sendBatchSummary(ctx, added, pending, failed, ob?.name)
 }
 
 /** Пакетное добавление списком: `/import` + строки «Название — Автор». */
@@ -1082,14 +1090,17 @@ async function handleListImport(ctx: any, raw: string) {
         '<b>Пакетное добавление</b>',
         '',
         'Пришлите обложки книг <b>альбомом</b> — распознаю и добавлю пачкой.',
-        'Или списком, по одной книге на строку:',
+        'Или списком, по одной на строку — названием или ISBN:',
         '<code>/import',
         'Дюна — Фрэнк Герберт',
-        'Гиперион — Дэн Симмонс</code>',
+        '9785171147426</code>',
+        '',
+        'По ISBN сам подтяну название, автора и обложку.',
       ].join('\n'),
       { parse_mode: 'HTML' },
     )
   }
+  const ob = behalfFor(ctx)
   const user = await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from.id) },
     create: {
@@ -1100,33 +1111,54 @@ async function handleListImport(ctx: any, raw: string) {
     },
     update: { username: ctx.from.username },
   })
-  if (!user.city) return ctx.reply('Сначала выберите город: /city — потом повторите список.')
+  if (!ob && !user.city) return ctx.reply('Сначала выберите город: /city — потом повторите список.')
 
+  await ctx.replyWithChatAction('typing')
   const added: string[] = []
   const pending: string[] = []
+  let failed = 0
   for (const line of lines) {
-    const [title, author] = line.split(/\s[—–-]\s|\s*\|\s*/).map((s) => s.trim())
-    if (!title || title.length < 2) continue
+    let book: { title: string; author: string | null; coverUrl: string | null } | null = null
+    if (looksLikeIsbn(line)) {
+      const found = await lookupIsbn(line)
+      if (found) book = found
+      else {
+        failed++
+        continue
+      }
+    } else {
+      const [title, author] = line.split(/\s[—–-]\s|\s*\|\s*/).map((s) => s.trim())
+      if (!title || title.length < 2) continue
+      book = { title, author: author || null, coverUrl: null }
+    }
     const res = await putOnShelf({
       tgId: BigInt(ctx.from.id),
       username: ctx.from.username ?? null,
       firstName: ctx.from.first_name ?? null,
       kind: 'book',
-      title,
-      author: author || null,
+      title: book.title,
+      author: book.author,
       genres: [],
       languages: [],
-      city: user.city,
-      coverUrl: null,
+      city: ob ? null : user.city,
+      coverUrl: book.coverUrl,
+      ownerLibrarianId: ob?.id,
     })
     ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
   }
-  await sendBatchSummary(ctx, added, pending, 0)
+  await sendBatchSummary(ctx, added, pending, failed, ob?.name)
 }
 
 /** Общая сводка после пакетного добавления. */
-async function sendBatchSummary(ctx: any, added: string[], pending: string[], failed: number) {
+async function sendBatchSummary(
+  ctx: any,
+  added: string[],
+  pending: string[],
+  failed: number,
+  behalfName?: string,
+) {
   const blocks: string[] = []
+  if (behalfName) blocks.push(`<i>От имени: ${esc(behalfName)}</i>`)
   if (added.length)
     blocks.push(`🎉 На полке (${added.length}):\n` + added.map((t) => `• ${esc(t)}`).join('\n'))
   if (pending.length)
@@ -1135,15 +1167,54 @@ async function sendBatchSummary(ctx: any, added: string[], pending: string[], fa
         pending.map((t) => `• ${esc(t)}`).join('\n'),
     )
   if (failed) blocks.push(`⚠️ Не разобрал: ${failed}. Пришлите их поштучно и покрупнее.`)
-  if (!blocks.length) blocks.push('Ничего не удалось добавить.')
+  if (added.length === 0 && pending.length === 0) blocks.push('Ничего не удалось добавить.')
   await ctx.reply(blocks.join('\n\n'), { parse_mode: 'HTML', reply_markup: mainKeyboard() })
 }
 
 bot.command('import', (ctx) => handleListImport(ctx, ctx.match?.toString() ?? ''))
 
+/** Админ: добавлять книги от имени библиотекаря (фото/альбом/список/ISBN). */
+bot.command('onbehalf', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const arg = ctx.match?.toString().trim() ?? ''
+  if (!arg || /^(off|стоп|сброс)$/i.test(arg)) {
+    onBehalf.delete(ctx.from!.id)
+    return ctx.reply('Ок, добавляю снова от своего имени.')
+  }
+  const nick = normHandle(arg)
+  if (!nick) {
+    return ctx.reply('Формат: <code>/onbehalf @ник</code> библиотекаря (сброс — /onbehalf off).', {
+      parse_mode: 'HTML',
+    })
+  }
+  const lib = await prisma.librarian.findFirst({
+    where: { telegramNorm: nick, mergedIntoId: null },
+    select: { id: true, name: true, city: true },
+  })
+  if (!lib) {
+    return ctx.reply(
+      `Не нашёл библиотекаря @${esc(nick)}. Он должен уже быть в базе — из Notion или добавив хотя бы одну книгу.`,
+      { parse_mode: 'HTML' },
+    )
+  }
+  onBehalf.set(ctx.from!.id, { id: lib.id, name: lib.name, city: lib.city })
+  await ctx.reply(
+    `Теперь книги (фото, альбом, список, ISBN) добавляю от имени <b>${esc(lib.name)}</b>` +
+      `${lib.city ? ` · ${esc(lib.city)}` : ''}.\nСбросить — /onbehalf off.`,
+    { parse_mode: 'HTML' },
+  )
+})
+
 bot.callbackQuery('shelf:save', async (ctx) => {
   const d = shelfDrafts.get(ctx.from.id)
   if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
+
+  // админ добавляет от имени библиотекаря — город берём у него, не спрашиваем
+  const ob = behalfFor(ctx)
+  if (ob) {
+    await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
+    return saveShelfDraft(ctx, d, ob.city ?? '', ob)
+  }
 
   const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
   if (!user?.city) {
@@ -1179,7 +1250,12 @@ bot.callbackQuery(/^shelfcity:(.+)$/, async (ctx) => {
   await saveShelfDraft(ctx, d, city)
 })
 
-async function saveShelfDraft(ctx: any, d: ShelfDraft, city: string) {
+async function saveShelfDraft(
+  ctx: any,
+  d: ShelfDraft,
+  city: string,
+  ob?: { id: string; name: string },
+) {
   shelfDrafts.delete(ctx.from.id)
   const res = await putOnShelf({
     tgId: BigInt(ctx.from.id),
@@ -1190,9 +1266,11 @@ async function saveShelfDraft(ctx: any, d: ShelfDraft, city: string) {
     author: d.author,
     genres: d.genres,
     languages: d.languages,
-    city,
+    city: ob ? null : city,
     coverUrl: d.coverUrl,
+    ownerLibrarianId: ob?.id,
   })
+  const behalf = ob ? ` (от имени ${esc(ob.name)})` : ''
 
   if (res.book.reviewStatus === 'pending') {
     return ctx.reply(
@@ -1207,7 +1285,7 @@ async function saveShelfDraft(ctx: any, d: ShelfDraft, city: string) {
       ? 'Книга уже в общей таблице проекта.'
       : 'Книга видна в боте и поиске; в общую таблицу проекта уйдёт чуть позже.'
 
-  await ctx.reply(`🎉 Готово! «${esc(res.book.title)}» на вашей полке.\n${inNotion}`, {
+  await ctx.reply(`🎉 Готово! «${esc(res.book.title)}» на полке${behalf}.\n${inNotion}`, {
     parse_mode: 'HTML',
     reply_markup: mainKeyboard(),
   })

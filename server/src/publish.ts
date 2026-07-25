@@ -27,6 +27,8 @@ export type ShelfDraft = {
   city?: string | null
   district?: string | null
   coverUrl?: string | null
+  /** админ добавляет от имени этого библиотекаря — книга принадлежит ему, не адду */
+  ownerLibrarianId?: string | null
 }
 
 export type ShelfResult = {
@@ -88,17 +90,25 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     update: { username: d.username ?? undefined, city: d.city ?? undefined },
   })
 
-  // библиотекарь у нас — единая идентификация: по tgId, затем по нику, затем создание
-  const librarian = (await linkLibrarian(
-    {
-      tgId: d.tgId,
-      username: d.username,
-      firstName: d.firstName,
-      city: d.city ?? user.city ?? null,
-      district: d.district,
-    },
-    { allowCreate: true },
-  ))!
+  // библиотекарь-владелец: либо явно заданный (админ добавляет от чьего-то имени),
+  // либо сам добавляющий — единая идентификация по tgId → нику → создание
+  let librarian: Librarian
+  if (d.ownerLibrarianId) {
+    const found = await prisma.librarian.findUnique({ where: { id: d.ownerLibrarianId } })
+    if (!found) throw new Error('librarian_not_found')
+    librarian = found
+  } else {
+    librarian = (await linkLibrarian(
+      {
+        tgId: d.tgId,
+        username: d.username,
+        firstName: d.firstName,
+        city: d.city ?? user.city ?? null,
+        district: d.district,
+      },
+      { allowCreate: true },
+    ))!
+  }
 
   // модерация: свои книги (админ) и режим без модерации одобряются сразу
   const autoApprove = !env.moderation || isAdmin(d.tgId)
