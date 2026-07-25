@@ -45,6 +45,8 @@ const json = (v: unknown) =>
 // Стабильная витрина карусели: подборка живёт 30 минут (memo по городу),
 // чтобы не генерить новую случайную выборку на каждый заход.
 const SHOWCASE_TTL = 30 * 60 * 1000
+const SHOWCASE_LIMIT_DEFAULT = 12
+const SHOWCASE_LIMIT_MAX = 16
 const showcaseCache = new Map<string, { at: number; data: unknown }>()
 
 /**
@@ -132,14 +134,19 @@ export async function registerRoutes(app: FastifyInstance) {
   })
 
   /**
-   * Витрина для карусели: 12 одобренных книг с обложкой. Подборка стабильна
-   * 30 минут (memo по городу) — иначе каждый заход = новая случайная выборка,
-   * новые сетевые запросы и декодирование. 12 карточек хватает на экран.
+   * Витрина для карусели: SHOWCASE_LIMIT_DEFAULT (12) одобренных книг с
+   * обложкой, не больше SHOWCASE_LIMIT_MAX (16). Подборка стабильна 30 минут
+   * (memo по городу+лимиту) — иначе каждый заход = новая случайная выборка,
+   * новые сетевые запросы и декодирование.
    */
   app.get('/api/showcase', async (req, reply) => {
-    const { city } = req.query as { city?: string }
+    const { city, limit: limitRaw } = req.query as { city?: string; limit?: string }
+    const parsed = limitRaw ? Number(limitRaw) : NaN
+    const limit = Number.isFinite(parsed) && parsed > 0
+      ? Math.min(Math.round(parsed), SHOWCASE_LIMIT_MAX)
+      : SHOWCASE_LIMIT_DEFAULT
     reply.header('Cache-Control', 'private, max-age=1800')
-    const key = city || '*'
+    const key = `${city || '*'}:${limit}`
     const hit = showcaseCache.get(key)
     if (hit && Date.now() - hit.at < SHOWCASE_TTL) return hit.data
 
@@ -148,10 +155,10 @@ export async function registerRoutes(app: FastifyInstance) {
       ? await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
           WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
           AND city = ${city}
-          ORDER BY RANDOM() LIMIT 12`
+          ORDER BY RANDOM() LIMIT ${limit}`
       : await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
           WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
-          ORDER BY RANDOM() LIMIT 12`
+          ORDER BY RANDOM() LIMIT ${limit}`
     // карусель показывает обложки на 156px — превью 320px (2× под retina) хватает
     const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, 320) }))
     showcaseCache.set(key, { at: Date.now(), data })
