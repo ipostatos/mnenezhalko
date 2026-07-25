@@ -113,12 +113,13 @@ async function safeFetch(url: string, signal: AbortSignal): Promise<Response | n
  * присылает гигабайты без Content-Length, не должен упасть в память процесса
  * целиком, прежде чем мы это заметим.
  */
-async function readLimited(res: Response, ctrl: AbortController): Promise<Buffer | null> {
+async function readLimited(res: Response, ctrl: AbortController): Promise<Buffer> {
   const declared = Number(res.headers.get('content-length') || 0)
-  if (declared > MAX_BYTES) return null
+  if (declared > MAX_BYTES) throw new Error('too_large')
   if (!res.body) {
     const buf = Buffer.from(await res.arrayBuffer())
-    return buf.length > MAX_BYTES ? null : buf
+    if (buf.length > MAX_BYTES) throw new Error('too_large')
+    return buf
   }
   const reader = res.body.getReader()
   const chunks: Uint8Array[] = []
@@ -130,7 +131,7 @@ async function readLimited(res: Response, ctrl: AbortController): Promise<Buffer
       total += value.byteLength
       if (total > MAX_BYTES) {
         ctrl.abort()
-        return null
+        throw new Error('too_large')
       }
       chunks.push(value)
     }
@@ -140,20 +141,38 @@ async function readLimited(res: Response, ctrl: AbortController): Promise<Buffer
   return Buffer.concat(chunks)
 }
 
-async function fetchAndResize(
-  url: string,
-  w: number,
-): Promise<{ body: Buffer; type: string } | null> {
+/** Категория неудачи origin-запроса — для метрик/логов, не для текста ответа клиенту. */
+export type ImgErrorCategory =
+  | 'private_host' // SSRF-фильтр (net.ts): приватный/зарезервированный адрес или редирект на такой
+  | 'too_many_redirects'
+  | 'http_error' // origin ответил не 2xx
+  | 'bad_content_type' // Content-Type не image/*
+  | 'too_large' // Content-Length или фактический размер > MAX_BYTES
+  | 'empty' // тело пустое
+  | 'timeout' // не уложились в TIMEOUT_MS
+  | 'network' // сеть/DNS/прочее
+
+type FetchOutcome =
+  | { ok: true; body: Buffer; type: string; inputBytes: number; resizeMs: number }
+  | { ok: false; category: ImgErrorCategory }
+
+async function fetchAndResize(url: string, w: number): Promise<FetchOutcome> {
   await acquire()
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    ctrl.abort()
+  }, TIMEOUT_MS)
   try {
     const res = await safeFetch(url, ctrl.signal)
-    if (!res || !res.ok) return null
+    if (!res) return { ok: false, category: 'too_many_redirects' }
+    if (!res.ok) return { ok: false, category: 'http_error' }
     const type = res.headers.get('content-type') || 'image/jpeg'
-    if (!type.startsWith('image/')) return null
+    if (!type.startsWith('image/')) return { ok: false, category: 'bad_content_type' }
     const orig = await readLimited(res, ctrl)
-    if (!orig || !orig.length) return null
+    if (!orig.length) return { ok: false, category: 'empty' }
+    const t1 = Date.now()
     // Ресайз в webp-превью; если sharp не осилил (SVG/битый) — отдаём оригинал.
     try {
       const body = await sharp(orig, { failOn: 'none' })
@@ -161,15 +180,65 @@ async function fetchAndResize(
         .resize({ width: w, withoutEnlargement: true })
         .webp({ quality: 78 })
         .toBuffer()
-      return { body, type: 'image/webp' }
+      return { ok: true, body, type: 'image/webp', inputBytes: orig.length, resizeMs: Date.now() - t1 }
     } catch {
-      return { body: orig, type }
+      return { ok: true, body: orig, type, inputBytes: orig.length, resizeMs: Date.now() - t1 }
     }
-  } catch {
-    return null
+  } catch (e) {
+    const msg = String((e as Error)?.message || '')
+    if (msg === 'too_large') return { ok: false, category: 'too_large' }
+    if (msg === 'private_host' || msg === 'bad_url' || msg === 'bad_scheme' || msg === 'no_dns')
+      return { ok: false, category: 'private_host' }
+    return { ok: false, category: timedOut ? 'timeout' : 'network' }
   } finally {
     clearTimeout(timer)
     release()
+  }
+}
+
+/**
+ * Метрики image pipeline — без стороннего monitoring-стека (см. `/api/admin/img-metrics`
+ * в routes.ts, только для админа): счётчики HIT/MISS/NEGATIVE, bucketed-длительность
+ * (не средняя — редкий очень медленный запрос иначе прячется в среднем) и разбивка
+ * origin-неудач по категории. Живут в памяти процесса, обнуляются рестартом — этого
+ * достаточно для проекта такого размера, отдельное хранилище было бы overkill.
+ */
+const DURATION_BUCKETS_MS = [10, 50, 200, 500, 2000] // последний «бакет» — «свыше 2000»
+const counters = { hit: 0, miss: 0, negative: 0 }
+const durationBuckets = new Array(DURATION_BUCKETS_MS.length + 1).fill(0)
+const originFailures = new Map<ImgErrorCategory, number>()
+
+function bucketOf(ms: number): number {
+  for (let i = 0; i < DURATION_BUCKETS_MS.length; i++) if (ms < DURATION_BUCKETS_MS[i]) return i
+  return DURATION_BUCKETS_MS.length
+}
+
+function recordDuration(ms: number): void {
+  durationBuckets[bucketOf(ms)]++
+}
+
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
+/** Снимок метрик — для админской ручки. Диск сканируем по запросу, не держим бегущий счётчик. */
+export async function imgPipelineMetrics() {
+  const disk = await scanCacheEntries(CACHE_DIR)
+  return {
+    hit: counters.hit,
+    miss: counters.miss,
+    negative: counters.negative,
+    durationBuckets: [...DURATION_BUCKETS_MS, null].map((under, i) => ({
+      under_ms: under,
+      count: durationBuckets[i],
+    })),
+    originFailures: Object.fromEntries(originFailures),
+    cacheFiles: disk.length,
+    cacheBytes: disk.reduce((s, e) => s + e.size, 0),
   }
 }
 
@@ -191,9 +260,18 @@ export function warmShowcaseCovers(urls: (string | null)[], w = CAROUSEL_W): voi
 /**
  * Отдаёт превью обложки шириной `w` по внешнему url (с проверкой подписи).
  * Сначала с диска, при промахе — тянет с origin, ресайзит и кэширует.
- * null — если подпись не сошлась или не вышло.
+ *
+ * Три разных «не смог» специально не схлопнуты в одно `null`, чтобы
+ * `/api/img` мог честно отдать `X-Image-Cache: NEGATIVE` (уже знаем, что
+ * обложка недоступна, origin не трогали) отдельно от `MISS`, который в итоге
+ * тоже не вышел (origin спросили прямо сейчас, и это тоже провалилось) —
+ * иначе оба выглядели бы одинаково в метриках, хотя по нагрузке на origin
+ * это разные вещи. `null` — отдельно, это невалидный запрос (не сошлась
+ * подпись/url), а не состояние кэша вовсе.
  */
-export type CachedImage = { body: Buffer; type: string; cache: 'HIT' | 'MISS' }
+export type CachedImage =
+  | { body: Buffer; type: string; cache: 'HIT' | 'MISS' }
+  | { cache: 'NEGATIVE' }
 
 export async function cachedImage(
   url: string,
@@ -203,9 +281,11 @@ export async function cachedImage(
   if (!/^https?:\/\//.test(url) || sign(url, w) !== sig) return null
   await mkdir(CACHE_DIR, { recursive: true })
   const base = path.join(CACHE_DIR, keyOf(url, w))
+  const host = safeHostname(url)
 
   try {
     const [body, type] = await Promise.all([readFile(base), readFile(`${base}.type`, 'utf8')])
+    counters.hit++
     return { body, type, cache: 'HIT' }
   } catch {
     /* промах кэша — тянем ниже */
@@ -213,28 +293,45 @@ export async function cachedImage(
 
   // недавно не смогли загрузить — не бьём origin снова (негативный кэш)
   const negUntil = negative.get(base)
-  if (negUntil && negUntil > Date.now()) return null
+  if (negUntil && negUntil > Date.now()) {
+    counters.negative++
+    return { cache: 'NEGATIVE' }
+  }
 
   let p = inflight.get(base)
   if (!p) {
+    const t0 = Date.now()
     p = fetchAndResize(url, w)
       .then(async (r) => {
-        if (r) {
+        const dur = Date.now() - t0
+        recordDuration(dur)
+        if (r.ok) {
           negative.delete(base)
           await Promise.all([
             writeFile(base, r.body),
             writeFile(`${base}.type`, r.type),
           ]).catch(() => {})
-        } else {
-          negative.set(base, Date.now() + NEG_TTL_MS)
+          console.log(
+            `[img] MISS ok host=${host} w=${w} in=${r.inputBytes}B out=${r.body.length}B resize=${r.resizeMs}ms total=${dur}ms`,
+          )
+          return { body: r.body, type: r.type }
         }
-        return r
+        negative.set(base, Date.now() + NEG_TTL_MS)
+        originFailures.set(r.category, (originFailures.get(r.category) ?? 0) + 1)
+        // без полного url — он может нести query-токены чужого сервиса; хостом достаточно
+        console.log(`[img] fail host=${host} w=${w} category=${r.category} total=${dur}ms`)
+        return null
       })
       .finally(() => inflight.delete(base))
     inflight.set(base, p)
   }
   const r = await p
-  return r ? { ...r, cache: 'MISS' } : null
+  if (r) {
+    counters.miss++
+    return { ...r, cache: 'MISS' }
+  }
+  counters.negative++
+  return { cache: 'NEGATIVE' }
 }
 
 /**

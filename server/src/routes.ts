@@ -30,7 +30,15 @@ import {
 import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
-import { CARD_W, CAROUSEL_W, LIST_W, cachedImage, proxyCover, warmShowcaseCovers } from './imgcache.js'
+import {
+  CARD_W,
+  CAROUSEL_W,
+  LIST_W,
+  cachedImage,
+  imgPipelineMetrics,
+  proxyCover,
+  warmShowcaseCovers,
+} from './imgcache.js'
 import { isSafeCoverUrl } from './net.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -184,26 +192,44 @@ export async function registerRoutes(app: FastifyInstance) {
     const { u, s, w } = req.query as { u?: string; s?: string; w?: string }
     if (!u || !s) return reply.code(400).send({ error: 'bad_request' })
     const width = Math.min(1200, Math.max(64, Number(w) || 640))
-    const t0 = Date.now()
-    const img = await cachedImage(u, width, s)
-    const dur = Date.now() - t0
     let host = ''
     try {
       host = new URL(u).hostname
     } catch {
       /* невалидный url — подпись всё равно не сойдётся */
     }
-    // метрики для честного замера p50/p95 (X-Image-Cache HIT/MISS, origin, длительность)
+
+    const t0 = Date.now()
+    const img = await cachedImage(u, width, s)
+    const dur = Date.now() - t0
+
+    if (!img) {
+      // не сошлась подпись/url — не наша обложка вовсе, не метрика кэша
+      return reply.code(400).send({ error: 'bad_signature' })
+    }
+
+    // метрики для честного замера p50/p95: HIT — с диска, MISS — реально
+    // спросили origin (успешно или нет), NEGATIVE — уже знаем, что не выйдет,
+    // origin в этот раз не трогали вовсе (структурные логи — внутри cachedImage)
     reply.header('X-Image-Origin', host)
     reply.header('Server-Timing', `img;dur=${dur}`)
-    if (!img) {
-      reply.header('X-Image-Cache', 'MISS')
+    reply.header('X-Image-Cache', img.cache)
+
+    if (img.cache === 'NEGATIVE' || !('body' in img)) {
       return reply.code(404).send({ error: 'not_found' })
     }
-    reply.header('X-Image-Cache', img.cache)
     reply.header('Cache-Control', 'public, max-age=31536000, immutable')
     reply.type(img.type)
     return reply.send(img.body)
+  })
+
+  /** Метрики image pipeline (HIT/MISS/NEGATIVE, длительности, диск) — только админу. */
+  app.get('/api/admin/img-metrics', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const user = await upsertUser(u)
+    if (!user.isAdmin) return reply.code(403).send({ error: 'admin_only' })
+    return imgPipelineMetrics()
   })
 
   app.get('/api/books/:id', async (req, reply) => {
