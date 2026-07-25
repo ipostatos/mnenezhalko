@@ -49,12 +49,22 @@ export function isPrivateIp(ip: string): boolean {
   )
 }
 
+export type ResolvedAddr = { address: string; family: 4 | 6 }
+
 /**
  * Разбирает url и убеждается, что это http(s) на ПУБЛИЧНЫЙ адрес (резолвит DNS
  * и проверяет все адреса). Бросает при нарушении — вызывать перед каждым fetch,
  * в т.ч. на каждом hop редиректа.
+ *
+ * ВАЖНО (DNS rebinding / TOCTOU): резолвит DNS сама и возвращает проверенные
+ * адреса — вызывающий код обязан подключаться именно к ним (через
+ * `connect.lookup` в undici, см. imgcache.ts), а не резолвить хост заново.
+ * Если бы `fetch()` потом сам резолвил hostname второй раз, атакующий
+ * DNS-сервер с TTL=0 мог бы на первый (проверочный) запрос ответить публичным
+ * адресом, а на второй (для реального соединения) — приватным: проверка
+ * прошла бы, а соединение всё равно ушло бы внутрь сети.
  */
-export async function assertPublicUrl(raw: string): Promise<void> {
+export async function assertPublicUrl(raw: string): Promise<ResolvedAddr[]> {
   let url: URL
   try {
     url = new URL(raw)
@@ -67,9 +77,15 @@ export async function assertPublicUrl(raw: string): Promise<void> {
   // DNS (isPrivateIp на самом имени вернул бы true для любого домена)
   const isIpLiteral = /^[\d.]+$/.test(host) || host.includes(':')
   if (isIpLiteral && isPrivateIp(host)) throw new Error('private_host')
+  if (isIpLiteral) {
+    // литеральный IP в URL — резолвить нечего, сам адрес и есть цель подключения
+    const family = host.includes(':') ? 6 : 4
+    return [{ address: host, family }]
+  }
   const addrs = await lookup(host, { all: true })
   if (!addrs.length) throw new Error('no_dns')
   for (const a of addrs) if (isPrivateIp(a.address)) throw new Error('private_host')
+  return addrs.map((a) => ({ address: a.address, family: a.family as 4 | 6 }))
 }
 
 /**

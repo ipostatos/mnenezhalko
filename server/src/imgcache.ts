@@ -16,8 +16,9 @@ import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promi
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
+import { Agent, fetch as undiciFetch } from 'undici'
 import { env } from './env.js'
-import { assertPublicUrl } from './net.js'
+import { assertPublicUrl, type ResolvedAddr } from './net.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const CACHE_DIR = path.resolve(here, '../data/imgcache')
@@ -82,18 +83,53 @@ const NEG_TTL_MS = 60 * 60 * 1000 // 1 час
 const negative = new Map<string, number>() // ключ → до какого времени не пробовать
 
 /**
+ * Агент undici, подключение которого «пришпилено» к уже проверенным адресам —
+ * а не резолвит хост заново. Без этого проверка (assertPublicUrl) и реальное
+ * соединение (fetch) были бы двумя НЕЗАВИСИМЫМИ DNS-резолвами: атакующий DNS
+ * с TTL=0 мог бы ответить публичным адресом на первый (проверочный) запрос и
+ * приватным — на второй (для соединения), и SSRF-проверка ничего бы не решала
+ * (классический DNS rebinding). Одноразовый на один hop — держать пул незачем,
+ * keepAlive выключен, чтобы сокет не завис в пуле дольше самого запроса.
+ */
+function pinnedAgent(addrs: ResolvedAddr[]): Agent {
+  return new Agent({
+    keepAliveTimeout: 1,
+    keepAliveMaxTimeout: 1,
+    connect: {
+      lookup: (_hostname: string, options: any, callback: any) => {
+        if (options?.all) callback(null, addrs)
+        else callback(null, addrs[0].address, addrs[0].family)
+      },
+    },
+  })
+}
+
+/** Один hop: подключение к уже проверенным адресам. Подменяется в тестах редиректов. */
+export type HopFetch = (url: string, addrs: ResolvedAddr[], signal: AbortSignal) => Promise<Response>
+
+const realHopFetch: HopFetch = (url, addrs, signal) =>
+  undiciFetch(url, {
+    signal,
+    redirect: 'manual',
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; mnenezhalko)' },
+    dispatcher: pinnedAgent(addrs),
+  }) as unknown as Promise<Response>
+
+/**
  * Fetch с ручной обработкой редиректов и SSRF-проверкой на КАЖДОМ hop:
  * публичный домен не должен увести нас на приватный адрес редиректом.
  */
-async function safeFetch(url: string, signal: AbortSignal): Promise<Response | null> {
+export async function safeFetch(
+  url: string,
+  signal: AbortSignal,
+  hopFetch: HopFetch = realHopFetch,
+): Promise<Response | null> {
   let current = url
   for (let hop = 0; hop < 4; hop++) {
-    await assertPublicUrl(current) // бросит на приватном/битом — поймается выше
-    const res = await fetch(current, {
-      signal,
-      redirect: 'manual',
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; mnenezhalko)' },
-    })
+    // бросит на приватном/битом; возвращает проверенные адреса — подключаемся
+    // именно к ним (см. pinnedAgent), а не резолвим current заново
+    const addrs = await assertPublicUrl(current)
+    const res = await hopFetch(current, addrs, signal)
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get('location')
       if (!loc) return res
