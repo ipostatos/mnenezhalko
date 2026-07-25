@@ -10,6 +10,7 @@ const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
 const GUIDE = 'https://mnenezhalko.notion.site/3fcdfa8ed57444d7ae2129bf5c0299f7'
 const PROJECT = 'https://mnenezhalko.notion.site/in-Poland-e4f29a5687c449f79581add35f17791b'
 const CURATOR = 'https://t.me/LizavetaZh'
+const COFFEE = 'https://buycoffee.to/mnenezhalko'
 const DONATE_BOT = 'https://t.me/mnenezhalkobot?start=donate'
 // держать синхронно с DONATE_AMOUNTS на сервере (server/src/bot.ts)
 const DONATE_AMOUNTS = [50, 150, 500]
@@ -158,6 +159,23 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
           ))}
         </div>
       )}
+      <button
+        className="row-card tile coffee-card"
+        style={{ ['--tone' as any]: '#b07a4a' }}
+        onClick={() => {
+          haptic()
+          openTg(COFFEE)
+        }}
+      >
+        <div className="ic-tile">
+          <Icon name="coffee" />
+        </div>
+        <div className="grow">
+          <div className="t">Угостить кофе</div>
+          <div className="d">Разовая поддержка картой на buycoffee.to</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
 
       <div className="section-title">Куда идти дальше</div>
       <button className="row-card tile" style={{ ['--tone' as any]: '#6d7bb5' }} onClick={() => openTg(MAIN_CHAT)}>

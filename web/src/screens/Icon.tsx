@@ -19,6 +19,7 @@ import {
   Compass,
   Globe,
   Crown,
+  Coffee,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -39,6 +40,7 @@ export type IconName =
   | 'compass'
   | 'globe'
   | 'crown'
+  | 'coffee'
 
 const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   book: BookOpen,
@@ -56,6 +58,7 @@ const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   compass: Compass,
   globe: Globe,
   crown: Crown,
+  coffee: Coffee,
 }
 
 /** Instagram в lucide v1 убрали (бренд) — берём выверенную геометрию Feather. */

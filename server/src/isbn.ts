@@ -17,26 +17,8 @@ export async function lookupIsbn(raw: string): Promise<IsbnBook | null> {
   const isbn = onlyIsbn(raw)
   if (isbn.length !== 10 && isbn.length !== 13) return null
 
-  // Google Books
-  try {
-    const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`)
-    if (r.ok) {
-      const j = (await r.json()) as any
-      const v = j.items?.[0]?.volumeInfo
-      if (v?.title) {
-        const cover: string | undefined = v.imageLinks?.thumbnail || v.imageLinks?.smallThumbnail
-        return {
-          title: String(v.title).slice(0, 300),
-          author: Array.isArray(v.authors) && v.authors.length ? v.authors.join(', ') : null,
-          coverUrl: cover ? cover.replace(/^http:/, 'https:') : null,
-        }
-      }
-    }
-  } catch {
-    /* пробуем OpenLibrary */
-  }
-
-  // OpenLibrary Books API — даёт название, авторов (именами) и обложку разом
+  // OpenLibrary Books API — надёжный источник: название, авторов (именами) и обложку разом.
+  // Первым, потому что Google Books без ключа отдаёт 429 (rate limit) даже с прод-IP.
   try {
     const r = await fetch(
       `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`,
@@ -55,6 +37,25 @@ export async function lookupIsbn(raw: string): Promise<IsbnBook | null> {
             b.cover?.large ||
             b.cover?.medium ||
             `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`,
+        }
+      }
+    }
+  } catch {
+    /* пробуем Google Books */
+  }
+
+  // Google Books — запасной (шире по русским изданиям, если не упрётся в 429)
+  try {
+    const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`)
+    if (r.ok) {
+      const j = (await r.json()) as any
+      const v = j.items?.[0]?.volumeInfo
+      if (v?.title) {
+        const cover: string | undefined = v.imageLinks?.thumbnail || v.imageLinks?.smallThumbnail
+        return {
+          title: String(v.title).slice(0, 300),
+          author: Array.isArray(v.authors) && v.authors.length ? v.authors.join(', ') : null,
+          coverUrl: cover ? cover.replace(/^http:/, 'https:') : null,
         }
       }
     }
