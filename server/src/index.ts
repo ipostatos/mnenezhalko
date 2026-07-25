@@ -10,6 +10,7 @@ import { registerRoutes } from './routes.js'
 import { bot, checkNotionToken, remindOverdueLoans, setupBotCommands } from './bot.js'
 import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
+import { housekeepImgCache } from './imgcache.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
@@ -116,6 +117,18 @@ if (botDisabled) {
 }
 
 startSyncLoop()
+
+// диск под превью обложек иначе растёт бесконечно (см. imgcache.ts) — не зависит от бота
+const imgHousekeep = () =>
+  housekeepImgCache()
+    .then((r) => {
+      if (r.removed) {
+        app.log.info(`[imgcache] чистка: ${r.removed}/${r.scanned} файлов, освобождено ${(r.freedBytes / 1024 / 1024).toFixed(1)} МБ`)
+      }
+    })
+    .catch((e) => app.log.error(`[imgcache] ${e?.message ?? e}`))
+const imgHousekeepTimer = setInterval(imgHousekeep, 6 * 3600_000)
+imgHousekeepTimer.unref?.()
 
 // раз в сутки напоминаем про книги, которые загостились у читателей
 if (!botDisabled) {

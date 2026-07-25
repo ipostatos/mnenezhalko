@@ -30,7 +30,7 @@ import {
 import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
-import { cachedImage, proxyCover } from './imgcache.js'
+import { CARD_W, CAROUSEL_W, LIST_W, cachedImage, proxyCover, warmShowcaseCovers } from './imgcache.js'
 import { isSafeCoverUrl } from './net.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -41,6 +41,17 @@ function who(req: FastifyRequest): TgUser | null {
 
 const json = (v: unknown) =>
   JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)))
+
+/**
+ * `/api/loans` отдавал `book.coverUrl` сырой строкой прямо из базы — обложка
+ * шла в обход всего конвейера (без ресайза, без кэша и, что важнее, без
+ * SSRF-проверки в `net.ts`). Список выдач (`.loan-cover`, 54×78 CSS) — такой
+ * же «список», как и остальные, поэтому пускаем через тот же прокси.
+ */
+function withCoverProxy<T extends { book?: { coverUrl: string | null } | null }>(loan: T): T {
+  if (!loan.book) return loan
+  return { ...loan, book: { ...loan.book, coverUrl: proxyCover(loan.book.coverUrl, LIST_W) } }
+}
 
 // Стабильная витрина карусели: подборка живёт 30 минут (memo по городу),
 // чтобы не генерить новую случайную выборку на каждый заход.
@@ -160,8 +171,11 @@ export async function registerRoutes(app: FastifyInstance) {
           WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
           ORDER BY RANDOM() LIMIT ${limit}`
     // карусель показывает обложки на 156px — превью 320px (2× под retina) хватает
-    const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, 320) }))
+    const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, CAROUSEL_W) }))
     showcaseCache.set(key, { at: Date.now(), data })
+    // прогреваем превью новой ротации в фоне — первый посетитель не должен
+    // оплачивать все MISS сразу; не блокирует ответ, не await'им
+    warmShowcaseCovers(rows.map((r) => r.coverUrl))
     return data
   })
 
@@ -258,10 +272,10 @@ export async function registerRoutes(app: FastifyInstance) {
       listHistory(u.id),
     ])
     return json({
-      given: given.map(decorate),
-      taken: taken.map(decorate),
+      given: given.map(decorate).map(withCoverProxy),
+      taken: taken.map(decorate).map(withCoverProxy),
       history: history.map((l) => ({
-        ...l,
+        ...withCoverProxy(l),
         role: l.ownerTg === u.id ? 'given' : 'taken',
         canUndo: canUndoLoan(l),
       })),
@@ -349,7 +363,9 @@ export async function registerRoutes(app: FastifyInstance) {
       orderBy: [{ createdAt: 'desc' }],
       take: 300,
     })
-    return json({ books: rows.map((b) => ({ ...toCard(b), state: shelfState(b) })) })
+    // единственное место, где «Моя полка» рисует обложку — экран правки
+    // (.edit-cover, 128×180 CSS), список состояний обложку не показывает
+    return json({ books: rows.map((b) => ({ ...toCard(b, CARD_W), state: shelfState(b) })) })
   })
 
   /** Редактировать свою книгу. */

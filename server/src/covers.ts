@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import sharp from 'sharp'
 import { env } from './env.js'
 import { isSupportedMedia, type MediaType } from './vision.js'
 
@@ -33,6 +34,38 @@ const MAX_BYTES = 6 * 1024 * 1024
 
 export type Decoded = { data: string; buffer: Buffer; mediaType: MediaType }
 
+/**
+ * Хранимый максимум — с запасом на будущие варианты показа (не размер под
+ * конкретную миниатюру, см. LIST_W/CARD_W в imgcache.ts).
+ */
+const STORE_MAX_W = 1600
+const STORE_QUALITY = 82
+
+/**
+ * Телефонные фото книжных полок часто несут EXIF-ориентацию и GPS-координаты
+ * места съёмки — а эта ссылка публична (уходит в общую таблицу Notion и
+ * отдаётся всем через `/api/cover/<файл>`). Прогоняем через sharp: `rotate()`
+ * переносит EXIF-поворот в сами пиксели, ресайз убирает лишнее разрешение,
+ * а перекодирование в webp по умолчанию НЕ переносит метаданные (sharp
+ * сохраняет EXIF/ICC только если явно попросить `withMetadata()` — здесь
+ * специально этого не делаем).
+ * GIF не трогаем: анимации у обложек книг не бывает, а resize без
+ * `{ animated: true }` молча схлопнул бы её до одного кадра.
+ */
+export async function normalizeForStorage(d: Decoded): Promise<Decoded> {
+  if (d.mediaType === 'image/gif') return d
+  try {
+    const buffer = await sharp(d.buffer, { failOn: 'none' })
+      .rotate()
+      .resize({ width: STORE_MAX_W, withoutEnlargement: true })
+      .webp({ quality: STORE_QUALITY })
+      .toBuffer()
+    return { buffer, mediaType: 'image/webp', data: buffer.toString('base64') }
+  } catch {
+    return d // не осилили (битый/экзотический файл) — сохраняем как получили, не роняем загрузку
+  }
+}
+
 /** `data:image/jpeg;base64,...` → байты. Бросает понятную ошибку при мусоре. */
 export function decodeDataUrl(dataUrl: string): Decoded {
   const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl.trim())
@@ -45,7 +78,8 @@ export function decodeDataUrl(dataUrl: string): Decoded {
   return { data, buffer, mediaType }
 }
 
-export async function saveCover(d: Decoded): Promise<{ file: string; url: string }> {
+export async function saveCover(input: Decoded): Promise<{ file: string; url: string }> {
+  const d = await normalizeForStorage(input)
   await mkdir(COVERS_DIR, { recursive: true })
   const file = `${randomUUID()}.${EXT[d.mediaType]}`
   await writeFile(path.join(COVERS_DIR, file), d.buffer)

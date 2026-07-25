@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { norm, prisma } from './db.js'
-import { proxyCover } from './imgcache.js'
+import { CARD_W, proxyCover } from './imgcache.js'
 
 export type SearchParams = {
   q?: string
@@ -57,7 +57,8 @@ const split = (s: string | null | undefined) =>
     .map((x) => x.trim())
     .filter(Boolean)
 
-export function toCard(b: any): BookCard {
+/** `w` — ширина превью обложки; по умолчанию размер списков (см. LIST_W в imgcache.ts). */
+export function toCard(b: any, w?: number): BookCard {
   return {
     id: b.id,
     kind: b.kind,
@@ -67,7 +68,7 @@ export function toCard(b: any): BookCard {
     languages: split(b.languages),
     city: b.city,
     district: b.district,
-    coverUrl: proxyCover(b.coverUrl),
+    coverUrl: proxyCover(b.coverUrl, w),
     status: b.status,
     source: b.source,
     reviewStatus: b.reviewStatus ?? 'approved',
@@ -157,7 +158,8 @@ export async function bookById(id: string) {
     where: { id, active: true, reviewStatus: 'approved' },
     include: { owner: OWNER_SELECT },
   })
-  return b ? toCard(b) : null
+  // разворот книги показывает обложку крупнее, чем строка в списке
+  return b ? toCard(b, CARD_W) : null
 }
 
 /**
