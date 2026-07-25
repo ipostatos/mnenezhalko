@@ -25,6 +25,7 @@ export function Library({
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showcase, setShowcase] = useState<CarouselBook[]>([])
+  const [showcaseLoaded, setShowcaseLoaded] = useState(false)
   const seq = useRef(0)
 
   useEffect(() => {
@@ -32,7 +33,11 @@ export function Library({
   }, [city, onlyMyCity])
 
   useEffect(() => {
-    api.showcase().then(setShowcase).catch(() => {})
+    api
+      .showcase()
+      .then(setShowcase)
+      .catch(() => {})
+      .finally(() => setShowcaseLoaded(true))
   }, [])
 
   const params = useMemo(
@@ -64,12 +69,21 @@ export function Library({
   }, [params])
 
   // при поиске подводим найденную книгу (с обложкой) в центр карусели;
-  // если её нет в витрине — добавляем в начало
+  // если её нет в витрине — вставляем в СЕРЕДИНУ (там же старт), чтобы карусель
+  // не прокручивалась через всю ленту к началу
   const firstMatch = q.trim().length >= 2 ? items.find((b) => b.coverUrl) : undefined
-  const carouselBooks: CarouselBook[] =
-    firstMatch && !showcase.some((b) => b.id === firstMatch.id)
-      ? [{ id: firstMatch.id, title: firstMatch.title, coverUrl: firstMatch.coverUrl! }, ...showcase]
-      : showcase
+  const carouselBooks: CarouselBook[] = useMemo(() => {
+    if (firstMatch && !showcase.some((b) => b.id === firstMatch.id)) {
+      const arr = showcase.slice()
+      arr.splice(Math.floor(arr.length / 2), 0, {
+        id: firstMatch.id,
+        title: firstMatch.title,
+        coverUrl: firstMatch.coverUrl!,
+      })
+      return arr
+    }
+    return showcase
+  }, [showcase, firstMatch])
 
   return (
     <>
@@ -78,11 +92,21 @@ export function Library({
         {loading ? 'Ищу…' : `${total} ${kind === 'game' ? 'игр' : 'книг'} на полках библиотекарей`}
       </div>
 
-      <CoverCarousel
-        books={carouselBooks}
-        centerId={firstMatch?.id}
-        onOpen={(id) => go({ name: 'book', id })}
-      />
+      {carouselBooks.length > 0 ? (
+        <CoverCarousel
+          books={carouselBooks}
+          centerId={firstMatch?.id}
+          onOpen={(id) => go({ name: 'book', id })}
+        />
+      ) : (
+        !showcaseLoaded && (
+          <div className="cc-skel" aria-hidden>
+            <span />
+            <span />
+            <span />
+          </div>
+        )
+      )}
 
       <input
         className="input"

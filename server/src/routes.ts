@@ -41,6 +41,11 @@ function who(req: FastifyRequest): TgUser | null {
 const json = (v: unknown) =>
   JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)))
 
+// Стабильная витрина карусели: подборка живёт 30 минут (memo по городу),
+// чтобы не генерить новую случайную выборку на каждый заход.
+const SHOWCASE_TTL = 30 * 60 * 1000
+const showcaseCache = new Map<string, { at: number; data: unknown }>()
+
 /**
  * Счётчик обращений к платным ручкам (Claude): подбор книг и распознавание фото.
  * Экземпляр один, поэтому хватает памяти — внешнего хранилища заводить незачем.
@@ -125,27 +130,55 @@ export async function registerRoutes(app: FastifyInstance) {
     })
   })
 
-  /** Витрина для карусели: случайные одобренные книги с обложкой. */
-  app.get('/api/showcase', async (req) => {
+  /**
+   * Витрина для карусели: 12 одобренных книг с обложкой. Подборка стабильна
+   * 30 минут (memo по городу) — иначе каждый заход = новая случайная выборка,
+   * новые сетевые запросы и декодирование. 12 карточек хватает на экран.
+   */
+  app.get('/api/showcase', async (req, reply) => {
     const { city } = req.query as { city?: string }
+    reply.header('Cache-Control', 'private, max-age=1800')
+    const key = city || '*'
+    const hit = showcaseCache.get(key)
+    if (hit && Date.now() - hit.at < SHOWCASE_TTL) return hit.data
+
     type Row = { id: string; title: string; coverUrl: string }
     const rows = city
       ? await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
           WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
           AND city = ${city}
-          ORDER BY RANDOM() LIMIT 80`
+          ORDER BY RANDOM() LIMIT 12`
       : await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
           WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
-          ORDER BY RANDOM() LIMIT 80`
-    return json(rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl) })))
+          ORDER BY RANDOM() LIMIT 12`
+    // карусель показывает обложки на 156px — превью 320px (2× под retina) хватает
+    const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, 320) }))
+    showcaseCache.set(key, { at: Date.now(), data })
+    return data
   })
 
-  /** Кэширующий прокси внешних обложек (подписанный) — ускоряет их загрузку. */
+  /** Конвейер обложек (подписанный): ресайз в webp-превью нужной ширины + кэш. */
   app.get('/api/img', async (req, reply) => {
-    const { u, s } = req.query as { u?: string; s?: string }
+    const { u, s, w } = req.query as { u?: string; s?: string; w?: string }
     if (!u || !s) return reply.code(400).send({ error: 'bad_request' })
-    const img = await cachedImage(u, s)
-    if (!img) return reply.code(404).send({ error: 'not_found' })
+    const width = Math.min(1200, Math.max(64, Number(w) || 640))
+    const t0 = Date.now()
+    const img = await cachedImage(u, width, s)
+    const dur = Date.now() - t0
+    let host = ''
+    try {
+      host = new URL(u).hostname
+    } catch {
+      /* невалидный url — подпись всё равно не сойдётся */
+    }
+    // метрики для честного замера p50/p95 (X-Image-Cache HIT/MISS, origin, длительность)
+    reply.header('X-Image-Origin', host)
+    reply.header('Server-Timing', `img;dur=${dur}`)
+    if (!img) {
+      reply.header('X-Image-Cache', 'MISS')
+      return reply.code(404).send({ error: 'not_found' })
+    }
+    reply.header('X-Image-Cache', img.cache)
     reply.header('Cache-Control', 'public, max-age=31536000, immutable')
     reply.type(img.type)
     return reply.send(img.body)

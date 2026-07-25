@@ -1,7 +1,7 @@
 /**
  * Поиск книги по ISBN — для пакетного добавления списком ISBN.
- * Сначала Google Books (даёт название, авторов и обложку разом), затем
- * OpenLibrary как запасной. Ключи не нужны.
+ * Сначала OpenLibrary (надёжен, отдаёт авторов именами), затем Google Books
+ * запасным (без ключа часто отдаёт 429 даже с прод-IP). Ключи не нужны.
  */
 export type IsbnBook = { title: string; author: string | null; coverUrl: string | null }
 

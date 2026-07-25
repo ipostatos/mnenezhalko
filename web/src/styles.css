@@ -922,6 +922,12 @@ textarea.input {
   margin: 0;
   cursor: pointer;
   transform-origin: center center;
+  /* will-change держим только у карточек у центра (класс .near-center),
+     а не у всех — иначе браузер зря поднимает compositor-слой под каждую */
+  will-change: auto;
+}
+
+.cc-item.near-center {
   will-change: transform, opacity;
 }
 
@@ -934,6 +940,41 @@ textarea.input {
   display: block;
   pointer-events: none;
   background: var(--accent-soft);
+}
+
+/* скелет карусели: держит высоту и показывает мягкие плейсхолдеры,
+   пока не пришла витрина — без визуального скачка при появлении обложек */
+.cc-skel {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: center;
+  margin: var(--sp-2) 0 var(--sp-4);
+  padding: var(--sp-4) 0;
+}
+.cc-skel span {
+  width: 156px;
+  height: 234px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  flex: 0 0 auto;
+  animation: cc-pulse 1.4s ease-in-out infinite;
+}
+.cc-skel span:nth-child(1) {
+  transform: scale(0.8);
+  opacity: 0.5;
+}
+.cc-skel span:nth-child(3) {
+  transform: scale(0.8);
+  opacity: 0.5;
+}
+@keyframes cc-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 /* ── иллюстрации и промо-баннер ─────────────── */
