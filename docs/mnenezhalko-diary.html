@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>МнеНеЖалко · дневник работ</title>
+<meta name="description" content="Дневник работ над ботом и приложением «МнеНеЖалко в Польше»: что сделано, зачем и почему именно так.">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+<meta name="theme-color" content="#f7f1e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16110f" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23eba788'/><text x='32' y='45' font-family='Helvetica,Arial,sans-serif' font-size='36' font-weight='700' fill='%234a2f28' text-anchor='middle'>М</text></svg>">
+
+<style>
+  html,body{max-width:100%;overflow-x:hidden}
+  :root{
+    --bg:#f7f1e8;
+    --glow1:rgba(235,167,136,.30); --glow2:rgba(156,175,136,.20);
+    --card:rgba(255,255,255,.74); --card-solid:#fff; --cardline:rgba(255,255,255,.8);
+    --label:#4a2f28; --label2:rgba(74,47,40,.66); --label3:rgba(74,47,40,.4);
+    --sep:rgba(74,47,40,.16); --soft:rgba(235,167,136,.16);
+    --accent:#c9784f; --sage:#7f9468; --amber:#c08b2e; --rose:#c25c52;
+    --accentbg:rgba(235,167,136,.22); --sagebg:rgba(156,175,136,.24);
+    --amberbg:rgba(217,161,59,.20); --rosebg:rgba(194,92,82,.16); --graybg:rgba(74,47,40,.07);
+    --font:-apple-system,"SF Pro Text","SF Pro Display",system-ui,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#16110f;
+      --glow1:rgba(235,167,136,.20); --glow2:rgba(156,175,136,.12);
+      --card:rgba(42,33,29,.66); --card-solid:#2a211d; --cardline:rgba(255,255,255,.07);
+      --label:#f6ece3; --label2:rgba(246,236,227,.62); --label3:rgba(246,236,227,.34);
+      --sep:rgba(246,236,227,.14); --soft:rgba(235,167,136,.12);
+      --accent:#eba788; --sage:#a8bd8f; --amber:#e0ae4e; --rose:#e08279;
+      --accentbg:rgba(235,167,136,.18); --sagebg:rgba(168,189,143,.18);
+      --amberbg:rgba(224,174,78,.18); --rosebg:rgba(224,130,121,.16); --graybg:rgba(246,236,227,.07);
+    }
+  }
+  :root[data-theme="light"]{--bg:#f7f1e8;--glow1:rgba(235,167,136,.30);--glow2:rgba(156,175,136,.20);--card:rgba(255,255,255,.74);--card-solid:#fff;--cardline:rgba(255,255,255,.8);--label:#4a2f28;--label2:rgba(74,47,40,.66);--label3:rgba(74,47,40,.4);--sep:rgba(74,47,40,.16);--soft:rgba(235,167,136,.16);--accent:#c9784f;--sage:#7f9468;--amber:#c08b2e;--rose:#c25c52;--accentbg:rgba(235,167,136,.22);--sagebg:rgba(156,175,136,.24);--amberbg:rgba(217,161,59,.20);--rosebg:rgba(194,92,82,.16);--graybg:rgba(74,47,40,.07)}
+  :root[data-theme="dark"]{--bg:#16110f;--glow1:rgba(235,167,136,.20);--glow2:rgba(156,175,136,.12);--card:rgba(42,33,29,.66);--card-solid:#2a211d;--cardline:rgba(255,255,255,.07);--label:#f6ece3;--label2:rgba(246,236,227,.62);--label3:rgba(246,236,227,.34);--sep:rgba(246,236,227,.14);--soft:rgba(235,167,136,.12);--accent:#eba788;--sage:#a8bd8f;--amber:#e0ae4e;--rose:#e08279;--accentbg:rgba(235,167,136,.18);--sagebg:rgba(168,189,143,.18);--amberbg:rgba(224,174,78,.18);--rosebg:rgba(224,130,121,.16);--graybg:rgba(246,236,227,.07)}
+
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--label);font-family:var(--font);font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(78% 52% at 84% -6%,var(--glow1),transparent 70%),radial-gradient(68% 44% at 6% 3%,var(--glow2),transparent 72%),var(--bg);
+    background-attachment:fixed}
+  .wrap{max-width:540px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 20px) 16px calc(env(safe-area-inset-bottom) + 48px)}
+  .glass{background:var(--card);-webkit-backdrop-filter:blur(22px) saturate(180%);backdrop-filter:blur(22px) saturate(180%);
+    border:0.5px solid var(--cardline);border-radius:22px;box-shadow:0 1px 1px rgba(74,47,40,.04),0 10px 26px -14px rgba(74,47,40,.24)}
+
+  header{padding:10px 4px 18px}
+  .eyebrow{font-size:12px;color:var(--label2);font-weight:600;letter-spacing:.02em;margin:0 0 7px}
+  header h1{font-size:33px;font-weight:700;letter-spacing:-0.02em;margin:0 0 5px;line-height:1.08}
+  header .sub{font-size:15px;color:var(--label2);margin:0}
+  .status{display:inline-flex;align-items:center;gap:8px;margin-top:15px;font-size:13.5px;color:var(--label2);background:var(--sagebg);padding:7px 13px;border-radius:100px}
+  .status .mk{width:7px;height:7px;border-radius:50%;background:var(--sage);flex:none}
+
+  .tldr{padding:16px 17px;margin-bottom:12px;font-size:14.5px;line-height:1.55;color:var(--label)}
+  .tldr b{font-weight:700}
+
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0 4px}
+  .stat{padding:14px 15px}
+  .stat .n{font-size:25px;font-weight:700;letter-spacing:-0.02em;line-height:1.1;color:var(--label)}
+  .stat .t{font-size:12.5px;color:var(--label2);margin-top:3px;line-height:1.35}
+
+  .note{margin-top:12px;padding:14px 16px}
+  .note.safe{border-left:3px solid var(--sage);border-radius:6px 22px 22px 6px}
+  .note p{margin:0;font-size:13px;color:var(--label2);line-height:1.5}
+  .note b{color:var(--label);font-weight:600}
+
+  .day{display:flex;align-items:center;gap:11px;margin:32px 6px 13px}
+  .day h2{font-size:14.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;margin:0;color:var(--label2)}
+  .day .cap{font-size:12.5px;color:var(--label3);text-transform:none;letter-spacing:0;font-weight:500}
+  .day .line{flex:1;height:0.5px;background:var(--sep)}
+
+  .entry{padding:16px 17px;margin-bottom:12px}
+  .entry .top{display:flex;align-items:flex-start;gap:10px;margin:0 0 9px}
+  .entry .glyph{width:22px;height:22px;border-radius:50%;flex:none;position:relative;margin-top:1px}
+  .glyph.done{background:var(--sage)}
+  .glyph.done::after{content:"";position:absolute;left:7.5px;top:5px;width:5px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .glyph.plan{border:1.6px solid var(--accent)}
+  .glyph.plan::after{content:"";position:absolute;left:9px;top:5px;width:2px;height:8px;border-radius:2px;background:var(--accent)}
+  .glyph.wait{border:1.6px solid var(--rose)}
+  .glyph.wait::after{content:"";position:absolute;left:6px;top:9.5px;width:10px;height:2px;border-radius:2px;background:var(--rose)}
+  .entry h3{font-size:16px;font-weight:700;letter-spacing:-0.01em;margin:0;flex:1;line-height:1.3}
+  .badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:100px;white-space:nowrap;margin-top:2px}
+  .badge.done{background:var(--sagebg);color:var(--sage)}
+  .badge.plan{background:var(--accentbg);color:var(--accent)}
+  .badge.wait{background:var(--rosebg);color:var(--rose)}
+  .badge.fix{background:var(--amberbg);color:var(--amber)}
+  .entry .did{font-size:14px;color:var(--label);margin:0 0 10px;line-height:1.55}
+  .entry .why{display:flex;gap:10px;background:var(--soft);border-radius:14px;padding:11px 13px}
+  .entry .why .q{font-size:11px;font-weight:700;color:var(--accent);flex:none;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+  .entry .why p{margin:0;font-size:13px;color:var(--label2);line-height:1.55}
+  .entry .fx{margin:10px 0 0;padding-top:10px;border-top:0.5px solid var(--sep);font-size:12.5px;color:var(--label2);line-height:1.5}
+  .entry .fx b{color:var(--label);font-weight:600}
+
+  .next{margin-top:14px;padding:17px 18px}
+  .next h3{font-size:16px;font-weight:700;margin:0 0 11px}
+  .next ul{margin:0;padding:0;list-style:none}
+  .next li{position:relative;padding:0 0 0 20px;margin-bottom:9px;font-size:13.5px;color:var(--label2);line-height:1.5}
+  .next li:last-child{margin-bottom:0}
+  .next li::before{content:"";position:absolute;left:3px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .next li b{color:var(--label);font-weight:600}
+  .next.ask li::before{background:var(--rose)}
+
+  .upd{text-align:center;font-size:11.5px;color:var(--label3);margin-top:24px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Книжный проект · МнеНеЖалко в Польше</p>
+    <h1>Дневник работ</h1>
+    <p class="sub">Что сделано, зачем и почему именно так. Коротко и по делу, каждый шаг с пояснением.</p>
+    <span class="status"><span class="mk"></span> Бот и приложение работают</span>
+  </header>
+
+  <div class="tldr glass">
+    <b>За три рабочих дня из идеи вырос живой сервис:</b> библиотека на 3249 книг в Telegram, добавление книги по фотографии обложки, учёт «у кого моя книга сейчас», проверка новых книг, поддержка проекта звёздами. Дальше работа шла не на новые кнопки, а на надёжность: чтобы данные не терялись, чужое не попадало в чужие руки и всё это не разваливалось от роста.
+  </div>
+
+  <div class="stats">
+    <div class="stat glass"><div class="n">3249</div><div class="t">книг в библиотеке, из них 1768 в Варшаве</div></div>
+    <div class="stat glass"><div class="n">143</div><div class="t">библиотекаря делятся своими полками</div></div>
+    <div class="stat glass"><div class="n">96</div><div class="t">автоматических проверок перед каждым обновлением</div></div>
+    <div class="stat glass"><div class="n">0</div><div class="t">известных уязвимостей в зависимостях</div></div>
+  </div>
+
+  <div class="note safe glass">
+    <p><b>Перед каждым изменением на сервере снимается резервная копия</b> базы и обложек, а само изменение потом проверяется на живом сервисе, а не только «по логике на бумаге». Любой шаг можно откатить.</p>
+  </div>
+
+  <div class="day">
+    <h2>22 июля 2026</h2>
+    <span class="cap">запуск</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Бот и приложение вышли в прод</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Бот @mnenezhalkobot и приложение внутри Telegram работают на своём сервере: свой адрес, автозапуск после перезагрузки, ночные резервные копии.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Библиотека должна быть там, где люди уже общаются. Никаких отдельных сайтов, регистраций и паролей: открыл Telegram, нашёл книгу, написал владельцу.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Книга добавляется по фотографии обложки</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Присылаете боту фото обложки: он сам распознаёт название, автора, язык и жанры, показывает карточку на подтверждение и записывает книгу в общую таблицу Notion.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Заполнять форму на каждую книгу никто не будет. Библиотека растёт только тогда, когда добавить книгу проще, чем не добавить.</p>
+    </div>
+    <p class="fx">Путь «фото, полка, Notion» проверен насквозь на живом сервере.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Notion остался главным местом, где живут данные</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Приложение читает таблицу проекта каждые 12 часов и умеет писать в неё: книги, владельцев, настольные игры.</p>
+    <div class="why">
+      <span class="q">Почему так</span>
+      <p>Таблицу уже ведут люди, и ломать привычку нельзя. Приложение подстраивается под проект, а не проект под приложение. Заодно у вас всегда остаётся доступ к данным без нас.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Бот отвечал на один вопрос десятками сообщений</h3>
+      <span class="badge fix">Починено</span>
+    </div>
+    <p class="did">Подбор книг не успевал ответить за 10 секунд, Telegram считал сообщение потерянным и повторял его два часа подряд, а бот на каждый повтор честно отвечал заново.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Выглядело это как поломка «ума» бота, а на самом деле дело в правилах доставки сообщений. Теперь бот сразу подтверждает получение, а повторы отбрасывает по номеру сообщения.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Первый аудит безопасности</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Закрыт вход в админские команды подделкой отправителя. Платные ИИ-запросы теперь только из приложения и с ограничением на человека. Служба работает без прав администратора сервера. Появились резервные копии с проверкой восстановления.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>До этого посторонний мог выдать себя за администратора и разослать сообщение всем участникам, а доступ к ИИ был открыт всему интернету и оплачивался бы из нашего кошелька.</p>
+    </div>
+  </div>
+
+  <div class="day">
+    <h2>24 июля 2026</h2>
+    <span class="cap">восемь задач подряд</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Полка была пустой, хотя в ней 91 книга</h3>
+      <span class="badge fix">Починено</span>
+    </div>
+    <p class="did">Один и тот же человек существовал в базе дважды: Telegram-аккаунт был привязан к пустой записи, а книги лежали на другой. Сделали единое опознание человека и объединили записи на живом сервере.</p>
+    <div class="why">
+      <span class="q">Почему первым делом</span>
+      <p>Это корень сразу нескольких жалоб: пустая полка, дубли библиотекарей, «пропавшие» книги. Пока человек опознаётся ненадёжно, любая надстройка сверху будет врать.</p>
+    </div>
+    <p class="fx"><b>Как делали:</b> сначала резервная копия, потом прогон на копии базы, только потом прод. Дубль не удалён, а помечен объединённым, чтобы синхронизация не вернула книги назад.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Проверка новых книг администратором</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Книга обычного участника уходит администратору: принять, отклонить с причиной или посмотреть возможные дубли. Автор получает уведомление о решении.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Общая таблица одна на всех, и случайная ошибка в ней видна всем. Проверку можно выключить одним переключателем, если поток книг станет слишком большим.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Экран «Моя полка»</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Все свои книги в одном месте, с честными состояниями: на полке, на руках, на проверке, отклонена, удалена. Тут же правка и удаление.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Человек должен распоряжаться своими книгами сам, а не писать администратору «удалите, пожалуйста». Удаление мягкое: книга скрывается, история выдач не рушится.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Выдачи: подтверждение возврата, история и отмена</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Возврат подтверждается в два шага, есть история и кнопка «вернуть как было» в течение суток. Каждое событие выдачи записывается.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Один случайный тап не должен ломать учёт. Отмена нужна чаще, чем кажется: люди путают книги и возвращают не то.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Дизайн по вашему макету</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Тёмная техническая тема заменена на фирменную: крем, персиковый акцент (цвет волос девочки с иллюстраций), мягкие градиенты, ваши иллюстрации на пустых экранах, аккуратный готовый набор иконок.</p>
+    <div class="why">
+      <span class="q">Почему так</span>
+      <p>Аудитория проекта в основном девушки, и «нежные цвета» это не каприз, а попадание в тон. Свои рисованные иконки выглядели кустарно, поэтому заменены на готовый набор.</p>
+    </div>
+    <p class="fx">Изменения только визуальные: ни одна функция при рефреше не тронута.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Приложение показывало вчерашние данные</h3>
+      <span class="badge fix">Починено</span>
+    </div>
+    <p class="did">Настроены правила кэширования и обновление данных при возврате в приложение из фона.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Telegram держит приложение в памяти, и без этого человек добавлял книгу, а на полке её не видел. Выглядит как потеря данных, хотя данные на месте.</p>
+    </div>
+  </div>
+
+  <div class="day">
+    <h2>25 июля 2026</h2>
+    <span class="cap">скорость, безопасность, приватность</span>
+    <span class="line"></span>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Обложки грузились по несколько мегабайт</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Теперь сервер сам уменьшает обложку до нужного размера, переводит в современный формат и хранит копию у себя.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Обложки лежат на десятках чужих сайтов и часто весят от 1 до 3 МБ. В мобильном интернете это главная причина ощущения «приложение медленное».</p>
+    </div>
+    <p class="fx"><b>Замер на живом сервере:</b> обложка 971 КБ превратилась в 46 КБ, это на 95% меньше. Повторный показ: 2 миллисекунды вместо 748.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Карусель обложек в «Библиотеке»</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Лента крупных обложек, листается пальцем с инерцией и тактильным щелчком. Найденная поиском книга подводится в центр.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Люди приходят не с готовым названием, а «посмотреть, что есть». Обложки для выбора книги работают лучше списка строк.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph wait"></span>
+      <h3>Добавление книг пачками</h3>
+      <span class="badge wait">Ждёт вашей проверки</span>
+    </div>
+    <p class="did">Альбом фотографий одним сообщением, список «Название, Автор» строками, поиск по номеру ISBN, и режим «добавляю от имени библиотекаря» для администратора.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Полку заносят не по одной книге, а десятками за вечер. По одной это невыносимо, и человек бросает на пятой.</p>
+    </div>
+    <p class="fx">Ядро проверено автоматически, но сами команды в боте нужно попробовать вживую: пришлите боту альбом обложек и список через <b>/import</b>. Русские издания по ISBN находятся плохо, это ограничение открытых баз.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Внешний аудит: три серьёзные дыры</h3>
+      <span class="badge fix">Закрыто</span>
+    </div>
+    <p class="did">Первое: подготовленным запросом можно было пометить занятой чужую книгу. Второе: неполный ответ от Notion мог разом скрыть половину библиотеки. Третье: загрузку обложки можно было направить внутрь нашего же сервера.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Все три не про «взлом ради взлома», а про тихую порчу данных и доступ к внутренностям сервера. Теперь книга проверяется на владельца, массовое исчезновение книг блокируется с предупреждением администратору, а обложки грузятся только с внешних публичных адресов.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Ссылка-приглашение отдавала чужие книги</h3>
+      <span class="badge fix">Закрыто</span>
+    </div>
+    <p class="did">Ссылка на выдачу содержала простой номер, а разбор «моих выдач» срабатывал при каждом входе в бота и подхватывал выдачи по совпадению ника. Человек, занявший в Telegram чужой освободившийся ник, одним входом получал чужие книги и право отметить их возвращёнными.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Это не теория: ники в Telegram освобождаются и занимаются заново, а нашего согласия для этого не требуется. Теперь ссылка содержит одноразовый ключ, живёт сутки и привязывается ровно к одной выдаче.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Фотографии книг уходили с геометкой</h3>
+      <span class="badge fix">Закрыто</span>
+    </div>
+    <p class="did">Фото с телефона сохранялось как прислано, вместе со скрытыми данными съёмки, включая координаты. Ссылка на файл публичная и попадает в общую таблицу. Теперь фото пересобирается на сервере, скрытые данные не переносятся, картинка заодно становится легче.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Домашний адрес человека не должен уезжать вместе с обложкой книги. Никто бы этого и не заметил: снаружи это просто картинка.</p>
+    </div>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Синхронизация с Notion не запускалась вовсе</h3>
+      <span class="badge fix">Починено</span>
+    </div>
+    <p class="did">Обновление данных было настроено «каждые 12 часов после запуска сервера», а каждое обновление кода запускает сервер заново и сбрасывает отсчёт. При активной работе синхронизация не отрабатывала ни разу: данные тихо старели больше суток.</p>
+    <div class="why">
+      <span class="q">Почему важно</span>
+      <p>Такие поломки самые неприятные: ничего не падает, никто не жалуется, просто библиотека понемногу перестаёт совпадать с таблицей. Теперь срок считается от последней успешной синхронизации, а не от запуска, и просроченная запускается сразу.</p>
+    </div>
+    <p class="fx"><b>Проверено на живом сервере:</b> синхронизация поднялась через 30 секунд после перезапуска, данные обновились, в библиотеке появился 143-й библиотекарь.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>Контакты больше не выкачиваются одним запросом</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Каталог книг остался открытым, а Telegram-ники и инстаграмы отдаются только приложению. Внутренние числовые номера участников не отдаются вообще никому.</p>
+    <div class="why">
+      <span class="q">Почему так</span>
+      <p>Список контактов всех 143 библиотекарей мог забрать любой человек одной командой и залить в спам-рассылку. Прятать сами книги смысла нет, они и так в открытой таблице проекта, а контакты это личное.</p>
+    </div>
+    <p class="fx">Для вас ничего не изменилось: кнопки «Написать» в приложении работают как раньше. Проверено на живом сервере с обеих сторон.</p>
+  </div>
+
+  <div class="entry glass">
+    <div class="top">
+      <span class="glyph done"></span>
+      <h3>96 автоматических проверок вместо честного слова</h3>
+      <span class="badge done">Сделано</span>
+    </div>
+    <p class="did">Каждая найденная поломка сначала повторяется тестом, потом чинится, потом тест проверяется откатом починки: без починки он обязан падать. Тесты гоняются автоматически перед каждым обновлением.</p>
+    <div class="why">
+      <span class="q">Зачем</span>
+      <p>Иначе «починил» на деле означает «стало не видно». Тест, который не падал до починки, не охраняет ничего. Отдельно есть проверки на скорость: возврат к тяжёлым обложкам или к перегруженной карусели будет поймано автоматически.</p>
+    </div>
+  </div>
+
+  <div class="next glass">
+    <h3>Что дальше</h3>
+    <ul>
+      <li><b>Резервная копия за пределами сервера.</b> Сейчас копии лежат на той же машине: если она умрёт, умрут и они.</li>
+      <li><b>Аккуратные обновления базы.</b> Сделать нумерованные шаги изменения структуры вместо «подгони как получится», а вместе с ними защиту от двух активных выдач одной книги на уровне самой базы.</li>
+      <li><b>Тесты на сам экран,</b> а не только на сервер: чтобы поломку в приложении ловил робот, а не участники.</li>
+      <li><b>Приёмка напоминаний о возврате</b> на живых аккаунтах: тут нужен тестовый бот и два человека.</li>
+      <li><b>Дизайн-ревью</b> экранов и приведение «Моей полки» к общему стилю.</li>
+      <li><b>Подготовка ко второму городу или стране:</b> вынести всё польское (города, чаты, таблицы, тексты) в отдельную настройку.</li>
+    </ul>
+  </div>
+
+  <div class="next ask glass">
+    <h3>Что нужно от вас</h3>
+    <ul>
+      <li><b>Добавить бота в чат проекта</b> и выключить ему режим приватности (или сделать администратором). Без этого бот не видит чат: афиши встреч и барахолка остаются пустыми.</li>
+      <li><b>Служебный аккаунт Notion</b> вместо личного. Сейчас запись в таблицу идёт от личного аккаунта: при смене пароля она отвалится.</li>
+      <li><b>Попробовать вживую</b> добавление пачками: альбом обложек, <b>/import</b>, и режим «от имени».</li>
+      <li><b>Доступ к внешнему хранилищу</b> для резервных копий, чтобы они лежали не только на сервере.</li>
+    </ul>
+  </div>
+
+  <p class="upd">Обновлено 25 июля 2026<br>Подробная техническая версия этого дневника: <b>docs/DIARY.md</b> в репозитории проекта</p>
+
+</div>
+
+</body>
+</html>
