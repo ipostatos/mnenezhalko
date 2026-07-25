@@ -40,12 +40,19 @@ import {
   warmShowcaseCovers,
 } from './imgcache.js'
 import { isSafeCoverUrl } from './net.js'
+import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
 function who(req: FastifyRequest): TgUser | null {
   const raw = (req.headers['x-init-data'] as string) || ''
   return verifyInitData(raw)
 }
+
+/**
+ * Можно ли показывать этому запросу контакты (см. privacy.ts). Каталог публичный,
+ * контакты — только из Mini App с валидной подписью Telegram.
+ */
+const maySeeContacts = (req: FastifyRequest): boolean => who(req) !== null
 
 const json = (v: unknown) =>
   JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)))
@@ -140,7 +147,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.get('/api/books', async (req) => {
     const q = req.query as Record<string, string>
-    return searchBooks({
+    const found = await searchBooks({
       q: q.q,
       city: q.city,
       genre: q.genre,
@@ -150,6 +157,7 @@ export async function registerRoutes(app: FastifyInstance) {
       limit: q.limit ? Number(q.limit) : 30,
       offset: q.offset ? Number(q.offset) : 0,
     })
+    return { ...found, items: redactCards(found.items, maySeeContacts(req)) }
   })
 
   /**
@@ -236,7 +244,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string }
     const book = await bookById(id)
     if (!book) return reply.code(404).send({ error: 'not_found' })
-    return book
+    return redactCard(book, maySeeContacts(req))
   })
 
   app.get('/api/librarians/:id', async (req, reply) => {
@@ -253,7 +261,11 @@ export async function registerRoutes(app: FastifyInstance) {
     })
     if (!l) return reply.code(404).send({ error: 'not_found' })
     const { books, ...owner } = l
-    return json({ owner, books: books.map(toCard) })
+    const allowed = maySeeContacts(req)
+    return json({
+      owner: redactOwner(owner, allowed),
+      books: redactCards(books.map(toCard), allowed),
+    })
   })
 
   /**
@@ -449,7 +461,8 @@ export async function registerRoutes(app: FastifyInstance) {
   /** Новинки библиотеки: `period=day|month`. */
   app.get('/api/digest', async (req) => {
     const { period, city } = req.query as { period?: string; city?: string }
-    return json(await digest(period === 'month' ? 'month' : 'day', city || undefined))
+    const d = await digest(period === 'month' ? 'month' : 'day', city || undefined)
+    return json({ ...d, items: redactCards(d.items, maySeeContacts(req)) })
   })
 
   app.get('/api/cities', async () => {
@@ -475,7 +488,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.get('/api/events', async (req) => {
     const { city } = req.query as { city?: string }
-    return prisma.event.findMany({
+    const events = await prisma.event.findMany({
       where: {
         startsAt: { gte: new Date(Date.now() - 6 * 3600_000) },
         ...(city ? { city } : {}),
@@ -483,6 +496,8 @@ export async function registerRoutes(app: FastifyInstance) {
       orderBy: { startsAt: 'asc' },
       take: 50,
     })
+    // createdBy — числовой tgId админа, клиенту не нужен (см. privacy.ts)
+    return json(events.map(redactEvent))
   })
 
   app.post('/api/events', async (req, reply) => {
@@ -513,7 +528,10 @@ export async function registerRoutes(app: FastifyInstance) {
       orderBy: { bumpedAt: 'desc' },
       take: 60,
     })
-    return json(items)
+    // раньше отдавались сырые строки: числовой authorTg + ник всех, кто писал
+    // в барахолку, без всякой авторизации (см. privacy.ts)
+    const allowed = maySeeContacts(req)
+    return json(items.map((i) => redactMarketItem(i, allowed)))
   })
 
   /** Фото обложки → предзаполненная карточка + сохранённая обложка. */

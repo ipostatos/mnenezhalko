@@ -18,7 +18,20 @@ const webDist = path.resolve(here, '../../web/dist')
 // фото обложек приходят как dataURL в теле запроса — стандартного мегабайта мало
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 12 * 1024 * 1024 })
 
-await app.register(cors, { origin: true })
+/**
+ * CORS: только собственный origin. `origin: true` отражал ЛЮБОЙ Origin, то есть
+ * скрипт с чужого сайта мог читать наши ответы из браузера посетителя. Mini App
+ * отдаётся с того же origin, что и API (а в dev у vite стоит proxy на /api),
+ * поэтому кросс-доменные запросы не нужны никому из своих.
+ */
+const ownOrigin = (() => {
+  try {
+    return env.publicUrl ? new URL(env.publicUrl).origin : null
+  } catch {
+    return null
+  }
+})()
+await app.register(cors, { origin: ownOrigin ? [ownOrigin] : false })
 
 /**
  * Единая политика кэша (заголовки плагина статики отключены ниже, ставим сами):
