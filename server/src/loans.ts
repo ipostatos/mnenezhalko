@@ -143,46 +143,58 @@ export const listBorrowed = (holderTg: bigint) =>
   })
 
 export async function markReturned(id: string, byTg: bigint) {
-  const loan = await prisma.loan.findUnique({ where: { id } })
-  if (!loan) return null
-  // закрыть выдачу может владелец или сам читатель
-  if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return null
+  // Возврат и разблокировка книги — одна транзакция: иначе при обрыве процесса
+  // между двумя отдельными операциями выдача уже 'returned', а книга навсегда
+  // остаётся 'busy' без единой активной выдачи — осиротевшее состояние.
+  const result = await prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findUnique({ where: { id } })
+    if (!loan) return null
+    // закрыть выдачу может владелец или сам читатель
+    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return null
 
-  const updated = await prisma.loan.update({
-    where: { id },
-    data: { status: 'returned', returnedAt: new Date() },
-    include: { book: true },
-  })
-  await logLoanEvent(id, 'returned', byTg)
-  if (updated.bookId) {
-    const stillOut = await prisma.loan.count({
-      where: { bookId: updated.bookId, status: 'active' },
+    const updated = await tx.loan.update({
+      where: { id },
+      data: { status: 'returned', returnedAt: new Date() },
+      include: { book: true },
     })
-    if (!stillOut) {
-      const book = await prisma.book.findUnique({ where: { id: updated.bookId } })
-      // владелец просил скрыть книгу после возврата — мягко удаляем её сейчас
-      if (book?.hideAfterReturn) {
-        await prisma.book.update({
-          where: { id: book.id },
-          data: {
-            status: 'free',
-            active: false,
-            reviewStatus: 'deleted',
-            deletedAt: new Date(),
-            deletedByTg: loan.ownerTg,
-            hideAfterReturn: false,
-          },
-        })
-        invalidateFacets()
-        if (book.notionId && notionWriteEnabled()) {
-          await archiveRow(book.notionId).catch(() => {})
+
+    let archiveNotionId: string | null = null
+    if (updated.bookId) {
+      const stillOut = await tx.loan.count({
+        where: { bookId: updated.bookId, status: 'active' },
+      })
+      if (!stillOut) {
+        const book = await tx.book.findUnique({ where: { id: updated.bookId } })
+        // владелец просил скрыть книгу после возврата — мягко удаляем её сейчас
+        if (book?.hideAfterReturn) {
+          await tx.book.update({
+            where: { id: book.id },
+            data: {
+              status: 'free',
+              active: false,
+              reviewStatus: 'deleted',
+              deletedAt: new Date(),
+              deletedByTg: loan.ownerTg,
+              hideAfterReturn: false,
+            },
+          })
+          if (book.notionId && notionWriteEnabled()) archiveNotionId = book.notionId
+        } else {
+          await tx.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
         }
-      } else {
-        await prisma.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
       }
     }
+    return { updated, archiveNotionId }
+  })
+  if (!result) return null
+
+  await logLoanEvent(id, 'returned', byTg)
+  if (result.archiveNotionId) {
+    invalidateFacets()
+    // внешний вызов в Notion — намеренно вне транзакции, откатывать тут нечего
+    await archiveRow(result.archiveNotionId).catch(() => {})
   }
-  return updated
+  return result.updated
 }
 
 /**
@@ -216,28 +228,35 @@ export async function claimLoans(tgId: bigint, username?: string | null, loanId?
  * выдали кому-то ещё. Возвращает обновлённую выдачу либо код ошибки.
  */
 export async function reopenLoan(id: string, byTg: bigint) {
-  const loan = await prisma.loan.findUnique({ where: { id }, include: { book: true } })
-  if (!loan) return { error: 'not_found' as const }
-  if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return { error: 'forbidden' as const }
-  if (loan.status !== 'returned') return { error: 'not_returned' as const }
-  if (!loan.returnedAt || Date.now() - loan.returnedAt.getTime() > UNDO_WINDOW_MS) {
-    return { error: 'too_late' as const }
-  }
-  if (loan.bookId) {
-    const relent = await prisma.loan.count({
-      where: { bookId: loan.bookId, status: 'active', id: { not: id } },
+  // Проверка «книгу не выдали кому-то ещё» и сама реактивация — в одной
+  // транзакции: иначе между чтением relent-счётчика и записью status='active'
+  // могла проскочить чужая createLoan на ту же книгу — и обе выдачи оказались
+  // бы активны одновременно (см. concurrent-тест).
+  const result = await prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findUnique({ where: { id }, include: { book: true } })
+    if (!loan) return { error: 'not_found' as const }
+    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return { error: 'forbidden' as const }
+    if (loan.status !== 'returned') return { error: 'not_returned' as const }
+    if (!loan.returnedAt || Date.now() - loan.returnedAt.getTime() > UNDO_WINDOW_MS) {
+      return { error: 'too_late' as const }
+    }
+    if (loan.bookId) {
+      const relent = await tx.loan.count({
+        where: { bookId: loan.bookId, status: 'active', id: { not: id } },
+      })
+      if (relent) return { error: 'book_relent' as const }
+      const book = await tx.book.findUnique({ where: { id: loan.bookId } })
+      if (book?.active) await tx.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
+    }
+    const updated = await tx.loan.update({
+      where: { id },
+      data: { status: 'active', returnedAt: null },
+      include: { book: true },
     })
-    if (relent) return { error: 'book_relent' as const }
-    const book = await prisma.book.findUnique({ where: { id: loan.bookId } })
-    if (book?.active) await prisma.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
-  }
-  const updated = await prisma.loan.update({
-    where: { id },
-    data: { status: 'active', returnedAt: null },
-    include: { book: true },
+    return { loan: updated }
   })
-  await logLoanEvent(id, 'reopened', byTg)
-  return { loan: updated }
+  if ('loan' in result) await logLoanEvent(id, 'reopened', byTg)
+  return result
 }
 
 /** Закрытые выдачи (обе стороны) — для вкладки «История». */

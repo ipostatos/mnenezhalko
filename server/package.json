@@ -8,7 +8,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "sync": "tsx src/sync-cli.ts",
-    "test": "node --import tsx --test src/reminders.test.ts src/security.test.ts src/covers.test.ts src/imgcache-housekeep.test.ts src/imgcache-metrics.test.ts src/showcase-budget.test.ts",
+    "test": "node --import tsx --test src/reminders.test.ts src/security.test.ts src/covers.test.ts src/imgcache-housekeep.test.ts src/imgcache-metrics.test.ts src/showcase-budget.test.ts src/loan-concurrency.test.ts",
     "migrate:librarians": "tsx src/migrate-librarians.ts",
     "notion:check": "tsx src/notion-check.ts",
     "import": "tsx src/import-topic.ts",
