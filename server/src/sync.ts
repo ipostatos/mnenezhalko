@@ -10,7 +10,24 @@ export type SyncReport = {
   books: number
   games: number
   deactivated: number
+  /** массовое исчезновение книг из Notion — деактивация пропущена (см. deactivationGuard) */
+  suspicious: boolean
   ms: number
+}
+
+/**
+ * Предохранитель от массового скрытия книг: неофициальный Notion API может
+ * вернуть НЕПОЛНЫЙ, но формально успешный ответ — тогда «пропавшие» книги нельзя
+ * деактивировать оптом. Порог 15% при заметном объёме библиотеки.
+ */
+export function deactivationGuard(activeBefore: number, goneCount: number): { skip: boolean } {
+  return { skip: activeBefore >= 20 && goneCount > Math.ceil(activeBefore * 0.15) }
+}
+
+// Уведомление админам о подозрительном синке (регистрирует бот).
+let syncAlert: ((msg: string) => void) | null = null
+export function setSyncAlert(fn: (msg: string) => void) {
+  syncAlert = fn
 }
 
 /**
@@ -135,8 +152,20 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     select: { id: true, notionId: true },
   })
   const gone = stale.filter((b) => !seen.has(b.notionId!)).map((b) => b.id)
+  let deactivated = 0
+  let suspicious = false
   if (gone.length) {
-    await prisma.book.updateMany({ where: { id: { in: gone } }, data: { active: false } })
+    if (deactivationGuard(stale.length, gone.length).skip) {
+      suspicious = true
+      const msg =
+        `⚠️ Синк Notion подозрителен: из ${stale.length} книг «пропало» ${gone.length} (> 15%). ` +
+        `Деактивация ПРОПУЩЕНА — вероятно, неполный ответ Notion. Проверьте таблицу и запустите синк вручную.`
+      log(`[sync] ${msg}`)
+      syncAlert?.(msg)
+    } else {
+      await prisma.book.updateMany({ where: { id: { in: gone } }, data: { active: false } })
+      deactivated = gone.length
+    }
   }
 
   await prisma.syncState.upsert({
@@ -150,10 +179,11 @@ export async function syncFromNotion(log = console.log): Promise<SyncReport> {
     librarians: librarians.length,
     books: books.length,
     games: games.length,
-    deactivated: gone.length,
+    deactivated,
+    suspicious,
     ms: Date.now() - started,
   }
-  log(`[sync] готово за ${(report.ms / 1000).toFixed(1)}с, скрыто ${gone.length}`)
+  log(`[sync] готово за ${(report.ms / 1000).toFixed(1)}с, скрыто ${deactivated}`)
   return report
 }
 

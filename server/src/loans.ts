@@ -78,26 +78,49 @@ export async function createLoan(d: LoanDraft) {
 
   const days = d.days === null ? null : d.days ?? DEFAULT_DAYS
   const takenAt = parseTakenAt(d.takenAt)
-  const loan = await prisma.loan.create({
-    data: {
-      title,
-      bookId: d.bookId ?? null,
-      ownerTg: d.ownerTg,
-      holderUsername,
-      holderName: d.holderName ?? known?.firstName ?? null,
-      holderTg: known?.tgId ?? null,
-      takenAt,
-      // срок отсчитываем от дня выдачи, а не от момента записи
-      dueAt: days ? new Date(takenAt.getTime() + days * day) : null,
-      note: d.note?.slice(0, 500) ?? null,
-    },
-    include: { book: true },
+
+  // Всё, что зависит от состояния книги, — в транзакции: иначе между проверкой и
+  // пометкой busy книгу мог занять кто-то ещё, а bookId из тела запроса нельзя
+  // принимать на веру (иначе выдачей можно пометить занятой ЧУЖУЮ книгу).
+  const loan = await prisma.$transaction(async (tx) => {
+    if (d.bookId) {
+      const book = await tx.book.findUnique({
+        where: { id: d.bookId },
+        include: { owner: { select: { tgId: true } } },
+      })
+      if (!book || !book.active) throw new Error('book_not_found')
+      // выдавать со своей полки может только владелец книги
+      if (book.owner?.tgId == null || book.owner.tgId !== d.ownerTg) throw new Error('not_your_book')
+      if (book.reviewStatus !== 'approved') throw new Error('book_not_approved')
+      // уже на руках — второй активной выдачи быть не может
+      const busy = await tx.loan.findFirst({
+        where: { bookId: d.bookId, status: 'active' },
+        select: { id: true },
+      })
+      if (busy || book.status !== 'free') throw new Error('book_busy')
+    }
+    const created = await tx.loan.create({
+      data: {
+        title,
+        bookId: d.bookId ?? null,
+        ownerTg: d.ownerTg,
+        holderUsername,
+        holderName: d.holderName ?? known?.firstName ?? null,
+        holderTg: known?.tgId ?? null,
+        takenAt,
+        // срок отсчитываем от дня выдачи, а не от момента записи
+        dueAt: days ? new Date(takenAt.getTime() + days * day) : null,
+        note: d.note?.slice(0, 500) ?? null,
+      },
+      include: { book: true },
+    })
+    // на полке книга помечается занятой, чтобы её не искали зря
+    if (created.bookId) {
+      await tx.book.update({ where: { id: created.bookId }, data: { status: 'busy' } })
+    }
+    return created
   })
 
-  // на полке книга помечается занятой, чтобы её не искали зря
-  if (loan.bookId) {
-    await prisma.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
-  }
   await logLoanEvent(loan.id, 'created', d.ownerTg)
   return loan
 }

@@ -17,6 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { env } from './env.js'
+import { assertPublicUrl } from './net.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const CACHE_DIR = path.resolve(here, '../data/imgcache')
@@ -69,19 +70,40 @@ const inflight = new Map<string, Promise<{ body: Buffer; type: string } | null>>
 const NEG_TTL_MS = 60 * 60 * 1000 // 1 час
 const negative = new Map<string, number>() // ключ → до какого времени не пробовать
 
+/**
+ * Fetch с ручной обработкой редиректов и SSRF-проверкой на КАЖДОМ hop:
+ * публичный домен не должен увести нас на приватный адрес редиректом.
+ */
+async function safeFetch(url: string, signal: AbortSignal): Promise<Response | null> {
+  let current = url
+  for (let hop = 0; hop < 4; hop++) {
+    await assertPublicUrl(current) // бросит на приватном/битом — поймается выше
+    const res = await fetch(current, {
+      signal,
+      redirect: 'manual',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; mnenezhalko)' },
+    })
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location')
+      if (!loc) return res
+      current = new URL(loc, current).toString()
+      continue
+    }
+    return res
+  }
+  return null // слишком много редиректов
+}
+
 async function fetchAndResize(
   url: string,
   w: number,
 ): Promise<{ body: Buffer; type: string } | null> {
   await acquire()
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
   try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; mnenezhalko)' },
-    }).finally(() => clearTimeout(timer))
-    if (!res.ok) return null
+    const res = await safeFetch(url, ctrl.signal)
+    if (!res || !res.ok) return null
     const type = res.headers.get('content-type') || 'image/jpeg'
     if (!type.startsWith('image/')) return null
     const orig = Buffer.from(await res.arrayBuffer())
@@ -100,6 +122,7 @@ async function fetchAndResize(
   } catch {
     return null
   } finally {
+    clearTimeout(timer)
     release()
   }
 }

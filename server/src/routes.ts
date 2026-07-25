@@ -31,6 +31,7 @@ import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
 import { cachedImage, proxyCover } from './imgcache.js'
+import { isSafeCoverUrl } from './net.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
 function who(req: FastifyRequest): TgUser | null {
@@ -549,6 +550,12 @@ export async function registerRoutes(app: FastifyInstance) {
             .filter(Boolean)
 
     let coverUrl: string | null = b.coverUrl ? String(b.coverUrl) : null
+    // coverUrl от пользователя нельзя брать на веру — иначе через него можно
+    // заставить сервер сходить внутрь сети (SSRF). Внешний http(s) — только на
+    // публичный хост; свой относительный /api/cover сюда не попадает.
+    if (coverUrl && /^https?:\/\//i.test(coverUrl) && !isSafeCoverUrl(coverUrl)) {
+      return reply.code(400).send({ error: 'bad_cover_url' })
+    }
     if (!coverUrl && b.coverImage) {
       try {
         coverUrl = (await saveCover(decodeDataUrl(String(b.coverImage)))).url

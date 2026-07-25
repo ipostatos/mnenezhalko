@@ -8,7 +8,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "sync": "tsx src/sync-cli.ts",
-    "test": "node --import tsx --test src/reminders.test.ts",
+    "test": "node --import tsx --test src/reminders.test.ts src/security.test.ts",
     "migrate:librarians": "tsx src/migrate-librarians.ts",
     "notion:check": "tsx src/notion-check.ts",
     "import": "tsx src/import-topic.ts",
@@ -25,7 +25,7 @@
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "grammy": "^1.33.0",
-    "sharp": "^0.33.5"
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

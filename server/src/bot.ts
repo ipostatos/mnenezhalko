@@ -3,7 +3,7 @@ import { env, isAdmin } from './env.js'
 import { prisma } from './db.js'
 import { searchBooks, toCard, type BookCard } from './search.js'
 import { askAi } from './ai.js'
-import { syncFromNotion } from './sync.js'
+import { syncFromNotion, setSyncAlert } from './sync.js'
 import {
   CITIES,
   EVENTS_TOPIC_ID,
@@ -1313,6 +1313,13 @@ function moderationCard(b: BookCard, owner: { name: string; telegram: string | n
     .text('🔍 Дубли', `mod:dups:${b.id}`)
   return { text: lines.join('\n'), kb }
 }
+
+// подозрительный синк (массовое исчезновение книг) — предупреждаем админов
+setSyncAlert((msg) => {
+  for (const id of env.adminIds) {
+    bot.api.sendMessage(String(id), msg, { link_preview_options: { is_disabled: true } }).catch(() => {})
+  }
+})
 
 // новая книга ушла на модерацию — показываем админам карточку с кнопками
 setModerationNotifier(async (book, owner) => {
