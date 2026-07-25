@@ -118,13 +118,14 @@ test('4. читатель в боте — уведомление обеим ст
   assert.match(owner!.text, /напомнил читателю/)
 })
 
-test('5. читатель не в боте — владельцу инструкция с invite-ссылкой', async () => {
-  const loan = await seedLoan({ title: 'E', ownerTg: 30n, holderTg: null, holderUsername: 'ghost', takenAt: new Date(NOW.getTime() - 40 * DAY), dueAt: new Date(NOW.getTime() - DAY) })
+test('5. читатель не в боте — владельцу инструкция с invite-ссылкой (одноразовый токен, не id выдачи)', async () => {
+  await seedLoan({ title: 'E', ownerTg: 30n, holderTg: null, holderUsername: 'ghost', takenAt: new Date(NOW.getTime() - 40 * DAY), dueAt: new Date(NOW.getTime() - DAY) })
   const c = collector()
   await run(c)
   assert.equal(c.sent.length, 1)
   assert.equal(c.sent[0].chatId, '30')
-  assert.match(c.sent[0].text, new RegExp(`\\?start=loan_${loan.id}`))
+  // ссылка есть, но НЕ несёт id выдачи открытым текстом (см. security-аудит claim-токенов)
+  assert.match(c.sent[0].text, /\?start=loan_[\w-]+/)
 })
 
 test('6. повторный прогон в течение 7 дней — без дублей', async () => {

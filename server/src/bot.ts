@@ -15,7 +15,7 @@ import {
 } from './seed.js'
 import { parseOffer, saveOffer } from './market.js'
 import {
-  claimLoans,
+  claimLoanByToken,
   createLoan,
   listBorrowed,
   listLoans,
@@ -134,9 +134,9 @@ const renderList = (items: (BookCard & { why?: string })[]) =>
   items.map(bookLine).join('\n\n')
 
 bot.command('start', async (ctx) => {
-  // человек пришёл по ссылке-приглашению из выдачи книги
+  // человек пришёл по ссылке-приглашению из выдачи книги (?start=loan_<токен>)
   const payload = ctx.match?.toString().trim() ?? ''
-  const loanId = payload.startsWith('loan_') ? payload.slice(5) : undefined
+  const claimPayload = payload.startsWith('loan_') ? payload.slice(5) : undefined
 
   await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from!.id) },
@@ -152,30 +152,36 @@ bot.command('start', async (ctx) => {
   // пришёл по кнопке «поддержать» из Mini App вне Telegram — сразу меню сумм
   if (payload === 'donate') return showDonateMenu(ctx)
 
-  const claimed = await claimLoans(BigInt(ctx.from!.id), ctx.from!.username, loanId)
-
-  if (loanId) {
-    const loan = await loanById(loanId)
-    if (loan && loan.status === 'active') {
+  if (claimPayload) {
+    const result = await claimLoanByToken(BigInt(ctx.from!.id), ctx.from!.username, claimPayload)
+    if (result.status === 'claimed') {
+      const loan = await loanById(result.loanId)
+      if (loan && loan.status === 'active') {
+        await ctx.reply(
+          [
+            `📗 У вас книга <b>${esc(loan.title)}</b>.`,
+            loan.dueAt ? `Договорились вернуть к ${loanFmt.format(loan.dueAt)}.` : '',
+            '',
+            'Как дочитаете — нажмите кнопку, и я закрою запись у владельца.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          {
+            parse_mode: 'HTML',
+            reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
+          },
+        )
+      }
+    } else if (result.status === 'username_mismatch') {
       await ctx.reply(
-        [
-          `📗 У вас книга <b>${esc(loan.title)}</b>.`,
-          loan.dueAt ? `Договорились вернуть к ${loanFmt.format(loan.dueAt)}.` : '',
-          '',
-          'Как дочитаете — нажмите кнопку, и я закрою запись у владельца.',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        {
-          parse_mode: 'HTML',
-          reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
-        },
+        `Эта ссылка была отправлена для @${esc(result.expectedUsername ?? '?')} — ` +
+          'если книга правда у вас, попросите владельца прислать ссылку вам лично.',
       )
+    } else if (result.status === 'expired') {
+      await ctx.reply('Эта ссылка устарела — попросите владельца прислать новую (список — /loans).')
     }
-  } else if (claimed) {
-    await ctx.reply(
-      `📗 Кстати, за вами числится ${claimed === 1 ? 'книга' : `книг: ${claimed}`} из библиотеки проекта. Посмотреть — /loans`,
-    )
+    // already_claimed / not_found — молча идём дальше к приветствию, ничего не показываем
+    // постороннему по чужой или угаданной ссылке
   }
 
   const total = await prisma.book.count({ where: { active: true, kind: 'book', reviewStatus: 'approved' } })
@@ -551,7 +557,7 @@ async function sendLoanCreated(ctx: any, loan: any) {
       reached
         ? 'Читателю написал — он сможет отметить возврат сам.'
         : 'Читатель ещё не знаком с ботом. Перешлите ему ссылку, чтобы он получал напоминания:',
-      reached ? '' : loanLink(loan.id),
+      reached ? '' : loanLink(loan.claimToken),
       '',
       'Все выдачи — /loans',
     ]

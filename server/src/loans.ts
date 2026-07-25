@@ -7,9 +7,21 @@
  * можно одной кнопкой — с любой стороны.
  *
  * Тонкость Telegram: боту нельзя написать первым тому, кто с ним не общался.
- * Поэтому у выдачи есть ссылка-приглашение `?start=loan_<id>` — владелец
+ * Поэтому у выдачи есть ссылка-приглашение `?start=loan_<токен>` — владелец
  * пересылает её, читатель открывает, и с этого момента напоминания доходят.
+ *
+ * Токен — не id выдачи (тот публичен и предсказуем: возвращается всеми
+ * ручками API, светится в событиях и синке). Раньше ссылка была буквально
+ * `?start=loan_<id выдачи>`, а claimLoans() при ЛЮБОМ /start (даже без
+ * ссылки) подхватывал ВСЕ чужие невостребованные выдачи, у которых
+ * holderUsername совпал с ником зашедшего — не только ту, по ссылке которой
+ * пришли. Кто угодно, зарегистрировав в Telegram чужой (реальный или
+ * распространённый) ник, простым /start присваивал себе все его невостребованные
+ * выдачи по всей библиотеке. Теперь: непредсказуемый одноразовый токен на
+ * КОНКРЕТНУЮ выдачу, в базе — только его хэш, привязка — только по этому
+ * токену (см. issueClaimToken/claimLoanByToken).
  */
+import { createHash, randomBytes } from 'node:crypto'
 import { prisma } from './db.js'
 import { tgHandle } from './notion.js'
 import { archiveRow, notionWriteEnabled } from './notion-write.js'
@@ -17,6 +29,11 @@ import { invalidateFacets } from './search.js'
 
 /** Срок по умолчанию — месяц: столько обычно и держат книгу. */
 const DEFAULT_DAYS = 30
+
+/** Токен живёт с запасом на срок выдачи + недельный цикл напоминаний. */
+const CLAIM_TOKEN_TTL_MS = 45 * 86_400_000
+
+const hashClaimToken = (token: string) => createHash('sha256').update(token).digest('hex')
 
 /** Окно, в которое можно отменить возврат. */
 const UNDO_WINDOW_MS = 24 * 3600_000
@@ -79,6 +96,11 @@ export async function createLoan(d: LoanDraft) {
   const days = d.days === null ? null : d.days ?? DEFAULT_DAYS
   const takenAt = parseTakenAt(d.takenAt)
 
+  // читателя ещё не знаем — понадобится ссылка-приглашение с одноразовым токеном
+  const claimToken = known?.tgId ? null : randomBytes(24).toString('base64url')
+  const claimTokenHash = claimToken ? hashClaimToken(claimToken) : null
+  const claimTokenExpiresAt = claimToken ? new Date(Date.now() + CLAIM_TOKEN_TTL_MS) : null
+
   // Всё, что зависит от состояния книги, — в транзакции: иначе между проверкой и
   // пометкой busy книгу мог занять кто-то ещё, а bookId из тела запроса нельзя
   // принимать на веру (иначе выдачей можно пометить занятой ЧУЖУЮ книгу).
@@ -111,6 +133,8 @@ export async function createLoan(d: LoanDraft) {
         // срок отсчитываем от дня выдачи, а не от момента записи
         dueAt: days ? new Date(takenAt.getTime() + days * day) : null,
         note: d.note?.slice(0, 500) ?? null,
+        claimTokenHash,
+        claimTokenExpiresAt,
       },
       include: { book: true },
     })
@@ -122,7 +146,8 @@ export async function createLoan(d: LoanDraft) {
   })
 
   await logLoanEvent(loan.id, 'created', d.ownerTg)
-  return loan
+  // сырой токен существует только здесь, в памяти, — в базе только его хэш
+  return { ...loan, claimToken }
 }
 
 export const listLoans = (ownerTg: bigint, status: 'active' | 'returned' | 'all' = 'active') =>
@@ -198,29 +223,82 @@ export async function markReturned(id: string, byTg: bigint) {
 }
 
 /**
- * Привязывает читателя к выдаче, когда он открыл ссылку-приглашение.
- * Заодно подхватывает все прочие его выдачи по нику.
+ * Выпускает свежий одноразовый claim-токен для выдачи (для напоминаний —
+ * токен из создания уже не восстановить, хэш необратим, поэтому каждое
+ * напоминание, где читатель ещё не в боте, чеканит новый). Старый токен, если
+ * был, этим же перестаёт работать — это осознанно: одна ссылка действует
+ * одновременно, свежая делает предыдущие копии (в старых сообщениях) неактивными.
  */
-export async function claimLoans(tgId: bigint, username?: string | null, loanId?: string) {
-  const ids = new Set<string>()
-  if (loanId) {
-    const l = await prisma.loan.findFirst({
-      where: { id: loanId, holderTg: null },
-      select: { id: true },
-    })
-    if (l) ids.add(l.id)
+export async function issueClaimToken(loanId: string): Promise<string> {
+  const token = randomBytes(24).toString('base64url')
+  await prisma.loan.update({
+    where: { id: loanId },
+    data: { claimTokenHash: hashClaimToken(token), claimTokenExpiresAt: new Date(Date.now() + CLAIM_TOKEN_TTL_MS) },
+  })
+  return token
+}
+
+export type ClaimResult =
+  | { status: 'claimed'; loanId: string }
+  | { status: 'already_claimed' }
+  | { status: 'username_mismatch'; loanId: string; expectedUsername: string | null }
+  | { status: 'expired' }
+  | { status: 'not_found' }
+
+/**
+ * Привязывает читателя к ОДНОЙ конкретной выдаче по токену из ссылки-
+ * приглашения. Никогда не подхватывает другие выдачи по совпадению ника —
+ * см. комментарий в шапке файла про исходную уязвимость. `payload` — то, что
+ * пришло после `loan_` в `/start`: сначала пробуем как токен (новые выдачи),
+ * при неудаче — как raw id для обратной совместимости со старыми ссылками,
+ * отправленными до этой защиты (только если у выдачи токена не было и ЛИБО
+ * совпадает ник — иначе никакого auto-claim).
+ */
+export async function claimLoanByToken(
+  tgId: bigint,
+  usernameRaw: string | null | undefined,
+  payload: string | undefined,
+): Promise<ClaimResult> {
+  if (!payload) return { status: 'not_found' }
+  const username = usernameRaw?.toLowerCase() ?? null
+
+  const byToken = await prisma.loan.findUnique({ where: { claimTokenHash: hashClaimToken(payload) } })
+  if (byToken) {
+    if (byToken.status !== 'active') return { status: 'not_found' }
+    if (byToken.holderTg) {
+      // тот же человек повторно открыл свою же ссылку — не ошибка, просто повтор
+      return byToken.holderTg === tgId ? { status: 'claimed', loanId: byToken.id } : { status: 'already_claimed' }
+    }
+    if (byToken.claimTokenExpiresAt && byToken.claimTokenExpiresAt.getTime() < Date.now()) {
+      return { status: 'expired' }
+    }
+    const expected = byToken.holderUsername?.toLowerCase() ?? null
+    if (expected && username && expected !== username) {
+      return { status: 'username_mismatch', loanId: byToken.id, expectedUsername: byToken.holderUsername }
+    }
+    // Хэш намеренно НЕ гасим здесь: holderTg уже занят этим tgId, так что
+    // токен больше никого другого не привяжет (см. проверку выше) — а вот
+    // сам обладатель должен иметь возможность повторно открыть ту же ссылку
+    // (Telegram не удаляет старые сообщения) и снова увидеть карточку книги.
+    await prisma.loan.update({ where: { id: byToken.id }, data: { holderTg: tgId } })
+    await logLoanEvent(byToken.id, 'claimed', tgId)
+    return { status: 'claimed', loanId: byToken.id }
   }
+
+  // legacy: ссылка вида ?start=loan_<id>, разосланная до введения токенов.
+  // Только для выдач, у которых токена никогда не было (новую так не подобрать
+  // случайным id), и только при совпадении ника — иначе не привязываем.
   if (username) {
-    const rows = await prisma.loan.findMany({
-      where: { holderUsername: username, holderTg: null, status: 'active' },
-      select: { id: true },
+    const legacy = await prisma.loan.findFirst({
+      where: { id: payload, holderTg: null, status: 'active', claimTokenHash: null },
     })
-    rows.forEach((r) => ids.add(r.id))
+    if (legacy && legacy.holderUsername?.toLowerCase() === username) {
+      await prisma.loan.update({ where: { id: legacy.id }, data: { holderTg: tgId } })
+      await logLoanEvent(legacy.id, 'claimed', tgId)
+      return { status: 'claimed', loanId: legacy.id }
+    }
   }
-  if (!ids.size) return 0
-  await prisma.loan.updateMany({ where: { id: { in: [...ids] } }, data: { holderTg: tgId } })
-  for (const id of ids) await logLoanEvent(id, 'claimed', tgId)
-  return ids.size
+  return { status: 'not_found' }
 }
 
 /**
@@ -333,7 +411,11 @@ export async function runOverdueReminders(opts: {
     const kb = {
       inline_keyboard: [[{ text: '✅ Книга вернулась', callback_data: `loan:back:${loan.id}` }]],
     }
-    const link = `https://t.me/${opts.botUsername}?start=loan_${loan.id}`
+    // токен из создания не восстановить (в базе только его хэш) — чеканим
+    // свежий прямо для этого напоминания; предыдущий (если был) этим гасится
+    const link = loan.holderTg
+      ? ''
+      : `https://t.me/${opts.botUsername}?start=loan_${await issueClaimToken(loan.id)}`
 
     if (loan.holderTg) {
       await track(

@@ -85,7 +85,7 @@ export const api = {
     days?: number | null
     takenAt?: string
   }) =>
-    req<{ loan: Loan; inviteUrl: string }>('POST', '/api/loans', data),
+    req<{ loan: Loan; inviteUrl: string | null }>('POST', '/api/loans', data),
   loanReturn: (id: string) => req<{ loan: Loan }>('POST', `/api/loans/${id}/return`, {}),
   myBooks: () => req<Book[]>('GET', '/api/my-books'),
   myShelf: () => req<{ books: ShelfBook[] }>('GET', '/api/my-shelf'),

@@ -339,7 +339,10 @@ export async function registerRoutes(app: FastifyInstance) {
         takenAt: b.takenAt ? String(b.takenAt) : null,
         note: b.note ? String(b.note) : null,
       })
-      return json({ loan, inviteUrl: `https://t.me/${botUsername()}?start=loan_${loan.id}` })
+      return json({
+        loan,
+        inviteUrl: loan.claimToken ? `https://t.me/${botUsername()}?start=loan_${loan.claimToken}` : null,
+      })
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message ?? 'bad_request' })
     }

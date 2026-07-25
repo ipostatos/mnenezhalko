@@ -125,6 +125,12 @@ model Loan {
   remindedAt DateTime?
   note       String?
 
+  /// hash одноразового claim-токена ссылки-приглашения (сырой токен нигде не
+  /// хранится, только показывается один раз в сообщении); null — выдача либо
+  /// уже привязана, либо ждёт токена, либо это старая выдача до этой защиты
+  claimTokenHash      String?   @unique
+  claimTokenExpiresAt DateTime?
+
   events LoanEvent[]
 
   @@index([ownerTg, status])
