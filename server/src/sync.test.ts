@@ -23,7 +23,8 @@ execSync('npx prisma db push --skip-generate --accept-data-loss --schema prisma/
 })
 
 const { prisma } = await import('./db.js')
-const { syncFromNotion, deactivationGuard, setSyncAlert } = await import('./sync.js')
+const { syncFromNotion, deactivationGuard, setSyncAlert, nextSyncDelayMs, retryDelayMs, SYNC_BOOT_DELAY_MS, SYNC_RETRY_BASE_MS } =
+  await import('./sync.js')
 
 after(async () => {
   await prisma.$disconnect()
@@ -227,4 +228,65 @@ test('merged librarian остаётся корректным владельце�
 
   const book = await prisma.book.findUniqueOrThrow({ where: { notionId: bookNotionId } })
   assert.equal(book.ownerId, primary.id, 'книга должна привязаться к главной записи, а не к архивному дублю')
+})
+
+
+// ── планирование фонового синка ────────────────────────────────────────────────
+// Регрессия с прода 2026-07-25: `setInterval` отсчитывался от старта процесса,
+// поэтому каждый деплой (= рестарт) сбрасывал 12-часовой отсчёт и при нескольких
+// деплоях в день фоновый синк не отрабатывал НИ РАЗУ — 25 часов без синка при
+// заявленных 12. Планирование должно считаться от последнего успешного синка.
+
+const H = 3600_000
+
+test('синк планируется от последнего успешного, а не от старта процесса', () => {
+  const now = Date.parse('2026-07-25T12:00:00.000Z')
+  const last = '2026-07-25T04:00:00.000Z' // 8 часов назад при периоде 12
+  assert.equal(nextSyncDelayMs(last, now, 12), 4 * H, 'ждать остаток периода: 12 - 8 = 4 ч')
+})
+
+test('рестарт не съедает очередной синк: просроченный синк идёт сразу после загрузочной паузы', () => {
+  const now = Date.parse('2026-07-25T12:00:00.000Z')
+  const last = '2026-07-24T07:00:00.000Z' // 29 часов назад — ровно прод-случай
+  assert.equal(
+    nextSyncDelayMs(last, now, 12),
+    SYNC_BOOT_DELAY_MS,
+    'просрочка не должна ждать ещё период — синк нужен немедленно',
+  )
+})
+
+test('синка никогда не было — синкаемся после загрузочной паузы, а не через 12 часов', () => {
+  const now = Date.parse('2026-07-25T12:00:00.000Z')
+  assert.equal(nextSyncDelayMs(null, now, 12), SYNC_BOOT_DELAY_MS)
+})
+
+test('загрузочная пауза не нулевая: на старте сначала отвечаем, потом идём в Notion', () => {
+  assert.ok(SYNC_BOOT_DELAY_MS > 0)
+  const now = Date.parse('2026-07-25T12:00:00.000Z')
+  // даже когда синк просрочен на сутки, мгновенного удара по Notion на старте нет
+  assert.ok(nextSyncDelayMs('2026-07-24T00:00:00.000Z', now, 12) >= SYNC_BOOT_DELAY_MS)
+})
+
+test('битая или будущая метка lastSync не блокирует синк навсегда', () => {
+  const now = Date.parse('2026-07-25T12:00:00.000Z')
+  assert.equal(nextSyncDelayMs('не дата', now, 12), SYNC_BOOT_DELAY_MS, 'битую метку игнорируем')
+  assert.equal(
+    nextSyncDelayMs('2026-08-01T00:00:00.000Z', now, 12),
+    SYNC_BOOT_DELAY_MS,
+    'метка из будущего (перевод часов/чужая запись) иначе отложила бы синк на неделю',
+  )
+})
+
+test('неудачный прогон повторяется с растущей паузой, а не долбит Notion', () => {
+  // неудачный и подозрительный прогоны НЕ двигают lastSync: планирование «от
+  // lastSync» дало бы срок в прошлом, то есть повтор каждые 30 секунд
+  assert.equal(retryDelayMs(1, 12), SYNC_RETRY_BASE_MS)
+  assert.equal(retryDelayMs(2, 12), SYNC_RETRY_BASE_MS * 2)
+  assert.equal(retryDelayMs(3, 12), SYNC_RETRY_BASE_MS * 4)
+  assert.ok(retryDelayMs(1, 12) > SYNC_BOOT_DELAY_MS, 'повтор не должен быть чаще загрузочной паузы')
+})
+
+test('пауза повторов не превышает обычный период синка', () => {
+  assert.equal(retryDelayMs(99, 12), 12 * H, 'экспонента упирается в период, а не растёт до бесконечности')
+  assert.equal(retryDelayMs(99, 1), 1 * H, 'короткий период — короткий потолок')
 })

@@ -247,11 +247,92 @@ export async function syncFromNotion(log = console.log, deps: SyncDeps = default
   return report
 }
 
-/** Периодический фоновой синк (по умолчанию раз в 12 часов). */
+/** Не бить по Notion сразу на старте: сначала подняться и начать отвечать. */
+export const SYNC_BOOT_DELAY_MS = 30_000
+
+/**
+ * Сколько ждать до следующего синка. Считается от ПОСЛЕДНЕГО УСПЕШНОГО синка,
+ * а не от старта процесса — иначе каждый рестарт (а деплой это рестарт) сбрасывает
+ * отсчёт, и при нескольких деплоях в день фоновый синк не отрабатывает НИ РАЗУ.
+ * Именно так и было: `setInterval` от старта + деплои = 25 часов без синка при
+ * заявленных 12 (поймано на проде 2026-07-25).
+ *
+ * `null` в lastSync (синка ещё не было) — синкаемся сразу после загрузочной паузы.
+ */
+export function nextSyncDelayMs(
+  lastSyncIso: string | null,
+  now: number,
+  syncHours: number,
+  bootDelayMs = SYNC_BOOT_DELAY_MS,
+): number {
+  const periodMs = syncHours * 3600_000
+  if (!lastSyncIso) return bootDelayMs
+  const last = Date.parse(lastSyncIso)
+  // битая/будущая метка не должна ни блокировать синк навсегда, ни ронять расчёт
+  if (!Number.isFinite(last) || last > now) return bootDelayMs
+  const due = last + periodMs
+  return Math.max(bootDelayMs, due - now)
+}
+
+/** База повторной попытки после неудачного/подозрительного прогона. */
+export const SYNC_RETRY_BASE_MS = 15 * 60_000
+
+/**
+ * Задержка повторной попытки: 15 мин, 30, 60… но не дольше обычного периода.
+ * Нужна потому, что неудачный и подозрительный прогоны НЕ двигают lastSync —
+ * планирование «от lastSync» само по себе дало бы срок в прошлом и превратилось
+ * бы в непрерывный долбёж Notion.
+ */
+export function retryDelayMs(failures: number, syncHours: number, base = SYNC_RETRY_BASE_MS): number {
+  const periodMs = syncHours * 3600_000
+  const backoff = base * 2 ** Math.max(0, failures - 1)
+  return Math.min(periodMs, backoff)
+}
+
+/**
+ * Периодический фоновой синк (по умолчанию раз в 12 часов). Не `setInterval`:
+ * после каждого прогона срок пересчитывается от фактического lastSync, поэтому
+ * рестарт не «съедает» очередной синк. Прогон, который не обновил baseline
+ * (упавший или подозрительный), повторяется с растущей паузой.
+ */
 export function startSyncLoop() {
   if (!env.notion.syncHours) return
-  const runSafe = () =>
-    syncFromNotion().catch((e) => console.error('[sync] ошибка:', e?.message || e))
-  const timer = setInterval(runSafe, env.notion.syncHours * 3600_000)
-  timer.unref?.()
+
+  const readLastSync = async (): Promise<string | null> => {
+    const row = await prisma.syncState.findUnique({ where: { key: 'notion' } })
+    return row?.value ?? null
+  }
+
+  let failures = 0
+
+  const schedule = async () => {
+    let delay = SYNC_BOOT_DELAY_MS
+    try {
+      const last = await readLastSync()
+      delay =
+        failures > 0
+          ? retryDelayMs(failures, env.notion.syncHours)
+          : nextSyncDelayMs(last, Date.now(), env.notion.syncHours)
+    } catch (e: any) {
+      console.error('[sync] не смог прочитать lastSync:', e?.message || e)
+    }
+    const mins = Math.round(delay / 60_000)
+    console.log(`[sync] следующий прогон через ${mins} мин${failures ? ` (попытка ${failures + 1})` : ''}`)
+    const timer = setTimeout(async () => {
+      // «удачным» считается только прогон, продвинувший baseline — то же условие,
+      // по которому health показывает lastSync (см. trusted в syncFromNotion)
+      const before = await readLastSync().catch(() => null)
+      try {
+        await syncFromNotion()
+      } catch (e: any) {
+        console.error('[sync] ошибка:', e?.message || e)
+      }
+      const after = await readLastSync().catch(() => before)
+      failures = after && after !== before ? 0 : failures + 1
+      schedule()
+    }, delay)
+    timer.unref?.()
+  }
+
+  void schedule()
 }
