@@ -41,9 +41,9 @@
   *{box-sizing:border-box}
   body{margin:0;color:var(--label);font-family:var(--font);font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;
     background:radial-gradient(78% 52% at 84% -6%,var(--glow1),transparent 70%),radial-gradient(68% 44% at 6% 3%,var(--glow2),transparent 72%),var(--bg);
-    background-attachment:fixed}
+    background-repeat:no-repeat}
   .wrap{max-width:540px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 20px) 16px calc(env(safe-area-inset-bottom) + 48px)}
-  .glass{background:var(--card);-webkit-backdrop-filter:blur(22px) saturate(180%);backdrop-filter:blur(22px) saturate(180%);
+  .glass{background:var(--card);
     border:0.5px solid var(--cardline);border-radius:22px;box-shadow:0 1px 1px rgba(74,47,40,.04),0 10px 26px -14px rgba(74,47,40,.24)}
 
   header{padding:10px 4px 18px}
@@ -53,7 +53,7 @@
   .status{display:inline-flex;align-items:center;gap:8px;margin-top:15px;font-size:13.5px;color:var(--label2);background:var(--sagebg);padding:7px 13px;border-radius:100px}
   .status .mk{width:7px;height:7px;border-radius:50%;background:var(--sage);flex:none}
 
-  .tldr{padding:16px 17px;margin-bottom:12px;font-size:14.5px;line-height:1.55;color:var(--label)}
+  .tldr{padding:16px 17px;margin-bottom:12px;font-size:14.5px;line-height:1.55;color:var(--label);text-wrap:pretty}
   .tldr b{font-weight:700}
 
   .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0 4px}
@@ -67,12 +67,12 @@
   .note b{color:var(--label);font-weight:600}
 
   .day{display:flex;align-items:center;gap:11px;margin:32px 6px 13px}
-  .day h2{font-size:14.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;margin:0;color:var(--label2)}
+  .day h2{font-size:14.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;margin:0;color:var(--label2);white-space:nowrap}
   .day .cap{font-size:12.5px;color:var(--label3);text-transform:none;letter-spacing:0;font-weight:500}
   .day .line{flex:1;height:0.5px;background:var(--sep)}
 
   .entry{padding:16px 17px;margin-bottom:12px}
-  .entry .top{display:flex;align-items:flex-start;gap:10px;margin:0 0 9px}
+  .entry .top{display:flex;align-items:flex-start;gap:10px;margin:0 0 9px;flex-wrap:wrap}
   .entry .glyph{width:22px;height:22px;border-radius:50%;flex:none;position:relative;margin-top:1px}
   .glyph.done{background:var(--sage)}
   .glyph.done::after{content:"";position:absolute;left:7.5px;top:5px;width:5px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
@@ -80,16 +80,16 @@
   .glyph.plan::after{content:"";position:absolute;left:9px;top:5px;width:2px;height:8px;border-radius:2px;background:var(--accent)}
   .glyph.wait{border:1.6px solid var(--rose)}
   .glyph.wait::after{content:"";position:absolute;left:6px;top:9.5px;width:10px;height:2px;border-radius:2px;background:var(--rose)}
-  .entry h3{font-size:16px;font-weight:700;letter-spacing:-0.01em;margin:0;flex:1;line-height:1.3}
+  .entry h3{font-size:16px;font-weight:700;letter-spacing:-0.01em;margin:0;flex:1 1 60%;min-width:0;line-height:1.3;text-wrap:pretty}
   .badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:100px;white-space:nowrap;margin-top:2px}
   .badge.done{background:var(--sagebg);color:var(--sage)}
   .badge.plan{background:var(--accentbg);color:var(--accent)}
   .badge.wait{background:var(--rosebg);color:var(--rose)}
   .badge.fix{background:var(--amberbg);color:var(--amber)}
-  .entry .did{font-size:14px;color:var(--label);margin:0 0 10px;line-height:1.55}
-  .entry .why{display:flex;gap:10px;background:var(--soft);border-radius:14px;padding:11px 13px}
-  .entry .why .q{font-size:11px;font-weight:700;color:var(--accent);flex:none;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
-  .entry .why p{margin:0;font-size:13px;color:var(--label2);line-height:1.55}
+  .entry .did{font-size:14px;color:var(--label);margin:0 0 10px;line-height:1.55;text-wrap:pretty}
+  .entry .why{display:flex;flex-direction:column;gap:5px;background:var(--soft);border-radius:14px;padding:11px 13px}
+  .entry .why .q{font-size:11px;font-weight:700;color:var(--accent);flex:none;text-transform:uppercase;letter-spacing:.04em}
+  .entry .why p{margin:0;font-size:13px;color:var(--label2);line-height:1.55;text-wrap:pretty}
   .entry .fx{margin:10px 0 0;padding-top:10px;border-top:0.5px solid var(--sep);font-size:12.5px;color:var(--label2);line-height:1.5}
   .entry .fx b{color:var(--label);font-weight:600}
 
@@ -216,7 +216,7 @@
     </div>
     <p class="did">Один и тот же человек существовал в проекте дважды: аккаунт Telegram был привязан к пустой записи, а книги лежали на другой. Записи объединены, книги вернулись на место.</p>
     <div class="why">
-      <span class="q">Почему первым делом</span>
+      <span class="q">Почему сначала</span>
       <p>Это корень сразу нескольких жалоб: пустая полка, двойники библиотекарей, «пропавшие» книги. Пока человек узнаётся ненадёжно, всё, что построено сверху, будет врать.</p>
     </div>
     <p class="fx"><b>Как делали:</b> сначала копия данных, потом прогон на копии, только потом на живом приложении. Лишняя запись не удалена, а помечена объединённой, чтобы книги не вернулись обратно.</p>
@@ -442,7 +442,7 @@
     </div>
     <p class="did">Теперь бот видит на фотографии все книги сразу: и те, что лежат обложкой вверх, и те, что стоят на полке корешками. Показывает список найденного, отмечает, что прочитано по корешку, и одной кнопкой ставит на полку все.</p>
     <div class="why">
-      <span class="q">Что важно знать</span>
+      <span class="q">Важно знать</span>
       <p>Если название на корешке не читается, бот его не выдумывает, а честно пишет, сколько книг не разобрал. А обложку с общего снимка книгам не ставим: одна и та же фотография стопки у пяти карточек только засоряет каталог. Нужна обложка, сфотографируйте книгу отдельно.</p>
     </div>
     <p class="fx">Проверено на снимке из трёх обложек и на полке из пяти корешков: находятся все.</p>
@@ -456,7 +456,7 @@
     </div>
     <p class="did">Причина оказалась не в боте: открытый каталог, которым мы пользовались, знает в основном англоязычные книги. Добавил каталог Национальной библиотеки Польши и большой каталог Google, доступ к которому вы прислали. Теперь находятся и польские, и русские издания. Заодно номер ISBN, присланный боту сообщением, наконец добавляет книгу, а в приложении появилось поле для него.</p>
     <div class="why">
-      <span class="q">Что важно знать</span>
+      <span class="q">Важно знать</span>
       <p>У русских изданий название иногда приходит латиницей, а автор бывает пустым: так эти книги записаны в мировых каталогах. Карточка всегда показывается вам до сохранения, название можно поправить. Если книга не нашлась, бот больше не молчит, а предлагает прислать фото обложки.</p>
     </div>
   </div>
@@ -469,7 +469,7 @@
     </div>
     <p class="did">Подсказка при добавлении складывала все чужие экземпляры в одно число, а город показывала только один. Теперь пишет честно: «3 экземпляра, 2 в Warszawa, 1 в Kraków».</p>
     <div class="why">
-      <span class="q">Ещё одна причина расхождений</span>
+      <span class="q">Ещё причина</span>
       <p>У книг из общей таблицы город часто не заполнен, он есть только в карточке библиотекаря. Такие экземпляры «теряли» город, теперь он берётся у владельца.</p>
     </div>
   </div>
@@ -482,7 +482,7 @@
     </div>
     <p class="did">Вы заметили, что обложки не видно. Причина в моей же правке от 25 июля, когда я ускорял загрузку картинок: в одном месте вместо размера картинки подставлялся порядковый номер книги, и приложение отказывалось её показывать. Сейчас обложки на месте.</p>
     <div class="why">
-      <span class="q">Что сделано, чтобы не повторилось</span>
+      <span class="q">Чтобы не повторилось</span>
       <p>Одного исправления мало. Теперь такую ошибку невозможно сделать незаметно: она поймается ещё при сборке новой версии, а не участниками. Плюс добавлена автоматическая проверка, которая обходит все экраны с обложками.</p>
     </div>
     <p class="fx">Поиск по названию и карточка книги работали всё это время, поэтому поломка выглядела выборочной.</p>
@@ -496,7 +496,7 @@
     </div>
     <p class="did">Подборка обложек для карусели раньше собиралась заново после каждого обновления приложения, и её картинки не были готовы: первый посетитель ждал. Теперь подборка сохраняется и готовится заранее.</p>
     <div class="why">
-      <span class="q">Откуда взялось «опять долго»</span>
+      <span class="q">Почему так вышло</span>
       <p>За день вышло шесть обновлений, и каждое сбрасывало подборку. Сейчас все двенадцать обложек открываются мгновенно даже сразу после выкладки новой версии.</p>
     </div>
   </div>
@@ -509,7 +509,7 @@
     </div>
     <p class="did">В меню бота появились «Книжная Клумба» со ссылкой на страницу клуба и «Поддержать проект» с выбором суммы. В приложении клуб тоже на главной: плашка в общем стиле, с иконкой-цветком, которую выбрали из четырёх вариантов.</p>
     <div class="why">
-      <span class="q">Мелочь, которая пригодится</span>
+      <span class="q">Пригодится</span>
       <p>Адрес страницы клуба можно поменять за минуту, не выпуская новую версию приложения. Если у клуба есть вторая страница, пришлите, добавлю рядом.</p>
     </div>
   </div>
