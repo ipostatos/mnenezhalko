@@ -77,6 +77,68 @@ const SHOWCASE_LIMIT_DEFAULT = 12
 const SHOWCASE_LIMIT_MAX = 16
 const showcaseCache = new Map<string, { at: number; data: unknown }>()
 
+type ShowcaseRow = { id: string; title: string; coverUrl: string }
+
+/**
+ * Витрина карусели с кэшем, который переживает рестарт.
+ *
+ * Память сбрасывается на каждом деплое, а деплоев в день бывает несколько: без
+ * этого каждый рестарт выбирал НОВУЮ случайную дюжину, её превью были холодные,
+ * и первый посетитель платил за 12 промахов (замер: 24 запроса дольше 2 секунд
+ * подряд). Поэтому выбранная дюжина лежит ещё и в базе (SyncState) и после
+ * рестарта достаётся оттуда — вместе с уже прогретым кэшем картинок.
+ */
+async function showcaseFor(city: string | undefined, limit: number) {
+  const key = `showcase:${city || '*'}:${limit}`
+  const hit = showcaseCache.get(key)
+  if (hit && Date.now() - hit.at < SHOWCASE_TTL) return hit.data
+
+  const stored = await prisma.syncState.findUnique({ where: { key } }).catch(() => null)
+  if (stored && Date.now() - stored.updatedAt.getTime() < SHOWCASE_TTL) {
+    try {
+      const rows = JSON.parse(stored.value) as ShowcaseRow[]
+      const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, CAROUSEL_W) }))
+      showcaseCache.set(key, { at: stored.updatedAt.getTime(), data })
+      return data
+    } catch {
+      /* мусор в записи — просто соберём витрину заново */
+    }
+  }
+
+  const rows = city
+    ? await prisma.$queryRaw<ShowcaseRow[]>`SELECT id, title, coverUrl FROM Book
+        WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
+        AND city = ${city}
+        ORDER BY RANDOM() LIMIT ${limit}`
+    : await prisma.$queryRaw<ShowcaseRow[]>`SELECT id, title, coverUrl FROM Book
+        WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
+        ORDER BY RANDOM() LIMIT ${limit}`
+  // карусель показывает обложки на 156px — превью 320px (2× под retina) хватает
+  const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, CAROUSEL_W) }))
+  showcaseCache.set(key, { at: Date.now(), data })
+  await prisma.syncState
+    .upsert({
+      where: { key },
+      create: { key, value: JSON.stringify(rows) },
+      update: { value: JSON.stringify(rows) },
+    })
+    .catch(() => {})
+  // прогреваем превью новой ротации в фоне — первый посетитель не должен
+  // оплачивать все MISS сразу; не блокирует ответ, не await'им
+  warmShowcaseCovers(rows.map((r) => r.coverUrl))
+  return data
+}
+
+/**
+ * Прогрев витрины при старте: после деплоя первым посетителем не должен быть
+ * человек. Ошибку глотаем — это фоновая оптимизация, а не работа сервиса.
+ */
+export function warmShowcaseOnBoot() {
+  setTimeout(() => {
+    void showcaseFor(undefined, SHOWCASE_LIMIT_DEFAULT).catch(() => {})
+  }, 5_000)
+}
+
 /**
  * Счётчик обращений к платным ручкам (Claude): подбор книг и распознавание фото.
  * Экземпляр один, поэтому хватает памяти — внешнего хранилища заводить незачем.
@@ -175,26 +237,7 @@ export async function registerRoutes(app: FastifyInstance) {
       ? Math.min(Math.round(parsed), SHOWCASE_LIMIT_MAX)
       : SHOWCASE_LIMIT_DEFAULT
     reply.header('Cache-Control', 'private, max-age=1800')
-    const key = `${city || '*'}:${limit}`
-    const hit = showcaseCache.get(key)
-    if (hit && Date.now() - hit.at < SHOWCASE_TTL) return hit.data
-
-    type Row = { id: string; title: string; coverUrl: string }
-    const rows = city
-      ? await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
-          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
-          AND city = ${city}
-          ORDER BY RANDOM() LIMIT ${limit}`
-      : await prisma.$queryRaw<Row[]>`SELECT id, title, coverUrl FROM Book
-          WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
-          ORDER BY RANDOM() LIMIT ${limit}`
-    // карусель показывает обложки на 156px — превью 320px (2× под retina) хватает
-    const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, CAROUSEL_W) }))
-    showcaseCache.set(key, { at: Date.now(), data })
-    // прогреваем превью новой ротации в фоне — первый посетитель не должен
-    // оплачивать все MISS сразу; не блокирует ответ, не await'им
-    warmShowcaseCovers(rows.map((r) => r.coverUrl))
-    return data
+    return showcaseFor(city, limit)
   })
 
   /** Конвейер обложек (подписанный): ресайз в webp-превью нужной ширины + кэш. */

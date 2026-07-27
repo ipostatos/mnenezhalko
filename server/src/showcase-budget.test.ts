@@ -85,6 +85,28 @@ test('витрина: ключ кэша учитывает лимит — раз
   await app.close()
 })
 
+test('витрина переживает рестарт: после перезапуска та же дюжина, а не новая случайная', async () => {
+  // деплой = рестарт, память пуста; раньше это означало новую случайную выборку
+  // и 12 холодных обложек первому же посетителю
+  const first = await buildApp()
+  const before = (
+    await first.inject({ method: 'GET', url: `/api/showcase?city=${encodeURIComponent(CITY)}` })
+  ).json() as Array<{ id: string }>
+  await first.close()
+
+  const second = await buildApp() // новый процесс: in-memory кэш пуст
+  const after = (
+    await second.inject({ method: 'GET', url: `/api/showcase?city=${encodeURIComponent(CITY)}` })
+  ).json() as Array<{ id: string }>
+  await second.close()
+
+  assert.deepEqual(
+    after.map((b) => b.id),
+    before.map((b) => b.id),
+    'после рестарта витрина должна восстановиться из базы',
+  )
+})
+
 test('витрина: обложка отдаётся превью нужной ширины (карусель), не оригиналом', async () => {
   const app = await buildApp()
   const res = await app.inject({ method: 'GET', url: `/api/showcase?city=${encodeURIComponent(CITY)}` })

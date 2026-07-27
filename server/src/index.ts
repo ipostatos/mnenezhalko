@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static'
 import { webhookCallback } from 'grammy'
 import { env, botDisabled } from './env.js'
 import { prisma } from './db.js'
-import { registerRoutes } from './routes.js'
+import { registerRoutes, warmShowcaseOnBoot } from './routes.js'
 import { bot, checkNotionToken, remindOverdueLoans, setupBotCommands } from './bot.js'
 import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
@@ -90,6 +90,9 @@ if (!botDisabled) {
 
 await app.listen({ port: env.port, host: env.host })
 app.log.info(`Mini App: ${env.publicUrl || `http://localhost:${env.port}`}`)
+
+// после деплоя карусель должна быть тёплой к приходу первого человека
+warmShowcaseOnBoot()
 
 if (botDisabled) {
   app.log.warn('DISABLE_BOT=1 — бот не запущен, работает только API и Mini App')
