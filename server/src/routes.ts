@@ -6,7 +6,7 @@ import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
 import { decodeDataUrl, readCover, saveCover } from './covers.js'
-import { recognizeCover, visionEnabled, LANGUAGES } from './vision.js'
+import { recognizePhoto, visionEnabled, LANGUAGES } from './vision.js'
 import {
   checkDuplicates,
   putOnShelf,
@@ -551,13 +551,32 @@ export async function registerRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: e?.message ?? 'bad_image' })
     }
 
-    const [saved, recognized] = await Promise.all([
+    const [saved, photo] = await Promise.all([
       saveCover(decoded),
-      recognizeCover(decoded.data, decoded.mediaType).catch((e) => {
+      recognizePhoto(decoded.data, decoded.mediaType).catch((e) => {
         req.log.warn(`распознавание не удалось: ${e?.message ?? e}`)
         return null
       }),
     ])
+
+    // мастер добавления ведёт по одной книге; если на фото их несколько
+    // (стопка, полка корешками), остальные отдаём подсказкой — см. AddBook.tsx
+    const first = photo?.books[0] ?? null
+    const recognized = first
+      ? { ...first, note: photo?.note ?? null }
+      : photo
+        ? {
+            recognized: false,
+            kind: 'book' as const,
+            title: '',
+            author: null,
+            languages: [],
+            genres: [],
+            confidence: 'low' as const,
+            note: photo.note,
+          }
+        : null
+    const extraBooks = (photo?.books ?? []).slice(1).map((b) => ({ title: b.title, author: b.author }))
 
     const dup = recognized?.title
       ? await checkDuplicates({
@@ -566,9 +585,9 @@ export async function registerRoutes(app: FastifyInstance) {
           kind: recognized.kind === 'game' ? 'game' : 'book',
           ownerTg: u.id,
         })
-      : { own: null, others: { count: 0, city: null } }
+      : { own: null, others: { count: 0, city: null, byCity: [], unknownCity: 0, where: '' } }
 
-    return json({ cover: saved.url, recognized, dup, languages: LANGUAGES })
+    return json({ cover: saved.url, recognized, dup, extraBooks, languages: LANGUAGES })
   })
 
   app.get('/api/cover/:file', async (req, reply) => {

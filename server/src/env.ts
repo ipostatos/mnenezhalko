@@ -58,6 +58,13 @@ export const env = {
   /** id пользователя Notion; нужен, если у аккаунта несколько пространств */
   notionUserId: process.env.NOTION_USER_ID || '',
 
+  /**
+   * Ключ Google Books (бесплатный, из Google Cloud Console). Без него сервис
+   * отдаёт 429 по общей анонимной квоте, то есть русские издания по ISBN
+   * практически не находятся — см. порядок источников в isbn.ts.
+   */
+  googleBooksKey: process.env.GOOGLE_BOOKS_KEY || '',
+
   anthropicKey: process.env.ANTHROPIC_API_KEY || '',
   anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
 

@@ -103,13 +103,22 @@ export type Recognized = {
 /** Проверка дублей: свой повтор (предупреждение) vs чужие экземпляры (подсказка). */
 export type DupCheck = {
   own: Book | null
-  others: { count: number; city: string | null }
+  others: {
+    count: number
+    city: string | null
+    byCity: { city: string; count: number }[]
+    unknownCity: number
+    /** готовая фраза «2 в Варшаве, 1 в Кракове» — считает сервер, одна на бота и Mini App */
+    where: string
+  }
 }
 
 export type RecognizeResult = {
   cover: string
   recognized: Recognized | null
   dup: DupCheck
+  /** остальные книги, найденные на том же фото (мастер ведёт по одной) */
+  extraBooks: { title: string; author: string | null }[]
   languages: string[]
 }
 

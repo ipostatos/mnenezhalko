@@ -29,10 +29,11 @@ import {
 import { digest, type DigestPeriod } from './digest.js'
 import { parseAnnouncement, saveAnnouncement } from './announce.js'
 import { saveCoverFromTelegram } from './covers.js'
-import { recognizeCover, visionEnabled, type Recognized } from './vision.js'
+import { recognizePhoto, visionEnabled, type Recognized } from './vision.js'
 import {
   approveBook,
   checkDuplicates,
+  type DupCheck,
   findDuplicates,
   flushPending,
   moderationQueueCount,
@@ -51,7 +52,7 @@ import {
   pendingTelegramCount,
 } from './librarian.js'
 import { normHandle } from './notion.js'
-import { lookupIsbn, looksLikeIsbn } from './isbn.js'
+import { lookupIsbnDetailed, looksLikeIsbn } from './isbn.js'
 
 // при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
 // (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
@@ -939,7 +940,8 @@ function marketCard(i: {
 
 /* ── фото книги → полка ───────────────────────────────────── */
 
-type ShelfDraft = Recognized & { coverUrl: string }
+// обложки может не быть вовсе: книга, найденная по ISBN в каталоге без картинки
+type ShelfDraft = Recognized & { coverUrl: string | null }
 const shelfDrafts = new Map<number, ShelfDraft>()
 
 const shelfCard = (d: ShelfDraft) => {
@@ -953,13 +955,62 @@ const shelfCard = (d: ShelfDraft) => {
   return lines.join('\n')
 }
 
+/**
+ * Приписка про дубли к карточке книги. Города перечисляем с числами: раньше
+ * писали общее количество рядом с одним городом («3 экземпляра в Варшаве»),
+ * хотя экземпляры стояли в разных городах.
+ */
+const duplicatesText = (dup: DupCheck) => {
+  let t = ''
+  if (dup.own) {
+    t += '\n\n⚠️ Такая книга у вас уже есть на полке. Добавляйте, только если это второй экземпляр.'
+  }
+  const n = dup.others.count
+  if (n) {
+    const where = dup.others.where
+    t +=
+      `\n\n📚 В библиотеке уже есть ещё ${n} ${plural(n, ['экземпляр', 'экземпляра', 'экземпляров'])}` +
+      `${where ? ` — ${esc(where)}` : ''}. Это нормально, добавляйте свой.`
+  }
+  return t
+}
+
 const shelfKeyboard = () => {
   const kb = new InlineKeyboard().text('✅ Поставить на полку', 'shelf:save').row()
   if (webAppUrl()) kb.webApp('✏️ Уточнить в приложении', `${webAppUrl()}/?screen=add`)
   return kb
 }
 
-/** Фото книги в личке: распознаём и предлагаем поставить на полку. */
+/** Несколько книг с одного фото ждут подтверждения владельца. */
+const shelfBatches = new Map<number, Recognized[]>()
+
+const batchKeyboard = (n: number) =>
+  new InlineKeyboard().text(`✅ Добавить все (${n})`, 'shelfbatch:save').row().text('Отмена', 'shelfbatch:no')
+
+/** Список найденных на фото книг с пометками про корешки и свои дубли. */
+async function batchCard(books: Recognized[], ownerTg: bigint) {
+  const lines: string[] = []
+  for (const [i, b] of books.entries()) {
+    const dup = await checkDuplicates({
+      title: b.title,
+      author: b.author,
+      kind: b.kind === 'game' ? 'game' : 'book',
+      ownerTg,
+    })
+    const marks = [
+      b.spine ? '<i>по корешку</i>' : '',
+      b.confidence === 'low' ? '<i>плохо видно</i>' : '',
+      dup.own ? '⚠️ <i>уже на вашей полке</i>' : '',
+    ].filter(Boolean)
+    lines.push(
+      `${i + 1}. <b>${esc(b.title)}</b>${b.author ? ' — ' + esc(b.author) : ''}` +
+        (marks.length ? `\n    ${marks.join(' · ')}` : ''),
+    )
+  }
+  return lines.join('\n')
+}
+
+/** Фото книги в личке: распознаём (одну или сразу все) и предлагаем поставить на полку. */
 async function handleBookPhoto(ctx: any) {
   if (!visionEnabled()) {
     return ctx.reply(
@@ -973,21 +1024,37 @@ async function handleBookPhoto(ctx: any) {
   const saved = await saveCoverFromTelegram(photo.file_id)
   if (!saved) return ctx.reply('Не смог скачать фото, пришлите ещё раз.')
 
-  const recognized = await recognizeCover(saved.decoded.data, saved.decoded.mediaType).catch(
-    (e: any) => {
-      console.error('[vision] ошибка распознавания:', e?.message ?? e)
-      return null
-    },
-  )
-  if (!recognized || !recognized.recognized || !recognized.title) {
+  const r = await recognizePhoto(saved.decoded.data, saved.decoded.mediaType).catch((e: any) => {
+    console.error('[vision] ошибка распознавания:', e?.message ?? e)
+    return null
+  })
+  if (!r || !r.books.length) {
     return ctx.reply(
-      recognized?.note
-        ? `Не разобрал книгу: ${recognized.note}`
+      r?.note
+        ? `Не разобрал книгу: ${esc(r.note)}`
         : 'Не разобрал, что на фото. Переснимите так, чтобы читались название и автор.',
+      { parse_mode: 'HTML' },
     )
   }
 
-  shelfDrafts.set(ctx.from.id, { ...recognized, coverUrl: saved.url })
+  // на фото несколько книг (стопка или полка корешками) — подтверждаем списком
+  if (r.books.length > 1) {
+    shelfDrafts.delete(ctx.from.id)
+    shelfBatches.set(ctx.from.id, r.books)
+    const card = await batchCard(r.books, BigInt(ctx.from.id))
+    const tail = [
+      r.note ? `\n\n<i>${esc(r.note)}</i>` : '',
+      '\n\nОбложку с общего фото не ставлю — на нём несколько книг. Нужна обложка — пришлите книгу отдельным снимком.',
+    ].join('')
+    return ctx.reply(
+      `Нашёл ${r.books.length} ${plural(r.books.length, ['книгу', 'книги', 'книг'])}:\n\n${card}${tail}`,
+      { parse_mode: 'HTML', reply_markup: batchKeyboard(r.books.length) },
+    )
+  }
+
+  const recognized = r.books[0]
+  shelfBatches.delete(ctx.from.id)
+  shelfDrafts.set(ctx.from.id, { ...recognized, note: r.note, coverUrl: saved.url })
 
   const dup = await checkDuplicates({
     title: recognized.title,
@@ -995,16 +1062,55 @@ async function handleBookPhoto(ctx: any) {
     kind: recognized.kind === 'game' ? 'game' : 'book',
     ownerTg: BigInt(ctx.from.id),
   })
-  let dupText = ''
-  if (dup.own) {
-    dupText += `\n\n⚠️ Такая книга у вас уже есть на полке. Добавляйте, только если это второй экземпляр.`
-  }
-  if (dup.others.count) {
-    const n = dup.others.count
-    dupText += `\n\n📚 В библиотеке уже есть ещё ${n} ${plural(n, ['экземпляр', 'экземпляра', 'экземпляров'])}${dup.others.city ? ' в ' + esc(dup.others.city) : ''}.`
+  await ctx.reply(`Похоже, это:\n\n${shelfCard(shelfDrafts.get(ctx.from.id)!)}${duplicatesText(dup)}`, {
+    parse_mode: 'HTML',
+    reply_markup: shelfKeyboard(),
+  })
+}
+
+/**
+ * Совет человеку, когда ISBN не нашёлся. Русские издания открытые каталоги
+ * покрывают плохо (OpenLibrary их почти не знает, Google Books без ключа
+ * отвечает 429), поэтому не отмалчиваемся, а предлагаем рабочий путь.
+ */
+const ISBN_MISS_HINT =
+  'Пришлите фото обложки — распознаю по нему, либо строкой: <code>Название — Автор</code>.'
+
+/** Одиночный ISBN сообщением: ищем в каталогах и предлагаем поставить на полку. */
+async function handleIsbnMessage(ctx: any, raw: string) {
+  await ctx.replyWithChatAction('typing')
+  const r = await lookupIsbnDetailed(raw).catch((e: any) => {
+    console.error('[isbn] поиск упал:', e?.message ?? e)
+    return null
+  })
+  if (!r?.book) {
+    return ctx.reply(
+      `Не нашёл книгу по ISBN <code>${esc(raw)}</code> в открытых каталогах.\n\n${ISBN_MISS_HINT}`,
+      { parse_mode: 'HTML' },
+    )
   }
 
-  await ctx.reply(`Похоже, это:\n\n${shelfCard(shelfDrafts.get(ctx.from.id)!)}${dupText}`, {
+  const draft: ShelfDraft = {
+    recognized: true,
+    kind: 'book',
+    title: r.book.title,
+    author: r.book.author,
+    languages: [],
+    genres: [],
+    confidence: 'high',
+    note: null,
+    coverUrl: r.book.coverUrl,
+  }
+  shelfDrafts.set(ctx.from.id, draft)
+
+  const dup = await checkDuplicates({
+    title: draft.title,
+    author: draft.author,
+    kind: 'book',
+    ownerTg: BigInt(ctx.from.id),
+  })
+
+  await ctx.reply(`Нашёл по ISBN:\n\n${shelfCard(draft)}${duplicatesText(dup)}`, {
     parse_mode: 'HTML',
     reply_markup: shelfKeyboard(),
   })
@@ -1059,26 +1165,29 @@ async function handlePhotoBatch(ctx: any, fileIds: string[]) {
   for (const fileId of ids) {
     const saved = await saveCoverFromTelegram(fileId).catch(() => null)
     const rec = saved
-      ? await recognizeCover(saved.decoded.data, saved.decoded.mediaType).catch(() => null)
+      ? await recognizePhoto(saved.decoded.data, saved.decoded.mediaType).catch(() => null)
       : null
-    if (!saved || !rec || !rec.recognized || !rec.title) {
+    if (!saved || !rec || !rec.books.length) {
       failed++
       continue
     }
-    const res = await putOnShelf({
-      tgId: BigInt(ctx.from.id),
-      username: ctx.from.username ?? null,
-      firstName: ctx.from.first_name ?? null,
-      kind: rec.kind,
-      title: rec.title,
-      author: rec.author,
-      genres: rec.genres,
-      languages: rec.languages,
-      city: ob ? null : user!.city,
-      coverUrl: saved.url,
-      ownerLibrarianId: ob?.id,
-    })
-    ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+    for (const b of rec.books) {
+      const res = await putOnShelf({
+        tgId: BigInt(ctx.from.id),
+        username: ctx.from.username ?? null,
+        firstName: ctx.from.first_name ?? null,
+        kind: b.kind,
+        title: b.title,
+        author: b.author,
+        genres: b.genres,
+        languages: b.languages,
+        city: ob ? null : user!.city,
+        // общий кадр со стопкой обложкой конкретной книги не является
+        coverUrl: rec.books.length === 1 ? saved.url : null,
+        ownerLibrarianId: ob?.id,
+      })
+      ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+    }
   }
   await sendBatchSummary(ctx, added, pending, failed, ob?.name)
 }
@@ -1122,14 +1231,18 @@ async function handleListImport(ctx: any, raw: string) {
   await ctx.replyWithChatAction('typing')
   const added: string[] = []
   const pending: string[] = []
+  const missedIsbn: string[] = []
+  let quotaBlocked = false
   let failed = 0
   for (const line of lines) {
     let book: { title: string; author: string | null; coverUrl: string | null } | null = null
     if (looksLikeIsbn(line)) {
-      const found = await lookupIsbn(line)
-      if (found) book = found
+      const found = await lookupIsbnDetailed(line).catch(() => null)
+      if (found?.book) book = found.book
       else {
-        failed++
+        // не молча в «не разобрал»: человек должен видеть, какой именно ISBN не нашёлся
+        missedIsbn.push(line)
+        if (found?.quotaBlocked) quotaBlocked = true
         continue
       }
     } else {
@@ -1152,7 +1265,7 @@ async function handleListImport(ctx: any, raw: string) {
     })
     ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
   }
-  await sendBatchSummary(ctx, added, pending, failed, ob?.name)
+  await sendBatchSummary(ctx, added, pending, failed, ob?.name, { missedIsbn, quotaBlocked })
 }
 
 /** Общая сводка после пакетного добавления. */
@@ -1162,6 +1275,7 @@ async function sendBatchSummary(
   pending: string[],
   failed: number,
   behalfName?: string,
+  isbn?: { missedIsbn: string[]; quotaBlocked: boolean },
 ) {
   const blocks: string[] = []
   if (behalfName) blocks.push(`<i>От имени: ${esc(behalfName)}</i>`)
@@ -1172,6 +1286,19 @@ async function sendBatchSummary(
       `📖 На проверке модератора (${pending.length}):\n` +
         pending.map((t) => `• ${esc(t)}`).join('\n'),
     )
+  if (isbn?.missedIsbn.length) {
+    blocks.push(
+      `🔍 Не нашёл по ISBN (${isbn.missedIsbn.length}):\n` +
+        isbn.missedIsbn.map((i) => `• <code>${esc(i)}</code>`).join('\n') +
+        `\n\n${ISBN_MISS_HINT}`,
+    )
+  }
+  if (isbn?.quotaBlocked && isAdmin(ctx.from.id)) {
+    blocks.push(
+      '<i>Google Books ответил 429 (общая анонимная квота). Пока не задан GOOGLE_BOOKS_KEY, ' +
+        'русские издания по ISBN почти не находятся.</i>',
+    )
+  }
   if (failed) blocks.push(`⚠️ Не разобрал: ${failed}. Пришлите их поштучно и покрупнее.`)
   if (added.length === 0 && pending.length === 0) blocks.push('Ничего не удалось добавить.')
   await ctx.reply(blocks.join('\n\n'), { parse_mode: 'HTML', reply_markup: mainKeyboard() })
@@ -1237,9 +1364,71 @@ bot.callbackQuery('shelf:save', async (ctx) => {
   await saveShelfDraft(ctx, d, user.city)
 })
 
+/** Подтверждение пачки книг с одного фото. */
+bot.callbackQuery('shelfbatch:save', async (ctx) => {
+  const books = shelfBatches.get(ctx.from.id)
+  if (!books?.length) return ctx.answerCallbackQuery({ text: 'Пришлите фото ещё раз' })
+
+  const ob = behalfFor(ctx)
+  if (ob) {
+    await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
+    return saveShelfBatch(ctx, books, ob.city ?? '', ob)
+  }
+
+  const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
+  if (!user?.city) {
+    const kb = new InlineKeyboard()
+    CITIES.forEach((c, i) => {
+      kb.text(c, `shelfcity:${c}`)
+      if (i % 2 === 1) kb.row()
+    })
+    await ctx.answerCallbackQuery()
+    return ctx.reply('В каком городе стоят книги?', { reply_markup: kb })
+  }
+
+  await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
+  await saveShelfBatch(ctx, books, user.city)
+})
+
+bot.callbackQuery('shelfbatch:no', async (ctx) => {
+  shelfBatches.delete(ctx.from.id)
+  await ctx.answerCallbackQuery({ text: 'Отменил' })
+  await ctx.reply('Ок, ничего не добавил. Пришлите книги по одной, если так удобнее.')
+})
+
+/** Ставит на полку все подтверждённые книги с фото; обложки у них нет (общий кадр). */
+async function saveShelfBatch(
+  ctx: any,
+  books: Recognized[],
+  city: string,
+  ob?: { id: string; name: string },
+) {
+  shelfBatches.delete(ctx.from.id)
+  const added: string[] = []
+  const pending: string[] = []
+  for (const b of books) {
+    const res = await putOnShelf({
+      tgId: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+      firstName: ctx.from.first_name ?? null,
+      kind: b.kind,
+      title: b.title,
+      author: b.author,
+      genres: b.genres,
+      languages: b.languages,
+      city: ob ? null : city,
+      coverUrl: null,
+      ownerLibrarianId: ob?.id,
+    })
+    ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+  }
+  await sendBatchSummary(ctx, added, pending, 0, ob?.name)
+}
+
 bot.callbackQuery(/^shelfcity:(.+)$/, async (ctx) => {
+  const batch = shelfBatches.get(ctx.from.id)
   const d = shelfDrafts.get(ctx.from.id)
-  if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
+  if (!batch?.length && !d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
   const city = ctx.match![1]
   await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from.id) },
@@ -1253,7 +1442,9 @@ bot.callbackQuery(/^shelfcity:(.+)$/, async (ctx) => {
     update: { city },
   })
   await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
-  await saveShelfDraft(ctx, d, city)
+  // город спрашивали либо под одну книгу, либо под пачку с общего фото
+  if (batch?.length) return saveShelfBatch(ctx, batch, city)
+  await saveShelfDraft(ctx, d!, city)
 })
 
 async function saveShelfDraft(
@@ -1580,6 +1771,13 @@ bot.on('message:text', async (ctx) => {
   if (isEventsTopic(ctx)) return handleAnnouncement(ctx, text)
   if (isMarketTopic(ctx)) return handleMarketPost(ctx, text)
   if (ctx.chat.type !== 'private') return
+  // ISBN одной строкой — это «поставь вот эту книгу», а не вопрос к ИИ-подбору,
+  // куда такое сообщение уходило раньше
+  if (looksLikeIsbn(text)) return handleIsbnMessage(ctx, text)
+  // список ISBN построчно без /import: берём, только если ВСЕ строки — ISBN,
+  // иначе многострочный вопрос к ИИ («хочу лёгкое\nи на польском») уедет не туда
+  const lines = text.split('\n').map((l: string) => l.trim()).filter(Boolean)
+  if (lines.length > 1 && lines.every(looksLikeIsbn)) return handleListImport(ctx, text)
   await handleAi(ctx, text.slice(0, 500))
 })
 

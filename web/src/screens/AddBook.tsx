@@ -59,6 +59,8 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   const [scanning, setScanning] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [dup, setDup] = useState<DupCheck | null>(null)
+  /** книги, которые видно на том же фото, но мастер ведёт по одной */
+  const [extra, setExtra] = useState<{ title: string; author: string | null }[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -81,6 +83,7 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
       const res = await api.recognize(image)
       setCover(res.cover)
       setDup(res.dup)
+      setExtra(res.extraBooks ?? [])
 
       const r = res.recognized
       if (!r || !r.recognized || !r.title) {
@@ -238,7 +241,19 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
         <div className="note">
           📚 В библиотеке уже есть ещё {dup.others.count}{' '}
           {plural(dup.others.count, ['экземпляр', 'экземпляра', 'экземпляров'])}
-          {dup.others.city ? ` в ${dup.others.city}` : ''} — это нормально, добавляйте свой.
+          {/* именно разбивка по городам: общее число рядом с одним городом врало,
+              когда экземпляры стоят в разных городах */}
+          {dup.others.where ? ` — ${dup.others.where}` : ''} — это нормально, добавляйте свой.
+        </div>
+      )}
+
+      {extra.length > 0 && (
+        <div className="note">
+          👀 На фото видно ещё {extra.length}{' '}
+          {plural(extra.length, ['книгу', 'книги', 'книг'])}: {extra.map((b) => b.title).join(', ')}.
+          <br />
+          Здесь добавляется одна книга за раз. Чтобы поставить на полку сразу все — пришлите это же
+          фото боту, он добавит их одним списком.
         </div>
       )}
 

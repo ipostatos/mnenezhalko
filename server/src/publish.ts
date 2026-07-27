@@ -434,8 +434,24 @@ export async function findDuplicates(title: string, author?: string | null) {
 export type DupCheck = {
   /** такая же книга уже на полке самого пользователя — это ошибочный дубль */
   own: BookCard | null
-  /** сколько таких же книг у ДРУГИХ библиотекарей — это нормальные экземпляры */
-  others: { count: number; city: string | null }
+  /** такие же книги у ДРУГИХ библиотекарей — это нормальные экземпляры */
+  others: {
+    /** всего экземпляров у других */
+    count: number
+    /**
+     * Город с наибольшим числом экземпляров. Оставлен для совместимости, но
+     * ПОКАЗЫВАТЬ его вместе с общим `count` нельзя: при экземплярах в разных
+     * городах получается «3 экземпляра в Варшаве», хотя в Варшаве только один.
+     * Для текста человеку берите `byCity`.
+     */
+    city: string | null
+    /** разбивка по городам, от большего к меньшему */
+    byCity: { city: string; count: number }[]
+    /** экземпляры, у которых город не указан */
+    unknownCity: number
+    /** готовая фраза «2 в Варшаве, 1 в Кракове» — одна на бота и Mini App */
+    where: string
+  }
 }
 
 /**
@@ -449,8 +465,9 @@ export async function checkDuplicates(input: {
   kind: 'book' | 'game'
   ownerTg?: bigint | null
 }): Promise<DupCheck> {
+  const empty = { count: 0, city: null, byCity: [], unknownCity: 0, where: '' }
   const nt = norm(input.title)
-  if (nt.length < 3) return { own: null, others: { count: 0, city: null } }
+  if (nt.length < 3) return { own: null, others: empty }
   const na = norm(input.author || '')
 
   const candidates = await prisma.book.findMany({
@@ -461,7 +478,9 @@ export async function checkDuplicates(input: {
       search: { contains: nt },
     },
     include: { owner: true },
-    take: 200,
+    // берём с запасом: точное совпадение названия отбираем уже в памяти, а
+    // популярное название встречается подстрокой в десятках чужих записей
+    take: 500,
   })
 
   // точное совпадение по названию; автор — если задан у обоих
@@ -478,12 +497,40 @@ export async function checkDuplicates(input: {
     (b) => b.reviewStatus === 'approved' && (!ownLib || b.ownerId !== ownLib.id),
   )
 
+  // город берём у книги, а если его там нет — у владельца: в Notion город часто
+  // заполнен только в карточке библиотекаря, и без этого экземпляр «терял» город
   const cityCount = new Map<string, number>()
-  for (const b of others) if (b.city) cityCount.set(b.city, (cityCount.get(b.city) ?? 0) + 1)
-  const city = [...cityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  let unknownCity = 0
+  for (const b of others) {
+    const city = b.city || b.owner?.city || null
+    if (city) cityCount.set(city, (cityCount.get(city) ?? 0) + 1)
+    else unknownCity++
+  }
+  const byCity = [...cityCount.entries()]
+    .map(([city, count]) => ({ city, count }))
+    .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city))
 
+  const stats = { count: others.length, city: byCity[0]?.city ?? null, byCity, unknownCity }
   return {
     own: own ? toCard({ ...own, owner: own.owner }) : null,
-    others: { count: others.length, city },
+    others: { ...stats, where: describeOthers(stats) },
   }
+}
+
+/**
+ * Человеческая формулировка «где и сколько»: перечисляем города с числами, а не
+ * общее число рядом с одним городом. Пример: «3 экземпляра: 2 в Варшаве,
+ * 1 в Кракове».
+ */
+export function describeOthers(o: Omit<DupCheck['others'], 'where'>): string {
+  if (!o.count) return ''
+  const parts = o.byCity.slice(0, 3).map((c) => `${c.count} в ${c.city}`)
+  const restCities = o.byCity.length - 3
+  if (restCities > 0) {
+    const rest = o.byCity.slice(3).reduce((n, c) => n + c.count, 0)
+    parts.push(`${rest} в других городах`)
+  }
+  if (o.unknownCity) parts.push(`${o.unknownCity} без города`)
+  // единственный экземпляр в одном городе описываем короче: «1 в Варшаве»
+  return parts.join(', ')
 }
