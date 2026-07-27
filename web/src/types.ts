@@ -86,6 +86,8 @@ export type Health = {
   ai: boolean
   vision: boolean
   notionWrite: boolean
+  /** страница книжного клуба «Книжная Клумба» (задаётся на сервере в CLUB_URL) */
+  clubUrl?: string
 }
 
 /** Ответ распознавания обложки по фото. */

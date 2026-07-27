@@ -177,6 +177,9 @@ export async function registerRoutes(app: FastifyInstance) {
       ai: aiEnabled(),
       vision: visionEnabled(),
       notionWrite: notionWriteEnabled(),
+      // адрес книжного клуба живёт в настройке сервера (CLUB_URL): так он один
+      // и для меню бота, и для плашки на главной Mini App
+      clubUrl: env.clubUrl,
     }
   })
 

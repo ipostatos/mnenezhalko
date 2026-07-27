@@ -63,6 +63,19 @@ export function Home({
       sub: 'Что и когда происходит рядом',
       route: { name: 'events' },
     },
+    // адрес клуба приходит с сервера (CLUB_URL) — одна точка правды с меню бота,
+    // поэтому плашку показываем только когда health уже пришёл
+    ...(health?.clubUrl
+      ? ([
+          {
+            icon: 'flower',
+            tone: '#c2649a',
+            title: 'Книжная Клумба',
+            sub: 'Книжный клуб проекта',
+            url: health.clubUrl,
+          },
+        ] as Tile[])
+      : []),
     {
       icon: 'tag',
       tone: '#dd6f3c',
