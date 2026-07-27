@@ -43,6 +43,14 @@ const sign = (url: string, w: number) =>
   createHmac('sha256', env.webhookSecret).update(`img:${w}:${url}`).digest('hex').slice(0, 16)
 
 /**
+ * Размеров ровно три — других в интерфейсе не существует. Белый список нужен
+ * не для красоты: ссылку с посторонней шириной обработчик `/api/img` всё равно
+ * подгонит под свои границы, подпись перестанет сходиться, и обложка ответит
+ * 400. Один раз так и вышло (индекс массива вместо ширины, см. toCard).
+ */
+export const ALLOWED_WIDTHS: readonly number[] = [LIST_W, CARD_W, CAROUSEL_W]
+
+/**
  * Внешнюю обложку заменяем на ссылку через наш конвейер с целевой шириной `w`;
  * свои (/api/cover) и data: оставляем как есть.
  */
@@ -50,6 +58,11 @@ export function proxyCover(url: string | null, w = LIST_W): string | null {
   if (!url) return null
   if (url.startsWith('data:')) return url
   if (url.includes('/api/cover/') || url.includes('/api/img')) return url
+  if (!ALLOWED_WIDTHS.includes(w)) {
+    // лучше выдать рабочую ссылку размера по умолчанию, чем заведомо битую
+    console.error(`[img] недопустимая ширина превью ${w}, беру ${LIST_W}`)
+    w = LIST_W
+  }
   if (/^https?:\/\//.test(url))
     return `/api/img?u=${encodeURIComponent(url)}&w=${w}&s=${sign(url, w)}`
   return url

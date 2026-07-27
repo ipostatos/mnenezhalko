@@ -57,8 +57,18 @@ const split = (s: string | null | undefined) =>
     .map((x) => x.trim())
     .filter(Boolean)
 
-/** `w` — ширина превью обложки; по умолчанию размер списков (см. LIST_W в imgcache.ts). */
-export function toCard(b: any, w?: number): BookCard {
+/**
+ * Карточка книги для клиента.
+ *
+ * Ширина превью передаётся ОБЪЕКТОМ, а не числом, намеренно: пока вторым
+ * аргументом было число, любой `rows.map(toCard)` тихо отдавал в него ИНДЕКС
+ * массива (второй аргумент колбэка map). Так с 25 июля вся библиотека уезжала
+ * с `w=0,1,2…`, подпись ссылки считалась для другой ширины, и обложки отдавали
+ * 400. Объект в такой позиции не пройдёт проверку типов — ошибка станет
+ * ошибкой компиляции, а не молчаливой поломкой в проде.
+ */
+export function toCard(b: any, opts?: { w: number }): BookCard {
+  const w = opts?.w
   return {
     id: b.id,
     kind: b.kind,
@@ -129,7 +139,7 @@ export async function searchBooks(p: SearchParams) {
         skip: offset,
       }),
     ])
-    return { total, items: rows.map(toCard) }
+    return { total, items: rows.map((b) => toCard(b)) }
   }
 
   // с запросом ранжируем весь набор совпадений и только потом режем на страницы:
@@ -159,7 +169,7 @@ export async function bookById(id: string) {
     include: { owner: OWNER_SELECT },
   })
   // разворот книги показывает обложку крупнее, чем строка в списке
-  return b ? toCard(b, CARD_W) : null
+  return b ? toCard(b, { w: CARD_W }) : null
 }
 
 /**

@@ -53,7 +53,7 @@ export async function digest(
     period,
     since: since.toISOString(),
     total,
-    items: rows.map(toCard),
+    items: rows.map((b) => toCard(b)),
     byCity: grouped
       .filter((g) => g.city)
       .map((g) => ({ city: g.city!, count: g._count }))

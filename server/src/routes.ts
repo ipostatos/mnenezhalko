@@ -32,6 +32,7 @@ import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
 import {
+  ALLOWED_WIDTHS,
   CARD_W,
   CAROUSEL_W,
   LIST_W,
@@ -200,7 +201,14 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/img', async (req, reply) => {
     const { u, s, w } = req.query as { u?: string; s?: string; w?: string }
     if (!u || !s) return reply.code(400).send({ error: 'bad_request' })
-    const width = Math.min(1200, Math.max(64, Number(w) || 640))
+    // ширину не «подгоняем», а требуем ровно ту, что мы сами и подписываем:
+    // прежний clamp превращал ссылку с чужой шириной в вечный 400 по подписи —
+    // ошибку было видно только по битым картинкам у людей
+    const width = Number(w)
+    if (!ALLOWED_WIDTHS.includes(width)) {
+      req.log.warn(`[img] ширина вне белого списка: ${w}`)
+      return reply.code(400).send({ error: 'bad_width' })
+    }
     let host = ''
     try {
       host = new URL(u).hostname
@@ -265,7 +273,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const allowed = maySeeContacts(req)
     return json({
       owner: redactOwner(owner, allowed),
-      books: redactCards(books.map(toCard), allowed),
+      books: redactCards(books.map((b) => toCard(b)), allowed),
     })
   })
 
@@ -385,7 +393,7 @@ export async function registerRoutes(app: FastifyInstance) {
       orderBy: { title: 'asc' },
       take: 200,
     })
-    return json(books.map(toCard))
+    return json(books.map((b) => toCard(b)))
   })
 
   /**
@@ -408,7 +416,7 @@ export async function registerRoutes(app: FastifyInstance) {
     // «Моя полка» рисует обложку и в списке (.cover, 44×62 CSS), и на экране правки
     // (.edit-cover, 128×180 CSS) — берём один размер CARD_W на оба, чтобы список
     // и правка тянули один и тот же файл из кэша, без второй загрузки
-    return json({ books: rows.map((b) => ({ ...toCard(b, CARD_W), state: shelfState(b) })) })
+    return json({ books: rows.map((b) => ({ ...toCard(b, { w: CARD_W }), state: shelfState(b) })) })
   })
 
   /** Редактировать свою книгу. */
