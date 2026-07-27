@@ -23,6 +23,7 @@ ssh "$HOST" "chmod 644 $DIR/index.html $DIR/DIARY.md"
 
 echo "→ проверка живой страницы"
 URL="${DIARY_URL:-https://mnenezhalko-diary-46-224-220-94.sslip.io}"
-curl -fsS -o /dev/null "$URL/"
-curl -fsS -o /dev/null "$URL/DIARY.md"
+# проверяем С САМОГО СЕРВЕРА: curl из Windows (schannel) не умеет sslip.io-имена
+# и падает с SEC_E_WRONG_PRINCIPAL, хотя страница в порядке
+ssh "$HOST" "curl -fsS -o /dev/null '$URL/' && curl -fsS -o /dev/null '$URL/DIARY.md'"
 echo "✅ готово: $URL"

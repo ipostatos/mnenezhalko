@@ -160,13 +160,33 @@ npm run import -w server -- путь/result.json --mode events --topic 14501
 cp .env.example server/.env  # единственный .env: сервер стартует из server/
 npm install
 npm run db:generate
-npm run db:push -w server    # создать SQLite-базу
+npm run db:migrate -w server # создать SQLite-базу по миграциям (prisma/migrations)
 npm run sync                 # первичный импорт из Notion (~1 мин)
 npm run build -w web         # собрать Mini App
 DISABLE_BOT=1 npm run dev    # API и Mini App без бота — обычный режим разработки
 ```
 
 Mini App при разработке удобнее гонять отдельно: `npm run dev:web` (проксирует `/api` на 8080).
+
+### Изменение схемы базы
+
+Структура базы описана **миграциями** в `server/prisma/migrations`, а не подгоняется `db push`.
+Порядок при правке `schema.prisma`:
+
+```bash
+# 1. сгенерировать миграцию из разницы «применённые миграции → новая схема»
+npx prisma migrate diff --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --shadow-database-url "file:./data/shadow.db" --script \
+  > prisma/migrations/<метка>_<имя>/migration.sql
+# 2. дописать в файл перенос данных, если колонка должна быть заполнена не с нуля
+# 3. проверить на КОПИИ прод-базы, а не только на пустой
+npm run db:migrate -w server
+```
+
+Деплой применяет миграции сам (`scripts/db-migrate.sh`): на существующей базе без истории
+принимает текущую схему как baseline, на пустой создаёт всё с нуля. ⚠️ Перед выкладкой миграции,
+меняющей данные, снимите копию: `bash /opt/mnenezhalko/scripts/backup.sh` на сервере.
 
 ⚠️ **Рабочий токен бота на машине разработчика держать нельзя.** Бот в Telegram
 один: `BOT_MODE=polling` делает `deleteWebhook` и молча забирает апдейты у прода —
