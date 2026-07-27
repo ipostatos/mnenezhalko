@@ -40,9 +40,10 @@ export function looksLikeIsbn(s: string): boolean {
 }
 
 const TIMEOUT_MS = 8_000
+const RETRY_PAUSE_MS = 600
 
 /** Внешние справочники не должны подвешивать добавление книги. */
-async function getJson(url: string): Promise<{ ok: boolean; status: number; body: any }> {
+async function getJsonOnce(url: string): Promise<{ ok: boolean; status: number; body: any }> {
   const ctl = new AbortController()
   const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
   try {
@@ -54,6 +55,21 @@ async function getJson(url: string): Promise<{ ok: boolean; status: number; body
   } finally {
     clearTimeout(t)
   }
+}
+
+/**
+ * Google Books регулярно отвечает 503 `backendFailed` на совершенно нормальные
+ * запросы (проверено 27 июля: подряд идущие запросы то проходят, то нет).
+ * Без повтора книга «не находится» через раз, и это выглядит как поломка.
+ * Повторяем только сбои сервера и сети — 404/429 повторять бессмысленно.
+ */
+async function getJson(url: string, retries = 1): Promise<{ ok: boolean; status: number; body: any }> {
+  let last = await getJsonOnce(url)
+  for (let i = 0; i < retries && !last.ok && (last.status >= 500 || last.status === 0); i++) {
+    await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS))
+    last = await getJsonOnce(url)
+  }
+  return last
 }
 
 /**

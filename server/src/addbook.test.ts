@@ -178,6 +178,53 @@ test('квота Google Books (429) видна в ответе — иначе ж
   }
 })
 
+test('разовый 503 от Google Books не теряет книгу — запрос повторяется', async () => {
+  let googleCalls = 0
+  const restore = withFetch((url) => {
+    if (url.includes('openlibrary.org/api/books')) return { status: 200, body: {} }
+    if (url.includes('data.bn.org.pl')) return { status: 200, body: { bibs: [] } }
+    if (url.includes('googleapis.com')) {
+      googleCalls++
+      // первый ответ — типичный backendFailed, второй нормальный
+      return googleCalls === 1
+        ? { status: 503 }
+        : {
+            status: 200,
+            body: { items: [{ volumeInfo: { title: 'Дюна', authors: ['Фрэнк Герберт'] } }] },
+          }
+    }
+    return { status: 404 }
+  })
+  try {
+    const r = await lookupIsbnDetailed('9785171147426')
+    assert.equal(googleCalls, 2, 'сбой сервера должен повторяться')
+    assert.equal(r.book?.title, 'Дюна')
+    assert.equal(r.book?.source, 'google')
+  } finally {
+    restore()
+  }
+})
+
+test('429 (квота) не повторяем — это не сбой, а отказ по лимиту', async () => {
+  let googleCalls = 0
+  const restore = withFetch((url) => {
+    if (url.includes('openlibrary.org/api/books')) return { status: 200, body: {} }
+    if (url.includes('data.bn.org.pl')) return { status: 200, body: { bibs: [] } }
+    if (url.includes('googleapis.com')) {
+      googleCalls++
+      return { status: 429 }
+    }
+    return { status: 404 }
+  })
+  try {
+    const r = await lookupIsbnDetailed('9785171147426')
+    assert.equal(googleCalls, 1)
+    assert.equal(r.quotaBlocked, true)
+  } finally {
+    restore()
+  }
+})
+
 test('обложка OpenLibrary без картинки (404 на HEAD) в каталог не записывается', async () => {
   const restore = withFetch((url, init) => {
     if (url.includes('openlibrary.org/api/books'))
