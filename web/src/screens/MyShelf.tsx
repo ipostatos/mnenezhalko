@@ -3,14 +3,17 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { ShelfBook, ShelfState } from '../types'
 import { haptic, showAlert, showConfirm, onAppShow } from '../telegram'
+import { Icon } from './Icon'
 
+/* Тона состояний берём из фирменной палитры (см. :root в styles.css), а не
+   произвольные яркие — иначе бейджи выбиваются из нежного крем-персика. */
 const STATE: Record<ShelfState, { label: string; tone: string }> = {
-  active: { label: 'На полке', tone: '#4caf72' },
-  onloan: { label: 'На руках', tone: '#e0a13a' },
-  pending: { label: 'На проверке', tone: '#50a8eb' },
-  rejected: { label: 'Отклонена', tone: '#e5544b' },
-  syncerror: { label: 'Ошибка синка', tone: '#c98a3a' },
-  deleted: { label: 'Удалена', tone: '#8a9aa9' },
+  active: { label: 'На полке', tone: '#5a9d6b' }, // --ok
+  onloan: { label: 'На руках', tone: '#d98a62' }, // --terracotta
+  pending: { label: 'На проверке', tone: '#6d8fb5' }, // приглушённый sky
+  rejected: { label: 'Отклонена', tone: '#d9584b' }, // --bad
+  syncerror: { label: 'Ошибка синка', tone: '#e0a44a' }, // --honey
+  deleted: { label: 'Удалена', tone: '#8f8578' }, // --hint
 }
 
 const ORDER: ShelfState[] = ['active', 'onloan', 'pending', 'rejected', 'syncerror', 'deleted']
@@ -98,12 +101,29 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
     )
   }
 
+  const count = (s: ShelfState) => books.filter((b) => b.state === s).length
+
   return (
     <>
-      <div className="hero">
-        <span className="logo">🗂</span>
-        <h1>Моя полка</h1>
-      </div>
+      <h1>Моя полка</h1>
+      <div className="sub">Ваши книги, их состояние и правки — в одном месте</div>
+
+      {books.length > 0 && (
+        <div className="stat-tiles">
+          <div className="s">
+            <div className="n">{count('active')}</div>
+            <div className="c">на полке</div>
+          </div>
+          <div className="s">
+            <div className="n">{count('onloan')}</div>
+            <div className="c">на руках</div>
+          </div>
+          <div className="s">
+            <div className="n">{count('pending')}</div>
+            <div className="c">на проверке</div>
+          </div>
+        </div>
+      )}
 
       {!books.length && (
         <div className="empty">
@@ -111,7 +131,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
           На вашей полке пока нет книг. Поделитесь своими — они станут видны библиотекарям.
           <div style={{ height: 'var(--sp-5)' }} />
           <button className="btn" onClick={() => go({ name: 'add' })}>
-            ➕ Добавить книгу
+            <Icon name="plus" /> Добавить книгу
           </button>
         </div>
       )}
@@ -122,68 +142,106 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
             {STATE[g.state].label} · {g.items.length}
           </div>
           {g.items.map((b) => (
-              <div key={b.id} className={`shelf-item${b.state === 'deleted' ? ' dim' : ''}`}>
-                <div className="shelf-head">
-                  <span className="badge" style={{ ['--tone' as any]: STATE[b.state].tone }}>
-                    {STATE[b.state].label}
-                  </span>
-                  <div className="t-sm grow">{b.title}</div>
+            <div
+              key={b.id}
+              className={`shelf-card${b.state === 'deleted' ? ' dim' : ''}`}
+              style={{ ['--tone' as any]: STATE[b.state].tone }}
+            >
+              <div className="shelf-top">
+                <div className="cover">
+                  {b.coverUrl ? (
+                    <img src={b.coverUrl} alt="" loading="lazy" />
+                  ) : (
+                    b.title.slice(0, 1).toUpperCase()
+                  )}
                 </div>
-                {(b.author || b.city) && (
-                  <div className="d">
-                    {[b.author, b.city && (b.district ? `${b.city} / ${b.district}` : b.city)]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </div>
-                )}
-                {b.state === 'rejected' && b.rejectionReason && (
-                  <div className="shelf-note">Причина: {b.rejectionReason}</div>
-                )}
-                {b.state === 'pending' && (
-                  <div className="shelf-note">Ждёт одобрения модератором.</div>
-                )}
-                {b.state === 'onloan' && (
-                  <div className="shelf-note">Книга у читателя — см. «У кого моя книга».</div>
-                )}
-                {b.state === 'syncerror' && (
-                  <div className="shelf-note">Не ушла в общую таблицу — админы это видят.</div>
-                )}
-
-                {b.state !== 'deleted' && (
-                  <div className="shelf-actions">
-                    {b.state === 'active' && (
-                      <button className="btn sm" onClick={() => go({ name: 'book', id: b.id })}>
-                        📖 В каталоге
-                      </button>
-                    )}
-                    {(b.state === 'active' ||
-                      b.state === 'pending' ||
-                      b.state === 'rejected' ||
-                      b.state === 'syncerror') && (
-                      <button
-                        className="btn sm ghost"
-                        onClick={() => {
-                          haptic()
-                          setEditing(b.id)
-                        }}
-                      >
-                        ✏️ Изменить
-                      </button>
-                    )}
-                    {b.state === 'rejected' && (
-                      <button className="btn sm" disabled={busy === b.id} onClick={() => resubmit(b)}>
-                        ♻️ Отправить снова
-                      </button>
-                    )}
-                    <button className="btn sm ghost" disabled={busy === b.id} onClick={() => del(b)}>
-                      🗑 {b.state === 'onloan' ? 'Скрыть' : 'Удалить'}
-                    </button>
-                  </div>
-                )}
+                <div className="grow">
+                  <div className="shelf-title">{b.title}</div>
+                  {(b.author || b.city) && (
+                    <div className="shelf-meta">
+                      {[b.author, b.city && (b.district ? `${b.city} / ${b.district}` : b.city)]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </div>
+                  )}
+                  {/* состояние читается по цветной полосе слева и заголовку группы —
+                      бейдж на самой карточке был бы третьим повтором того же */}
+                  {b.kind === 'game' && (
+                    <div className="market-meta">
+                      <span className="tag">настолка</span>
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {b.state === 'rejected' && b.rejectionReason && (
+                <div className="shelf-note">Причина: {b.rejectionReason}</div>
+              )}
+              {b.state === 'pending' && <div className="shelf-note">Ждёт одобрения модератором.</div>}
+              {b.state === 'onloan' && (
+                <div className="shelf-note">Книга у читателя — см. «У кого моя книга».</div>
+              )}
+              {b.state === 'syncerror' && (
+                <div className="shelf-note">Не ушла в общую таблицу — админы это видят.</div>
+              )}
+
+              {b.state !== 'deleted' && (
+                <div className="shelf-actions">
+                  {b.state === 'active' && (
+                    <button className="btn sm" onClick={() => go({ name: 'book', id: b.id })}>
+                      <Icon name="book" /> В каталоге
+                    </button>
+                  )}
+                  {b.state === 'rejected' && (
+                    <button className="btn sm" disabled={busy === b.id} onClick={() => resubmit(b)}>
+                      <Icon name="refresh" /> Отправить снова
+                    </button>
+                  )}
+                  {(b.state === 'active' ||
+                    b.state === 'pending' ||
+                    b.state === 'rejected' ||
+                    b.state === 'syncerror') && (
+                    <button
+                      className="btn sm ghost"
+                      onClick={() => {
+                        haptic()
+                        setEditing(b.id)
+                      }}
+                    >
+                      <Icon name="edit" /> Изменить
+                    </button>
+                  )}
+                  <button
+                    className="btn sm ghost narrow"
+                    disabled={busy === b.id}
+                    onClick={() => del(b)}
+                  >
+                    <Icon name={b.state === 'onloan' ? 'hide' : 'trash'} />{' '}
+                    {b.state === 'onloan' ? 'Скрыть' : 'Удалить'}
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       ))}
+
+      {books.length > 0 && (
+        <button
+          className="promo"
+          onClick={() => {
+            haptic()
+            go({ name: 'add' })
+          }}
+        >
+          <img src="/il/add.jpg" alt="" loading="lazy" />
+          <div className="grow">
+            <div className="t">Добавить ещё книгу</div>
+            <div className="d">Она останется у вас — просто станет видна библиотекарям</div>
+          </div>
+          <div className="chev">›</div>
+        </button>
+      )}
     </>
   )
 }
@@ -235,9 +293,11 @@ function EditForm({
 
   return (
     <>
-      <div className="hero">
-        <span className="logo">✏️</span>
-        <h1>Редактирование</h1>
+      <h1>Редактирование</h1>
+      <div className="sub">
+        {book.state === 'active' || book.state === 'onloan'
+          ? 'Правки уедут и в общую таблицу проекта'
+          : 'Книги ещё нет в общей таблице — правки останутся здесь'}
       </div>
 
       {book.coverUrl ? (

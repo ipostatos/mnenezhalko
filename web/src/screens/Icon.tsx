@@ -20,6 +20,10 @@ import {
   Globe,
   Crown,
   Coffee,
+  Pencil,
+  Trash2,
+  RotateCcw,
+  EyeOff,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -41,6 +45,10 @@ export type IconName =
   | 'globe'
   | 'crown'
   | 'coffee'
+  | 'edit'
+  | 'trash'
+  | 'refresh'
+  | 'hide'
 
 const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   book: BookOpen,
@@ -59,6 +67,10 @@ const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   globe: Globe,
   crown: Crown,
   coffee: Coffee,
+  edit: Pencil,
+  trash: Trash2,
+  refresh: RotateCcw,
+  hide: EyeOff,
 }
 
 /** Instagram в lucide v1 убрали (бренд) — берём выверенную геометрию Feather. */

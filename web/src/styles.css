@@ -1071,36 +1071,54 @@ textarea.input {
 
 /* ── моя полка ─────────────────────────────── */
 
-.shelf-item {
-  padding: var(--sp-3);
-  margin-bottom: var(--sp-3);
+/* карточка книги на полке — та же форма, что у выдачи (.loan-card):
+   мягкая карточка с цветной полосой состояния слева */
+.shelf-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border-left: 3px solid var(--tone, var(--accent));
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-3);
+  box-shadow: var(--shadow);
 }
 
-.shelf-item.dim {
+.shelf-card.dim {
   opacity: 0.55;
 }
 
-.shelf-head {
+.shelf-top {
   display: flex;
-  align-items: center;
-  gap: var(--sp-2);
+  align-items: flex-start;
+  gap: var(--sp-3);
+  min-width: 0;
 }
 
-.badge {
-  flex-shrink: 0;
-  font-size: var(--fs-sm);
+.shelf-title {
+  font-size: var(--fs-body);
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--r-pill);
-  color: var(--tone, var(--accent));
-  background: color-mix(in srgb, var(--tone, var(--accent)) 16%, transparent);
+  line-height: 1.3;
+  /* длинное название переносим, а не режем в одну строку */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.shelf-meta {
+  color: var(--hint);
+  font-size: var(--fs-sm);
+  margin: 3px 0 var(--sp-2);
+}
+
+.shelf-card .market-meta {
+  margin-top: 0;
 }
 
 .shelf-note {
-  margin-top: var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--hint);
   line-height: 1.4;
@@ -1110,11 +1128,23 @@ textarea.input {
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-2);
-  margin-top: var(--sp-3);
 }
 
-.shelf-actions .btn {
+/* кнопки полки стоят в ряд и переносятся: перебиваем .btn.ghost.sm (100% ширины,
+   там она нужна карточке выдачи) — отсюда двойной селектор с равной специфичностью */
+.shelf-actions .btn.sm,
+.shelf-actions .btn.ghost.sm {
+  flex: 1 1 auto;
   width: auto;
+  padding: 10px 12px;
+  font-size: var(--fs-sm);
+}
+
+/* удаление не растягиваем на всю строку — деструктивное действие не должно
+   выглядеть главной кнопкой карточки */
+.shelf-actions .btn.narrow,
+.shelf-actions .btn.ghost.sm.narrow {
+  flex: 0 1 auto;
 }
 
 .donate-row {

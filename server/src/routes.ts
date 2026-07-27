@@ -404,8 +404,9 @@ export async function registerRoutes(app: FastifyInstance) {
       orderBy: [{ createdAt: 'desc' }],
       take: 300,
     })
-    // единственное место, где «Моя полка» рисует обложку — экран правки
-    // (.edit-cover, 128×180 CSS), список состояний обложку не показывает
+    // «Моя полка» рисует обложку и в списке (.cover, 44×62 CSS), и на экране правки
+    // (.edit-cover, 128×180 CSS) — берём один размер CARD_W на оба, чтобы список
+    // и правка тянули один и тот же файл из кэша, без второй загрузки
     return json({ books: rows.map((b) => ({ ...toCard(b, CARD_W), state: shelfState(b) })) })
   })
 
