@@ -29,6 +29,11 @@ export type IsbnLookup = {
   notFound: boolean
   /** Google Books ответил 429 — то есть без ключа мы к нему фактически не ходим */
   quotaBlocked: boolean
+  /**
+   * Каталог отвечал ошибкой сервера и после повторов (503 backendFailed у Google
+   * бывает пачками). Это не «книги нет» — стоит предложить повторить попытку.
+   */
+  serviceDown: boolean
 }
 
 const onlyIsbn = (s: string) => s.replace(/[^0-9Xx]/g, '').toUpperCase()
@@ -58,15 +63,17 @@ async function getJsonOnce(url: string): Promise<{ ok: boolean; status: number; 
 }
 
 /**
- * Google Books регулярно отвечает 503 `backendFailed` на совершенно нормальные
- * запросы (проверено 27 июля: подряд идущие запросы то проходят, то нет).
- * Без повтора книга «не находится» через раз, и это выглядит как поломка.
+ * Google Books постоянно отвечает 503 `backendFailed` на совершенно нормальные
+ * запросы: замер 27 июля с прод-адреса — 6 сбоев из 10, в другом заходе 11 из 12,
+ * при этом тот же запрос между сбоями отдаёт книгу. Без повторов книга
+ * «не находится» через раз, и это выглядит поломкой у нас.
  * Повторяем только сбои сервера и сети — 404/429 повторять бессмысленно.
  */
-async function getJson(url: string, retries = 1): Promise<{ ok: boolean; status: number; body: any }> {
+async function getJson(url: string, retries = 0): Promise<{ ok: boolean; status: number; body: any }> {
   let last = await getJsonOnce(url)
   for (let i = 0; i < retries && !last.ok && (last.status >= 500 || last.status === 0); i++) {
-    await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS))
+    // растущая пауза: всплеск 503 у Google длится секунды, дёргать чаще бесполезно
+    await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS * (i + 1)))
     last = await getJsonOnce(url)
   }
   return last
@@ -154,14 +161,17 @@ async function fromBibliotekaNarodowa(isbn: string): Promise<IsbnBook | null> {
 
 async function fromGoogleBooks(
   isbn: string,
-): Promise<{ book: IsbnBook | null; quotaBlocked: boolean }> {
+): Promise<{ book: IsbnBook | null; quotaBlocked: boolean; serviceDown: boolean }> {
   const key = env.googleBooksKey
   const url =
     `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}` + (key ? `&key=${key}` : '')
-  const { ok, status, body } = await getJson(url)
-  if (!ok) return { book: null, quotaBlocked: status === 429 }
+  // с ключом ходить стоит настойчивее: лимит запросов у нас свой, а 503 частые
+  const { ok, status, body } = await getJson(url, key ? 4 : 1)
+  if (!ok) {
+    return { book: null, quotaBlocked: status === 429, serviceDown: status >= 500 || status === 0 }
+  }
   const v = body?.items?.[0]?.volumeInfo
-  if (!v?.title) return { book: null, quotaBlocked: false }
+  if (!v?.title) return { book: null, quotaBlocked: false, serviceDown: false }
   const cover: string | undefined = v.imageLinks?.thumbnail || v.imageLinks?.smallThumbnail
   return {
     book: {
@@ -172,26 +182,38 @@ async function fromGoogleBooks(
       source: 'google',
     },
     quotaBlocked: false,
+    serviceDown: false,
   }
 }
 
 /** Полный поиск с причиной неудачи. */
 export async function lookupIsbnDetailed(raw: string): Promise<IsbnLookup> {
   const isbn = onlyIsbn(raw)
+  const found = (book: IsbnBook): IsbnLookup => ({
+    book,
+    notFound: false,
+    quotaBlocked: false,
+    serviceDown: false,
+  })
   if (isbn.length !== 10 && isbn.length !== 13) {
-    return { book: null, notFound: true, quotaBlocked: false }
+    return { book: null, notFound: true, quotaBlocked: false, serviceDown: false }
   }
 
   const ol = await fromOpenLibrary(isbn)
-  if (ol) return { book: ol, notFound: false, quotaBlocked: false }
+  if (ol) return found(ol)
 
   const bn = await fromBibliotekaNarodowa(isbn)
-  if (bn) return { book: bn, notFound: false, quotaBlocked: false }
+  if (bn) return found(bn)
 
   const g = await fromGoogleBooks(isbn)
-  if (g.book) return { book: g.book, notFound: false, quotaBlocked: false }
+  if (g.book) return found(g.book)
 
-  return { book: null, notFound: true, quotaBlocked: g.quotaBlocked }
+  return {
+    book: null,
+    notFound: !g.serviceDown,
+    quotaBlocked: g.quotaBlocked,
+    serviceDown: g.serviceDown,
+  }
 }
 
 export async function lookupIsbn(raw: string): Promise<IsbnBook | null> {

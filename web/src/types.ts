@@ -119,6 +119,8 @@ export type IsbnLookup = {
   notFound: boolean
   /** Google Books ответил 429 — русские издания без ключа почти не находятся */
   quotaBlocked: boolean
+  /** каталог отвечал ошибкой сервера даже после повторов — стоит попробовать снова */
+  serviceDown: boolean
 }
 
 export type RecognizeResult = {

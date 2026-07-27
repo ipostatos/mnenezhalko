@@ -96,6 +96,8 @@ const mainKeyboard = () => {
     kb.webApp('📚 Открыть библиотеку', webAppUrl()).row()
     kb.webApp('🌿 О проекте', `${webAppUrl()}/?screen=about`).row()
   }
+  kb.url('🌸 Книжная Клумба', env.clubUrl).row()
+  kb.text('💛 Поддержать проект', 'donate:menu').row()
   kb.url('💬 Чат проекта', env.mainChatUrl).row()
   kb.url('📸 Инстаграм', INSTAGRAM_URL)
   return kb
@@ -217,6 +219,7 @@ bot.command('help', (ctx) =>
       '/events — ближайшие встречи',
       '/alerts — анонсы новых встреч: включить или выключить',
       '/baraholka — барахолка города',
+      '/club — книжный клуб «Книжная Клумба»',
       '/donate — поддержать проект звёздами Telegram',
       '',
       'Пришлите <b>фото книги или настолки</b> — распознаю название, автора, язык и жанр,',
@@ -283,6 +286,28 @@ async function showDonateMenu(ctx: any) {
 }
 
 bot.command('donate', showDonateMenu)
+
+// кнопка «Поддержать проект» из главного меню (суммы — отдельные donate:<число>)
+bot.callbackQuery('donate:menu', async (ctx) => {
+  await ctx.answerCallbackQuery()
+  await showDonateMenu(ctx)
+})
+
+/* ── книжный клуб «Книжная Клумба» ────────────────────────── */
+
+const clubKeyboard = () => new InlineKeyboard().url('🌸 Открыть Книжную Клумбу', env.clubUrl)
+
+bot.command('club', (ctx) =>
+  ctx.reply(
+    [
+      '🌸 <b>Книжная Клумба МнеНеЖалко</b>',
+      '',
+      'Книжный клуб проекта. Что читаем, когда встречаемся и как присоединиться —',
+      'на странице клуба:',
+    ].join('\n'),
+    { parse_mode: 'HTML', reply_markup: clubKeyboard() },
+  ),
+)
 
 bot.callbackQuery(/^donate:(\d+)$/, async (ctx) => {
   const amount = Number(ctx.match![1])
@@ -1084,10 +1109,11 @@ async function handleIsbnMessage(ctx: any, raw: string) {
     return null
   })
   if (!r?.book) {
-    return ctx.reply(
-      `Не нашёл книгу по ISBN <code>${esc(raw)}</code> в открытых каталогах.\n\n${ISBN_MISS_HINT}`,
-      { parse_mode: 'HTML' },
-    )
+    // «каталог сейчас лежит» и «книги нет» — разные новости для человека
+    const why = r?.serviceDown
+      ? `Каталог книг сейчас не отвечает — попробуйте ещё раз через минуту.`
+      : `Не нашёл книгу по ISBN <code>${esc(raw)}</code> в открытых каталогах.`
+    return ctx.reply(`${why}\n\n${ISBN_MISS_HINT}`, { parse_mode: 'HTML' })
   }
 
   const draft: ShelfDraft = {
@@ -1951,6 +1977,7 @@ export async function setupBotCommands() {
     { command: 'events', description: 'Ближайшие встречи' },
     { command: 'alerts', description: 'Анонсы новых встреч' },
     { command: 'baraholka', description: 'Барахолка по городам' },
+    { command: 'club', description: 'Книжный клуб «Книжная Клумба»' },
     { command: 'import', description: 'Добавить книги пачкой (альбом или список)' },
     { command: 'donate', description: 'Поддержать проект звёздами' },
     { command: 'help', description: 'Помощь' },

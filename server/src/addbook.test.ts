@@ -178,6 +178,22 @@ test('квота Google Books (429) видна в ответе — иначе ж
   }
 })
 
+test('затяжной сбой каталога — это не «книги нет», а serviceDown', async () => {
+  const restore = withFetch((url) => {
+    if (url.includes('openlibrary.org/api/books')) return { status: 200, body: {} }
+    if (url.includes('data.bn.org.pl')) return { status: 200, body: { bibs: [] } }
+    if (url.includes('googleapis.com')) return { status: 503 }
+    return { status: 404 }
+  })
+  try {
+    const r = await lookupIsbnDetailed('9785171147426')
+    assert.equal(r.serviceDown, true)
+    assert.equal(r.notFound, false, 'нельзя утверждать, что книги нет, если каталог не отвечал')
+  } finally {
+    restore()
+  }
+})
+
 test('разовый 503 от Google Books не теряет книгу — запрос повторяется', async () => {
   let googleCalls = 0
   const restore = withFetch((url) => {
