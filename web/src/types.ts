@@ -113,6 +113,14 @@ export type DupCheck = {
   }
 }
 
+/** Ответ поиска по ISBN: книга либо причина, почему её нет. */
+export type IsbnLookup = {
+  book: { title: string; author: string | null; coverUrl: string | null; source: string } | null
+  notFound: boolean
+  /** Google Books ответил 429 — русские издания без ключа почти не находятся */
+  quotaBlocked: boolean
+}
+
 export type RecognizeResult = {
   cover: string
   recognized: Recognized | null

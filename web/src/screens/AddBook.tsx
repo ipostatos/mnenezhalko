@@ -61,6 +61,8 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   const [dup, setDup] = useState<DupCheck | null>(null)
   /** книги, которые видно на том же фото, но мастер ведёт по одной */
   const [extra, setExtra] = useState<{ title: string; author: string | null }[]>([])
+  const [isbn, setIsbn] = useState('')
+  const [isbnBusy, setIsbnBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -112,6 +114,39 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
       setCover(null)
     } finally {
       setScanning(false)
+    }
+  }
+
+  /** Поиск по ISBN: заполняет название, автора и обложку из открытых каталогов. */
+  async function findByIsbn() {
+    const code = isbn.trim()
+    if (!code) return
+    setIsbnBusy(true)
+    setHint(null)
+    try {
+      const r = await api.isbn(code)
+      if (!r.book) {
+        // русские издания открытые каталоги знают плохо — говорим прямо, а не «ничего не найдено»
+        showAlert(
+          r.quotaBlocked
+            ? 'По этому ISBN ничего не нашлось: открытые каталоги знают в основном англо- и польскоязычные издания. Сфотографируйте обложку — распознаю по ней.'
+            : 'По этому ISBN ничего не нашлось. Сфотографируйте обложку или заполните поля руками.',
+        )
+        return
+      }
+      setTitle(r.book.title)
+      if (r.book.author) setAuthor(r.book.author)
+      if (r.book.coverUrl) setCover(r.book.coverUrl)
+      haptic('success')
+      setHint('Заполнил по ISBN — проверьте язык и жанры.')
+      api
+        .duplicates(r.book.title, r.book.author ?? undefined, kind)
+        .then(setDup)
+        .catch(() => {})
+    } catch (e: any) {
+      showAlert(e.message === 'bad_isbn' ? 'Это не похоже на ISBN — 10 или 13 цифр.' : e.message)
+    } finally {
+      setIsbnBusy(false)
     }
   }
 
@@ -229,6 +264,24 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
             {hint ?? 'Сниму название, автора, язык и жанр с обложки.'}
           </div>
         </div>
+      </div>
+
+      {/* второй путь заполнения: номер с задней обложки */}
+      <div className="isbn-row">
+        <input
+          className="input"
+          placeholder="или ISBN с задней обложки"
+          inputMode="numeric"
+          value={isbn}
+          onChange={(e) => setIsbn(e.target.value)}
+        />
+        <button
+          className="btn sm"
+          disabled={isbnBusy || isbn.trim().length < 10}
+          onClick={findByIsbn}
+        >
+          {isbnBusy ? 'Ищу…' : 'Найти'}
+        </button>
       </div>
 
       {dup?.own && (

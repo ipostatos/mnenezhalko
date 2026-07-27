@@ -7,6 +7,7 @@ import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
 import { decodeDataUrl, readCover, saveCover } from './covers.js'
 import { recognizePhoto, visionEnabled, LANGUAGES } from './vision.js'
+import { looksLikeIsbn, lookupIsbnDetailed } from './isbn.js'
 import {
   checkDuplicates,
   putOnShelf,
@@ -614,6 +615,23 @@ export async function registerRoutes(app: FastifyInstance) {
         ownerTg: u?.id ?? null,
       }),
     )
+  })
+
+  /**
+   * Книга по ISBN для мастера добавления. Подпись Telegram + лимит: ручка ходит
+   * во внешние каталоги, открытым прокси к ним быть не должна.
+   */
+  app.get('/api/isbn', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (tooOften(`isbn:${u.id}`, 30, 300_000)) return reply.code(429).send({ error: 'too_many' })
+    const { code } = req.query as { code?: string }
+    if (!code || !looksLikeIsbn(code)) return reply.code(400).send({ error: 'bad_isbn' })
+    const r = await lookupIsbnDetailed(code).catch((e) => {
+      req.log.warn(`поиск по ISBN не удался: ${e?.message ?? e}`)
+      return null
+    })
+    return json(r ?? { book: null, notFound: true, quotaBlocked: false })
   })
 
   /**

@@ -724,6 +724,24 @@ textarea.input {
   opacity: 0.5;
 }
 
+/* поиск по ISBN: поле и кнопка в одну строку под карточкой съёмки */
+.isbn-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: stretch;
+  margin-bottom: var(--sp-4);
+}
+
+.isbn-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.isbn-row .btn.sm {
+  flex: none;
+  padding: 0 var(--sp-4);
+}
+
 .note {
   background: var(--card);
   border: 1px solid var(--border);

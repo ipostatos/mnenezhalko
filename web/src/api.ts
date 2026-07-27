@@ -17,6 +17,7 @@ import type {
   LoanSummary,
   HistoryLoan,
   ShelfBook,
+  IsbnLookup,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -125,6 +126,8 @@ export const api = {
   recognize: (image: string) => req<RecognizeResult>('POST', '/api/recognize', { image }),
   duplicates: (title: string, author?: string, kind?: string) =>
     req<DupCheck>('GET', `/api/duplicates${qs({ title, author, kind })}`),
+  /** Книга по ISBN из открытых каталогов (OpenLibrary, Biblioteka Narodowa, Google Books). */
+  isbn: (code: string) => req<IsbnLookup>('GET', `/api/isbn${qs({ code })}`),
   /** Ссылка на счёт Telegram Stars для доната прямо в Mini App. */
   donateLink: (amount: number) => req<{ link: string }>('POST', '/api/donate/link', { amount }),
 }
