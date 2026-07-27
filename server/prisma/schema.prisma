@@ -117,6 +117,13 @@ model Loan {
   holderTg       BigInt?
   holder         User?   @relation("LoansTaken", fields: [holderTg], references: [tgId])
 
+  /// Копия bookId, пока выдача активна; у закрытой выдачи NULL. Уникальность по
+  /// этому полю и есть запрет «две активные выдачи одной книги» на уровне базы:
+  /// SQLite не считает NULL совпадающими, поэтому закрытых выдач может быть
+  /// сколько угодно, а выдач без книги (bookId NULL) — тоже. Проверки в коде
+  /// (createLoan, reopenLoan) остаются, здесь страховка от гонок.
+  activeBookId String?
+
   status     String    @default("active") // active | returned
   takenAt    DateTime  @default(now())
   dueAt      DateTime?
@@ -133,6 +140,7 @@ model Loan {
 
   events LoanEvent[]
 
+  @@unique([activeBookId])
   @@index([ownerTg, status])
   @@index([holderTg, status])
 }

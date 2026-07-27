@@ -102,6 +102,48 @@ test('undo возврата не конфликтует с новой выдач
   assert.equal(successes.length, 1, 'должна была пройти ровно одна из двух конкурирующих операций')
 })
 
+test('база сама не даёт двум активным выдачам занять одну книгу (в обход кода)', async () => {
+  const { book, ownerTg } = await seedBook()
+  const loan = await createLoan({ ownerTg, bookId: book.id, title: book.title, holder: '@reader1' })
+  assert.equal(loan.activeBookId, book.id, 'активная выдача обязана занимать книгу')
+
+  // пишем НАПРЯМУЮ, минуя createLoan со всеми его проверками: так проверяется
+  // именно защита в базе, а не прикладная логика поверх неё
+  await assert.rejects(
+    prisma.loan.create({
+      data: {
+        title: book.title,
+        bookId: book.id,
+        activeBookId: book.id,
+        ownerTg,
+        holderUsername: 'reader2',
+      },
+    }),
+    /Unique constraint|activeBookId/,
+    'вторая активная выдача той же книги должна отбиваться базой',
+  )
+
+  const active = await prisma.loan.count({ where: { bookId: book.id, status: 'active' } })
+  assert.equal(active, 1)
+})
+
+test('после возврата книга снова свободна для новой выдачи (уникальность не залипает)', async () => {
+  const { book, ownerTg } = await seedBook()
+  const first = await createLoan({ ownerTg, bookId: book.id, title: book.title, holder: '@reader1' })
+  await markReturned(first.id, ownerTg)
+
+  const closed = await prisma.loan.findUniqueOrThrow({ where: { id: first.id } })
+  assert.equal(closed.activeBookId, null, 'закрытая выдача не должна держать книгу')
+
+  const second = await createLoan({ ownerTg, bookId: book.id, title: book.title, holder: '@reader2' })
+  assert.equal(second.activeBookId, book.id)
+
+  // и две ЗАКРЫТЫЕ выдачи одной книги обязаны сосуществовать
+  await markReturned(second.id, ownerTg)
+  const closedCount = await prisma.loan.count({ where: { bookId: book.id, status: 'returned' } })
+  assert.equal(closedCount, 2, 'история выдач одной книги не должна упираться в уникальность')
+})
+
 test('возврат: Loan.status и Book.status меняются согласованно (нет busy-книги без активной выдачи)', async () => {
   const { book, ownerTg } = await seedBook()
   const loan = await createLoan({ ownerTg, bookId: book.id, title: book.title, holder: '@reader1' })

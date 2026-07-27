@@ -125,6 +125,9 @@ export async function createLoan(d: LoanDraft) {
       data: {
         title,
         bookId: d.bookId ?? null,
+        // пока выдача активна, книга «занята» уникальным полем — вторая такая
+        // запись просто не пройдёт в базу, даже если проверки выше обойти гонкой
+        activeBookId: d.bookId ?? null,
         ownerTg: d.ownerTg,
         holderUsername,
         holderName: d.holderName ?? known?.firstName ?? null,
@@ -179,7 +182,8 @@ export async function markReturned(id: string, byTg: bigint) {
 
     const updated = await tx.loan.update({
       where: { id },
-      data: { status: 'returned', returnedAt: new Date() },
+      // activeBookId освобождаем вместе со статусом: книгу снова можно выдать
+      data: { status: 'returned', returnedAt: new Date(), activeBookId: null },
       include: { book: true },
     })
 
@@ -328,7 +332,9 @@ export async function reopenLoan(id: string, byTg: bigint) {
     }
     const updated = await tx.loan.update({
       where: { id },
-      data: { status: 'active', returnedAt: null },
+      // книга снова занята этой выдачей: если параллельно её успели выдать
+      // другому, база не даст записать второе такое значение
+      data: { status: 'active', returnedAt: null, activeBookId: loan.bookId },
       include: { book: true },
     })
     return { loan: updated }

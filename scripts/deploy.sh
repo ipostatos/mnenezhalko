@@ -24,8 +24,9 @@ git -C "$ROOT" archive HEAD | ssh "$HOST" "mkdir -p $DIR && tar -x -C $DIR"
 echo "→ сборка и рестарт"
 ssh "$HOST" "cd $DIR && npm i --no-audit --omit=dev=false \
   && npm run build -w web \
-  && cd server && npx prisma generate && npx prisma db push --skip-generate \
-  && npx tsc -p tsconfig.json \
+  && cd server && npx prisma generate && cd .. \
+  && bash scripts/db-migrate.sh \
+  && cd server && npx tsc -p tsconfig.json \
   && chown -R mnenezhalko:mnenezhalko $DIR/server/data \
   && systemctl restart mnenezhalko && sleep 3 && systemctl is-active mnenezhalko"
 
