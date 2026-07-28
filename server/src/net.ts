@@ -111,6 +111,40 @@ export async function fetchWithTimeout(
 }
 
 /**
+ * Читает тело ответа с обрывом ПО ХОДУ чтения, а не после полной буферизации:
+ * origin, приславший гигабайты (или без Content-Length), не должен целиком
+ * осесть в памяти процесса, прежде чем мы заметим превышение.
+ */
+export async function readBodyLimited(res: Response, maxBytes: number): Promise<Buffer> {
+  if (Number(res.headers.get('content-length') || 0) > maxBytes) throw new Error('too_large')
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length > maxBytes) throw new Error('too_large')
+    return buf
+  }
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        throw new Error('too_large')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {}
+  }
+  return Buffer.concat(chunks)
+}
+
+/**
  * Дешёвая синхронная проверка coverUrl при приёме от пользователя (без DNS) —
  * быстрый отказ на очевидно небезопасном. Полную проверку с DNS делает
  * assertPublicUrl уже при загрузке (в т.ч. защита от DNS-rebinding).

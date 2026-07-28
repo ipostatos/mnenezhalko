@@ -41,8 +41,10 @@ import {
   proxyCover,
   warmShowcaseCovers,
 } from './imgcache.js'
-import { isSafeCoverUrl } from './net.js'
+import { fetchWithTimeout, isSafeCoverUrl, readBodyLimited } from './net.js'
 import { prewarmCoverage } from './prewarm.js'
+import { createHmac } from 'node:crypto'
+import sharp from 'sharp'
 import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -589,7 +591,17 @@ export async function registerRoutes(app: FastifyInstance) {
     // раньше отдавались сырые строки: числовой authorTg + ник всех, кто писал
     // в барахолку, без всякой авторизации (см. privacy.ts)
     const allowed = maySeeContacts(req)
-    return json(items.map((i) => redactMarketItem(i, allowed)))
+    return json(
+      items.map((i) => {
+        const r = redactMarketItem(i, allowed) as Record<string, any>
+        // сырой file_id превращаем в подписанную ссылку — только такие
+        // ссылки обслуживает /api/photo (см. ниже), это не открытый прокси
+        if (r.photo && !/^https?:\/\//.test(r.photo) && !r.photo.startsWith('/')) {
+          r.photo = photoProxyUrl(r.photo)
+        }
+        return r
+      }),
+    )
   })
 
   /** Фото обложки → предзаполненная карточка + сохранённая обложка. */
@@ -750,18 +762,80 @@ export async function registerRoutes(app: FastifyInstance) {
     return json(res)
   })
 
-  /** Прокси картинок из Telegram (file_id → байты), чтобы Mini App их видел. */
+  /**
+   * Фото объявлений барахолки (Telegram file_id → байты для Mini App).
+   *
+   * Это НЕ открытый прокси: `<img>` не умеет слать заголовки, поэтому вместо
+   * initData ссылка несёт подпись, которую проставляет только сам сервер в
+   * `/api/market` — обслуживаются исключительно file_id из нашей барахолки.
+   * Плюс: лимиты частоты, таймауты, потолок размера С ОБРЫВОМ по ходу чтения
+   * (не 20 МБ в память), проверка фактического декода и перекодирование в webp
+   * (заодно срезает EXIF/GPS). В логи не попадают ни токен бота, ни file URL.
+   */
   app.get('/api/photo/:fileId', async (req, reply) => {
     const { fileId } = req.params as { fileId: string }
-    const meta = (await (
-      await fetch(`https://api.telegram.org/bot${env.botToken}/getFile?file_id=${fileId}`)
-    ).json()) as { ok: boolean; result?: { file_path: string } }
-    if (!meta.ok || !meta.result) return reply.code(404).send({ error: 'not_found' })
-    const file = await fetch(
-      `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
-    )
-    reply.header('Cache-Control', 'public, max-age=86400')
-    reply.type(file.headers.get('content-type') || 'image/jpeg')
-    return reply.send(Buffer.from(await file.arrayBuffer()))
+    const { s } = req.query as { s?: string }
+    if (!fileId || fileId.length > 200 || !/^[\w-]+$/.test(fileId)) {
+      return reply.code(400).send({ error: 'bad_file_id' })
+    }
+    if (!s || s !== signPhoto(fileId)) return reply.code(403).send({ error: 'bad_signature' })
+    if (tooOften(`photo:${req.ip}`, 60, 60_000) || tooOften('photo:*', 600, 60_000)) {
+      return reply.code(429).send({ error: 'too_many' })
+    }
+
+    try {
+      const metaRes = await fetchWithTimeout(
+        `https://api.telegram.org/bot${env.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+        {},
+        10_000,
+      )
+      const meta = (await metaRes.json().catch(() => null)) as {
+        ok: boolean
+        result?: { file_path: string }
+      } | null
+      if (!meta?.ok || !meta.result?.file_path) return reply.code(404).send({ error: 'not_found' })
+
+      const file = await fetchWithTimeout(
+        `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
+        {},
+        15_000,
+      )
+      if (!file.ok) return reply.code(502).send({ error: 'upstream_failed' })
+      const type = file.headers.get('content-type') || 'image/jpeg'
+      if (!type.startsWith('image/')) return reply.code(415).send({ error: 'not_an_image' })
+      const raw = await readBodyLimited(file, PHOTO_MAX_BYTES)
+
+      // фактический декод обязателен: Content-Type можно прислать любой
+      let body: Buffer
+      try {
+        body = await sharp(raw, { failOn: 'none' })
+          .rotate()
+          .resize({ width: PHOTO_MAX_W, withoutEnlargement: true })
+          .webp({ quality: 80 })
+          .toBuffer()
+      } catch {
+        return reply.code(415).send({ error: 'bad_image' })
+      }
+      reply.header('Cache-Control', 'public, max-age=86400')
+      reply.type('image/webp')
+      return reply.send(body)
+    } catch (e: any) {
+      const msg = String(e?.message ?? e)
+      if (msg === 'too_large') return reply.code(413).send({ error: 'too_large' })
+      const timedOut = msg.startsWith('timeout_')
+      // без url — в нём токен бота; категории достаточно
+      req.log.warn(`[photo] файл не получен: ${timedOut ? 'timeout' : 'network'}`)
+      return reply.code(timedOut ? 504 : 502).send({ error: 'upstream_failed' })
+    }
   })
 }
+
+/** Подпись фото-ссылки: обслуживаем только file_id, которые сами и выдали. */
+const signPhoto = (fileId: string) =>
+  createHmac('sha256', env.webhookSecret).update(`photo:${fileId}`).digest('hex').slice(0, 16)
+
+export const photoProxyUrl = (fileId: string) =>
+  `/api/photo/${encodeURIComponent(fileId)}?s=${signPhoto(fileId)}`
+
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024
+const PHOTO_MAX_W = 640 // объявление в списке — не больше этого на экране
