@@ -28,7 +28,7 @@ import {
   canUndoLoan,
   summarize,
 } from './loans.js'
-import { botUsername, createDonateLink, isDonateAmount } from './bot.js'
+import { askForRating, botUsername, createDonateLink, isDonateAmount } from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
 import {
@@ -42,6 +42,17 @@ import {
   warmShowcaseCovers,
 } from './imgcache.js'
 import { fetchWithTimeout, isSafeCoverUrl, readBodyLimited } from './net.js'
+import {
+  REVIEW_TEXT_MAX,
+  canReview,
+  deleteReview,
+  listReviews,
+  ratingFor,
+  reportReview,
+  upsertReview,
+  validateReview,
+  workKeyOf,
+} from './reviews.js'
 import { prewarmCoverage } from './prewarm.js'
 import { createHmac } from 'node:crypto'
 import sharp from 'sharp'
@@ -453,6 +464,9 @@ export async function registerRoutes(app: FastifyInstance) {
     try {
       const loan = await markReturned(id, u.id)
       if (!loan) return reply.code(404).send({ error: 'not_found' })
+      // читателю прилетает предложение оценить книгу — независимо от того,
+      // закрыли выдачу кнопкой в боте или здесь, в Mini App
+      void askForRating(loan)
       return json({ loan })
     } catch (e: any) {
       // «не ваша выдача» — 403, раньше неотличимо маскировалось под 404
@@ -547,6 +561,100 @@ export async function registerRoutes(app: FastifyInstance) {
     if ('error' in r) {
       const code = r.error === 'forbidden' ? 403 : r.error === 'bad_state' ? 409 : 404
       return reply.code(code).send({ error: r.error })
+    }
+    return json(r)
+  })
+
+  /* ── оценки и аннотации (issue #18) ─────────────────────── */
+
+  /**
+   * Отзывы о книге. Каталог публичный, поэтому читать их можно без подписи;
+   * `canReview`/`mine` появляются только у запроса из Mini App.
+   */
+  app.get('/api/books/:id/reviews', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const book = await prisma.book.findUnique({
+      where: { id },
+      select: { id: true, title: true, author: true },
+    })
+    if (!book) return reply.code(404).send({ error: 'not_found' })
+
+    const u = who(req)
+    const workKey = workKeyOf(book)
+    const [rating, items, allowed] = await Promise.all([
+      ratingFor(workKey),
+      listReviews(workKey, u ? u.id : null),
+      u ? canReview(u.id, workKey) : Promise.resolve(false),
+    ])
+    return json({
+      rating,
+      items,
+      // подписан ли запрос: жалоба требует авторизации, и кнопку «пожаловаться»
+      // не за чем показывать тому, у кого она заведомо ответит 401
+      signed: Boolean(u),
+      canReview: allowed,
+      // «я уже оценил» фронту нужно отдельным полем: свой отзыв показывается
+      // в форме, а не только в общем списке
+      myReview: items.find((r) => r.mine) ?? null,
+      textMax: REVIEW_TEXT_MAX,
+    })
+  })
+
+  /** Поставить/обновить свою оценку. Право даёт только прочтение книги. */
+  app.post('/api/books/:id/review', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    await upsertUser(u)
+    const { id } = req.params as { id: string }
+    const book = await prisma.book.findUnique({
+      where: { id },
+      select: { id: true, title: true, author: true },
+    })
+    if (!book) return reply.code(404).send({ error: 'not_found' })
+
+    let parsed
+    try {
+      parsed = validateReview(req.body as { rating: unknown; text?: unknown })
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message ?? 'bad_request' })
+    }
+
+    const workKey = workKeyOf(book)
+    if (!(await canReview(u.id, workKey))) return reply.code(403).send({ error: 'not_read' })
+
+    const { rating } = await upsertReview({
+      authorTg: u.id,
+      book,
+      rating: parsed.rating,
+      text: parsed.text,
+    })
+    return json({ rating, items: await listReviews(workKey, u.id) })
+  })
+
+  /** Удалить свою оценку. */
+  app.delete('/api/books/:id/review', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const book = await prisma.book.findUnique({
+      where: { id },
+      select: { title: true, author: true },
+    })
+    if (!book) return reply.code(404).send({ error: 'not_found' })
+    const workKey = workKeyOf(book)
+    const r = await deleteReview(u.id, workKey)
+    if (!r.deleted) return reply.code(404).send({ error: 'not_found' })
+    return json({ rating: r.rating, items: await listReviews(workKey, u.id) })
+  })
+
+  /** Пожаловаться на чужой отзыв: постмодерация вместо предварительной. */
+  app.post('/api/reviews/:id/report', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    const r = await reportReview(id, u.id)
+    if ('error' in r) {
+      return reply.code(r.error === 'own_review' ? 400 : 404).send({ error: r.error })
     }
     return json(r)
   })

@@ -1233,3 +1233,131 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
 }
+
+/* ── оценки и аннотации читателей (issue #18) ── */
+
+.stars {
+  color: var(--warn);
+  letter-spacing: 1px;
+  font-size: var(--fs-sm);
+}
+
+.stars-off {
+  color: color-mix(in srgb, var(--hint) 45%, transparent);
+}
+
+.rating-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+/* оценка в строке каталога: заметная, но тише названия книги */
+.rating-badge {
+  margin-top: 3px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.rating-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.rating-avg {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.rating-avg b {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-form {
+  margin-bottom: var(--sp-3);
+}
+
+.review-form .input {
+  margin-top: var(--sp-2);
+}
+
+.review-form .btn {
+  margin-top: var(--sp-2);
+}
+
+.stars-pick {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+/* звёзды-кнопки крупные: попасть пальцем важнее компактности */
+.star-btn {
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font-size: 30px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--hint) 55%, transparent);
+  cursor: pointer;
+}
+
+.star-btn.on {
+  color: var(--warn);
+}
+
+.star-btn:active {
+  transform: scale(0.92);
+}
+
+.review-card {
+  margin-bottom: var(--sp-2);
+}
+
+.review-top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.avatar.sm {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.review-text {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--hint);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ok-banner {
+  border: 1px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, var(--card));
+  color: var(--text);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-sm);
+}

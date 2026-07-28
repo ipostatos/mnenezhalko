@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { norm, prisma } from './db.js'
 import { CARD_W, CAROUSEL_W, proxyCover } from './imgcache.js'
+import { ratingsFor, workKeyOf, type Rating } from './reviews.js'
 
 export type SearchParams = {
   q?: string
@@ -32,6 +33,8 @@ export type BookCard = {
   rejectionReason: string | null
   /** путь в Notion: local | pending | synced | failed */
   notionStatus: string
+  /** оценка произведения: средняя и число оценок; null — ещё никто не оценил */
+  rating: Rating | null
   owner: {
     id: string
     name: string
@@ -69,7 +72,7 @@ const split = (s: string | null | undefined) =>
  * 400. Объект в такой позиции не пройдёт проверку типов — ошибка станет
  * ошибкой компиляции, а не молчаливой поломкой в проде.
  */
-export function toCard(b: any, opts?: { w: number }): BookCard {
+export function toCard(b: any, opts?: { w?: number; rating?: Rating | null }): BookCard {
   const w = opts?.w
   return {
     id: b.id,
@@ -87,8 +90,21 @@ export function toCard(b: any, opts?: { w: number }): BookCard {
     reviewStatus: b.reviewStatus ?? 'approved',
     rejectionReason: b.rejectionReason ?? null,
     notionStatus: b.notionStatus ?? 'local',
+    rating: opts?.rating ?? null,
     owner: b.owner ?? null,
   }
+}
+
+/**
+ * Дописывает карточкам оценки одной выборкой на всю страницу.
+ *
+ * Отдельной функцией, а не внутри `toCard`: карточка строится синхронно в
+ * нескольких местах (в том числе в боте), и тянуть за собой запрос в базу она
+ * не должна.
+ */
+async function withRatings(rows: any[], opts?: { w?: number }): Promise<BookCard[]> {
+  const ratings = await ratingsFor(rows)
+  return rows.map((b) => toCard(b, { w: opts?.w, rating: ratings.get(workKeyOf(b)) ?? null }))
 }
 
 function whereOf(p: SearchParams): Prisma.BookWhereInput {
@@ -143,7 +159,7 @@ export async function searchBooks(p: SearchParams) {
         skip: offset,
       }),
     ])
-    return { total, items: rows.map((b) => toCard(b)) }
+    return { total, items: await withRatings(rows) }
   }
 
   // с запросом ранжируем весь набор совпадений и только потом режем на страницы:
@@ -158,13 +174,13 @@ export async function searchBooks(p: SearchParams) {
     }),
   ])
 
-  const items = rows
+  const page = rows
     .map((b) => ({ b, score: relevance(b, q) }))
     .sort((x, y) => y.score - x.score)
     .slice(offset, offset + limit)
-    .map((x) => toCard(x.b))
+    .map((x) => x.b)
 
-  return { total, items }
+  return { total, items: await withRatings(page) }
 }
 
 export async function bookById(id: string) {
@@ -172,8 +188,10 @@ export async function bookById(id: string) {
     where: { id, active: true, reviewStatus: 'approved' },
     include: { owner: OWNER_SELECT },
   })
+  if (!b) return null
   // разворот книги показывает обложку крупнее, чем строка в списке
-  return b ? toCard(b, { w: CARD_W }) : null
+  const ratings = await ratingsFor([b])
+  return toCard(b, { w: CARD_W, rating: ratings.get(workKeyOf(b)) ?? null })
 }
 
 /**

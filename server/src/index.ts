@@ -50,7 +50,17 @@ app.addHook('onSend', (req, reply, payload, done) => {
   if (url.startsWith('/api/')) {
     if (!reply.getHeader('cache-control')) reply.header('Cache-Control', 'no-store')
   } else if (url.startsWith('/assets/')) {
-    reply.header('Cache-Control', 'public, max-age=31536000, immutable')
+    /**
+     * «Навсегда» — только для реально найденного файла.
+     *
+     * Маршруты статики регистрируются при старте (`wildcard: false`), поэтому
+     * в промежуток между сборкой и рестартом свежий `/assets/index-<хэш>.js`
+     * ещё не отдаётся и уезжает в SPA-заглушку. С этим заголовком браузер
+     * запоминал HTML под именем скрипта на год, и приложение у человека
+     * оставалось сломанным до чистки кэша. Заглушку кэшировать нельзя.
+     */
+    const found = reply.statusCode === 200 && !reply.getHeader('x-spa-fallback')
+    reply.header('Cache-Control', found ? 'public, max-age=31536000, immutable' : 'no-store')
   } else if (url.startsWith('/il/')) {
     reply.header('Cache-Control', 'public, max-age=86400')
   } else {
@@ -65,6 +75,8 @@ await registerRoutes(app)
 await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false, cacheControl: false })
 app.setNotFoundHandler((req, reply) => {
   if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'not_found' })
+  // метка для политики кэша выше: это заглушка, а не запрошенный файл
+  reply.header('x-spa-fallback', '1')
   return reply.sendFile('index.html')
 })
 

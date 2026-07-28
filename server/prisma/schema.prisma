@@ -25,6 +25,7 @@ model User {
   events      Event[]
   loansGiven  Loan[]       @relation("LoansGiven")
   loansTaken  Loan[]       @relation("LoansTaken")
+  reviews     Review[]
 }
 
 /// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
@@ -99,11 +100,61 @@ model Book {
   ownerId String?
   owner   Librarian? @relation(fields: [ownerId], references: [id])
   loans   Loan[]
+  reviews Review[]
 
   @@index([kind])
   @@index([city])
   @@index([ownerId])
   @@index([reviewStatus])
+}
+
+/// Оценка и короткая аннотация от того, кто книгу прочитал.
+///
+/// Ключ — ПРОИЗВЕДЕНИЕ (`workKey` = нормализованные автор + название), а не
+/// карточка: у одной книги в каталоге по экземпляру на каждого библиотекаря, и
+/// при привязке к `Book.id` у трёх экземпляров получилось бы три независимых
+/// рейтинга по одной оценке в каждом. `bookId` остаётся ссылкой на экземпляр,
+/// с которого отзыв оставили (может исчезнуть — тогда null, отзыв живёт).
+model Review {
+  id      String  @id @default(cuid())
+  workKey String
+  bookId  String?
+  book    Book?   @relation(fields: [bookId], references: [id], onDelete: SetNull)
+
+  authorTg BigInt
+  author   User   @relation(fields: [authorTg], references: [tgId], onDelete: Cascade)
+
+  /// 1..5, проверяется в reviews.ts (SQLite не умеет CHECK через Prisma)
+  rating Int
+  /// короткая аннотация, до 300 знаков; null — поставили только оценку
+  text   String?
+
+  /// visible | hidden — скрыт модератором или автоматически по жалобам
+  status     String    @default("visible")
+  reports    Int       @default(0)
+  hiddenAt   DateTime?
+  hiddenByTg BigInt?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// один отзыв на человека на произведение: повторная оценка обновляет свою,
+  /// а не плодит вторую. Гарантия на уровне базы, а не только в коде.
+  @@unique([workKey, authorTg])
+  @@index([workKey, status])
+  @@index([authorTg])
+}
+
+/// Агрегат оценок по произведению: средняя считается как sum/count.
+///
+/// Денормализация нужна каталогу: без неё страница из 40 книг превращалась бы
+/// в 40 агрегирующих запросов, а сортировка по рейтингу — в скан всех отзывов.
+/// Обновляется в одной транзакции с самим отзывом (см. recountWork).
+model WorkRating {
+  workKey   String   @id
+  count     Int      @default(0)
+  sum       Int      @default(0)
+  updatedAt DateTime @updatedAt
 }
 
 /// «У кого моя книга сейчас»: выдача книги из рук в руки
