@@ -1997,17 +1997,24 @@ async function tellAdmins(text: string) {
   }
 }
 
-/** null — ещё не проверяли; иначе последнее известное состояние токена. */
+/** null — ещё не читали ни память, ни базу; иначе последнее известное состояние. */
 let notionTokenOk: boolean | null = null
+const NOTION_OK_KEY = 'notion:tokenOk'
 
 /**
  * NOTION_TOKEN_V2 — cookie живого аккаунта: живёт около года и слетает молча
  * (логаут, смена пароля). Раньше об этом узнавали по накопившимся карточкам
  * `pending`, то есть сильно позже. Проверяем сами и говорим админам при
- * изменении состояния — и когда сломалось, и когда починили.
+ * изменении состояния — и когда сломалось, и когда починили. Последнее
+ * состояние лежит в базе: иначе каждый деплой обнулял память, и админам
+ * повторно прилетал один и тот же алерт «Notion не пускает».
  */
 export async function checkNotionToken() {
   if (!notionWriteEnabled()) return
+  if (notionTokenOk === null) {
+    const row = await prisma.syncState.findUnique({ where: { key: NOTION_OK_KEY } }).catch(() => null)
+    if (row) notionTokenOk = row.value === '1'
+  }
   const ok = await whoAmI()
     .then(() => true)
     .catch((e) => {
@@ -2018,6 +2025,13 @@ export async function checkNotionToken() {
   if (notionTokenOk === ok) return
   const first = notionTokenOk === null
   notionTokenOk = ok
+  await prisma.syncState
+    .upsert({
+      where: { key: NOTION_OK_KEY },
+      create: { key: NOTION_OK_KEY, value: ok ? '1' : '0' },
+      update: { value: ok ? '1' : '0' },
+    })
+    .catch(() => {})
 
   if (!ok) {
     const waiting = await pendingCount()

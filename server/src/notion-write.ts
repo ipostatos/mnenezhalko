@@ -293,8 +293,29 @@ export async function loadBlock(id: string): Promise<any> {
   return unwrap(res.recordMap?.block?.[id]) ?? null
 }
 
+/**
+ * Очередь на владельца: linkOwnerSide — это read-modify-write relation-поля,
+ * два параллельных добавления книг одному владельцу теряли одну из связей.
+ * Экземпляр один, поэтому достаточно промис-цепочки в процессе.
+ */
+const ownerQueues = new Map<string, Promise<unknown>>()
+function queuedPerOwner<T>(ownerId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = ownerQueues.get(ownerId) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  const stored = next.catch(() => {})
+  ownerQueues.set(ownerId, stored)
+  void stored.finally(() => {
+    if (ownerQueues.get(ownerId) === stored) ownerQueues.delete(ownerId)
+  })
+  return next
+}
+
 /** Добавляет книгу в relation-поле владельца, сохраняя уже связанные. */
-async function linkOwnerSide(ownerId: string, bookId: string, kind: 'book' | 'game'): Promise<void> {
+function linkOwnerSide(ownerId: string, bookId: string, kind: 'book' | 'game'): Promise<void> {
+  return queuedPerOwner(ownerId, () => linkOwnerSideNow(ownerId, bookId, kind))
+}
+
+async function linkOwnerSideNow(ownerId: string, bookId: string, kind: 'book' | 'game'): Promise<void> {
   const { owners } = await schemas()
   const pid = owners.byName[kind === 'game' ? '🎲 Board Games' : '🎃 All Books']
   if (!pid) return

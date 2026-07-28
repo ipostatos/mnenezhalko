@@ -11,6 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { env } from './env.js'
+import { fetchWithTimeout, readBodyLimited } from './net.js'
 import { isSupportedMedia, type MediaType } from './vision.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -152,18 +153,30 @@ export async function isCoverVariantCached(file: string, w: number): Promise<boo
   }
 }
 
-/** Скачивает фото из Telegram (file_id) и сохраняет как обложку. */
+/** Скачивает фото из Telegram (file_id) и сохраняет как обложку.
+ * Таймауты и потолок размера обязательны: зависший Telegram не должен держать
+ * обработчик апдейта, а гигантский файл — осесть в памяти целиком. */
 export async function saveCoverFromTelegram(fileId: string): Promise<{ file: string; url: string; decoded: Decoded } | null> {
-  const meta = (await (
-    await fetch(`https://api.telegram.org/bot${env.botToken}/getFile?file_id=${fileId}`)
-  ).json()) as { ok: boolean; result?: { file_path: string } }
-  if (!meta.ok || !meta.result) return null
+  const metaRes = await fetchWithTimeout(
+    `https://api.telegram.org/bot${env.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+    {},
+    10_000,
+  ).catch(() => null)
+  if (!metaRes) return null
+  const meta = (await metaRes.json().catch(() => null)) as {
+    ok: boolean
+    result?: { file_path: string }
+  } | null
+  if (!meta?.ok || !meta.result) return null
 
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
-  )
-  if (!res.ok) return null
-  const buffer = Buffer.from(await res.arrayBuffer())
+    {},
+    20_000,
+  ).catch(() => null)
+  if (!res || !res.ok) return null
+  const buffer = await readBodyLimited(res, MAX_BYTES).catch(() => null)
+  if (!buffer) return null
   const type = res.headers.get('content-type') || 'image/jpeg'
   const mediaType = (isSupportedMedia(type) ? type : 'image/jpeg') as MediaType
   const decoded: Decoded = { buffer, mediaType, data: buffer.toString('base64') }
