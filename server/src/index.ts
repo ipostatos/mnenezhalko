@@ -13,6 +13,8 @@ import { seedCityGroups } from './seed.js'
 import { housekeepImgCache } from './imgcache.js'
 import { startJobLoop } from './scheduler.js'
 import { coverPrewarmJob } from './prewarm.js'
+import { housekeepCovers } from './covers.js'
+import { expireMarketItems } from './market.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
@@ -154,6 +156,42 @@ startJobLoop({
     return r.removed
       ? `удалено ${r.removed}/${r.scanned} файлов, освобождено ${(r.freedBytes / 1024 / 1024).toFixed(1)} МБ`
       : `диск в норме (${r.scanned} файлов)`
+  },
+  log: (m) => app.log.info(m),
+  logError: (m) => app.log.error(m),
+})
+
+// временные файлы обложек (фото до решения «сохранить») без чистки копят гигабайты
+startJobLoop({
+  name: 'covers-housekeep',
+  periodMs: 12 * 3600_000,
+  run: async () => {
+    const r = await housekeepCovers()
+    return `файлов ${r.scanned} (прикреплено ${r.attached}), удалено ${r.removed}, освобождено ${(r.freedBytes / 1024 / 1024).toFixed(1)} МБ`
+  },
+  log: (m) => app.log.info(m),
+  logError: (m) => app.log.error(m),
+})
+
+// барахолка: прошлогодние объявления закрываются сами, авторов предупреждаем
+startJobLoop({
+  name: 'market-expire',
+  periodMs: 24 * 3600_000,
+  run: async () => {
+    const r = await expireMarketItems()
+    if (!botDisabled) {
+      for (const item of r.items) {
+        await bot.api
+          .sendMessage(
+            String(item.authorTg),
+            `Ваше объявление «${item.title}» на барахолке закрылось по сроку. ` +
+              'Всё ещё актуально? Просто опубликуйте его в теме барахолки ещё раз.',
+          )
+          .catch(() => {})
+        await new Promise((res) => setTimeout(res, 40))
+      }
+    }
+    return `закрыто ${r.closed}`
   },
   log: (m) => app.log.info(m),
   logError: (m) => app.log.error(m),

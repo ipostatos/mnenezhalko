@@ -90,6 +90,36 @@ export async function parseOffer(text: string): Promise<ParsedOffer | null> {
   }
 }
 
+/** Срок жизни объявления: барахолка не должна показывать прошлогодние посты. */
+export const MARKET_TTL_DAYS = 45
+const day = 86_400_000
+
+/**
+ * Закрывает протухшие объявления. У старых строк без expiresAt срок считается
+ * от bumpedAt. Продление — новый пост в теме барахолки (появится свежая
+ * карточка). Возвращает закрытые, чтобы бот мог предупредить авторов.
+ */
+export async function expireMarketItems(now = new Date()) {
+  const legacyCutoff = new Date(now.getTime() - MARKET_TTL_DAYS * day)
+  const stale = await prisma.marketItem.findMany({
+    where: {
+      status: 'active',
+      OR: [
+        { expiresAt: { lt: now } },
+        { expiresAt: null, bumpedAt: { lt: legacyCutoff } },
+      ],
+    },
+    select: { id: true, title: true, authorTg: true },
+  })
+  if (stale.length) {
+    await prisma.marketItem.updateMany({
+      where: { id: { in: stale.map((s) => s.id) } },
+      data: { status: 'closed' },
+    })
+  }
+  return { closed: stale.length, items: stale }
+}
+
 /** Сохраняет объявление из темы, если такого ещё нет. */
 export async function saveOffer(
   offer: ParsedOffer,
@@ -117,6 +147,7 @@ export async function saveOffer(
       price: offer.price,
       photo: msg.photo ?? null,
       status: 'active',
+      expiresAt: new Date(Date.now() + MARKET_TTL_DAYS * day),
       source: 'topic',
       sourceMsgId: msg.id,
       authorTg: msg.authorTg,

@@ -212,6 +212,9 @@ model MarketItem {
   price       String?
   photo       String? // telegram file_id
   status      String   @default("active") // active | closed
+  /// когда объявление протухает и закрывается автоматически (см. expireMarketItems);
+  /// null у старых строк — для них срок считается от bumpedAt
+  expiresAt   DateTime?
   /// откуда объявление: bot | topic (барахолка в чате проекта)
   source      String   @default("bot")
   /// id сообщения в теме барахолки — чтобы не заводить дважды
