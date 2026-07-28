@@ -18,11 +18,12 @@ const API = 'https://www.notion.so/api/v3'
 export const NOTION_TIMEOUT_MS = Number(process.env.NOTION_TIMEOUT_MS || 30_000)
 
 /**
- * Сколько строк просим за один запрос. Проверено живым запросом 2026-07-28:
- * queryCollection честно отдаёт limit=5000 (все 3240 книг, hasMore=false) —
- * «потолок 1000» был самоограничением клиента. hasMore при этом остаётся
- * страховкой: если сервер однажды начнёт резать, усечение не пройдёт молча
- * (шардирование по датам для книг, громкая ошибка для остальных).
+ * Сколько строк просим за один запрос. Тонкость (поймано смоуком на проде
+ * 2026-07-28): на limit=5000 сервер отдаёт ВСЕ blockIds (3240) с
+ * hasMore=false, но САМИ строки (recordMap.block) режет примерно до тысячи —
+ * то есть «hasMore» сам по себе не признак полноты. Поэтому полноту проверяем
+ * по числу реально пришедших строк против blockIds (см. isComplete): неполный
+ * ответ шардируется по датам (книги) либо громко падает (Owners/Games).
  */
 export const NOTION_FETCH_LIMIT = Number(process.env.NOTION_FETCH_LIMIT || 5000)
 
@@ -149,9 +150,12 @@ export type NotionRow = {
   raw: Rec
 }
 
+function resultIds(res: Rec): string[] {
+  return res.result?.reducerResults?.collection_group_results?.blockIds || []
+}
+
 function rowsOf(res: Rec): NotionRow[] {
-  const ids: string[] = res.result?.reducerResults?.collection_group_results?.blockIds || []
-  const idSet = new Set(ids)
+  const idSet = new Set(resultIds(res))
   const out: NotionRow[] = []
   for (const v of Object.values(res.recordMap?.block || {})) {
     const b = unwrap(v)
@@ -165,6 +169,16 @@ function hasMore(res: Rec): boolean {
   return Boolean(res.result?.reducerResults?.collection_group_results?.hasMore)
 }
 
+/**
+ * Полнота ответа. hasMore — НЕ достаточный признак: на большой limit сервер
+ * отдаёт все blockIds с hasMore=false, но полезные строки (recordMap.block)
+ * режет примерно до тысячи. Полный ответ — когда пришли строки для всех id.
+ */
+export function isCompleteResponse(res: Rec): boolean {
+  if (hasMore(res)) return false
+  return rowsOf(res).length >= resultIds(res).length
+}
+
 const dateFilter = (pid: string, op: string, day: string) => ({
   property: pid,
   filter: {
@@ -174,30 +188,32 @@ const dateFilter = (pid: string, op: string, day: string) => ({
 })
 
 /**
- * Забирает все строки коллекции. Если ответ упирается в лимит, у коллекций с
- * датой добавления рекурсивно делит диапазон по датам пополам, у остальных —
- * громко падает: молчаливое усечение (раньше — первые 1000 строк Owners и
- * Board Games) выглядело бы для синка как «эти строки пропали из Notion».
+ * Забирает все строки коллекции. НЕПОЛНЫЙ ответ (см. isCompleteResponse —
+ * hasMore или срезанный payload) у коллекций с датой добавления рекурсивно
+ * шардируется по датам, у остальных — громко падает: молчаливое усечение
+ * выглядело бы для синка как «эти строки пропали из Notion».
  */
-async function fetchAll(
+export async function fetchAll(
   collection: string,
   view: string,
   dateProp?: string,
+  query: typeof queryRaw = queryRaw,
 ): Promise<{ rows: NotionRow[]; schema: Schema }> {
-  const first = await queryRaw(collection, view, null)
+  const first = await query(collection, view, null, NOTION_FETCH_LIMIT)
   const schema = schemaOf(first)
-  if (!hasMore(first)) return { rows: rowsOf(first), schema }
+  if (isCompleteResponse(first)) return { rows: rowsOf(first), schema }
   if (!dateProp) {
     throw new Error(
-      `Notion: коллекция ${collection} вернула больше ${NOTION_FETCH_LIMIT} строк — ` +
-        'поднимите NOTION_FETCH_LIMIT, иначе часть строк потеряется',
+      `Notion: коллекция ${collection} вернула неполный ответ ` +
+        `(${rowsOf(first).length} строк на ${resultIds(first).length} id) — ` +
+        'без поля для шардирования продолжать нельзя, часть строк потерялась бы',
     )
   }
 
   const pid = schema.byName[dateProp]
   if (!pid) {
     throw new Error(
-      `Notion: коллекция ${collection} упёрлась в лимит, а поле «${dateProp}» для шардирования не нашлось`,
+      `Notion: коллекция ${collection} отдала неполный ответ, а поле «${dateProp}» для шардирования не нашлось`,
     )
   }
 
@@ -205,11 +221,11 @@ async function fetchAll(
   const take = (rs: NotionRow[]) => rs.forEach((r) => byId.set(r.id, r))
 
   const shard = async (start: string, end: string, depth = 0): Promise<void> => {
-    const res = await queryRaw(collection, view, [
+    const res = await query(collection, view, [
       dateFilter(pid, 'date_is_on_or_after', start),
       dateFilter(pid, 'date_is_before', end),
-    ])
-    if (hasMore(res) && depth < 10) {
+    ], NOTION_FETCH_LIMIT)
+    if (!isCompleteResponse(res) && depth < 10) {
       const s = Date.parse(start)
       const e = Date.parse(end)
       const mid = new Date((s + e) / 2).toISOString().slice(0, 10)
@@ -228,9 +244,9 @@ async function fetchAll(
   await shard('2015-01-01', `${nextYear}-01-01`)
 
   // строки без даты добавления попадают мимо диапазонов
-  const empty = await queryRaw(collection, view, [
+  const empty = await query(collection, view, [
     { property: pid, filter: { operator: 'is_empty' } },
-  ])
+  ], NOTION_FETCH_LIMIT)
   take(rowsOf(empty))
 
   return { rows: [...byId.values()], schema }
