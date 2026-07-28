@@ -22,7 +22,9 @@ echo "→ архивирую HEAD и распаковываю в $HOST:$DIR"
 git -C "$ROOT" archive HEAD | ssh "$HOST" "mkdir -p $DIR && tar -x -C $DIR"
 
 echo "→ сборка и рестарт"
-ssh "$HOST" "cd $DIR && npm i --no-audit --omit=dev=false \
+# npm ci — воспроизводимая установка строго по lock-файлу (раньше стоял
+# невалидный «npm i --omit=dev=false», который работал случайно)
+ssh "$HOST" "cd $DIR && npm ci --no-audit \
   && npm run build -w web \
   && cd server && npx prisma generate && cd .. \
   && bash scripts/db-migrate.sh \
