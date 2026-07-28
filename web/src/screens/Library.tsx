@@ -2,8 +2,30 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Facets } from '../types'
+import { useSeqGuard } from '../useSeqGuard'
+import { openTg } from '../telegram'
+import { MAIN_CHAT } from '../links'
 import { BookRow } from './BookRow'
 import { CoverCarousel, type CarouselBook } from './CoverCarousel'
+
+/** Размер страницы каталога: дальше — «Показать ещё», а не потолок в 40 книг. */
+const PAGE = 40
+
+/**
+ * Состояние экрана переживает переход library → книга → назад: без этого
+ * основной сценарий (поиск в 3249 книгах) каждый раз сбрасывал запрос,
+ * фильтры, набранные страницы и позицию скролла.
+ */
+type SavedState = {
+  q: string
+  genre?: string
+  kind: string
+  onlyMyCity: boolean
+  items: Book[]
+  total: number
+  scrollY: number
+}
+let saved: SavedState | null = null
 
 export function Library({
   go,
@@ -16,20 +38,66 @@ export function Library({
   genre?: string
   kind?: string
 }) {
-  const [q, setQ] = useState('')
-  const [genre, setGenre] = useState<string | undefined>(initialGenre)
-  const [kind, setKind] = useState<string>(initialKind ?? 'book')
-  const [onlyMyCity, setOnlyMyCity] = useState(Boolean(city))
+  // явные параметры из роутинга (плашка жанра на главной) важнее сохранённого
+  const fresh = initialGenre !== undefined || initialKind !== undefined
+  const restore = !fresh && saved ? saved : null
+
+  const [q, setQ] = useState(restore?.q ?? '')
+  const [genre, setGenre] = useState<string | undefined>(restore?.genre ?? initialGenre)
+  const [kind, setKind] = useState<string>(restore?.kind ?? initialKind ?? 'book')
+  const [onlyMyCity, setOnlyMyCity] = useState(restore?.onlyMyCity ?? Boolean(city))
   const [facets, setFacets] = useState<Facets | null>(null)
-  const [items, setItems] = useState<Book[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [items, setItems] = useState<Book[]>(restore?.items ?? [])
+  const [total, setTotal] = useState(restore?.total ?? 0)
+  const [loading, setLoading] = useState(!restore)
+  const [loadingMore, setLoadingMore] = useState(false)
+  /** сколько нашлось в других городах, когда «у себя» пусто (null — не считали) */
+  const [elsewhere, setElsewhere] = useState<number | null>(null)
   const [showcase, setShowcase] = useState<CarouselBook[]>([])
   const [showcaseLoaded, setShowcaseLoaded] = useState(false)
   const seq = useRef(0)
+  const skipFirstLoad = useRef(Boolean(restore))
+  const facetsGuard = useSeqGuard()
+
+  // refs, чтобы cleanup видел актуальные значения без пересоздания эффекта
+  const qRef = useRef(q); qRef.current = q
+  const genreRef = useRef(genre); genreRef.current = genre
+  const kindRef = useRef(kind); kindRef.current = kind
+  const onlyRef = useRef(onlyMyCity); onlyRef.current = onlyMyCity
+  const itemsRef = useRef(items); itemsRef.current = items
+  const totalRef = useRef(total); totalRef.current = total
+
+  // уходим с экрана (открыли книгу) — запоминаем всё, включая скролл
+  useEffect(() => {
+    return () => {
+      saved = {
+        q: qRef.current,
+        genre: genreRef.current,
+        kind: kindRef.current,
+        onlyMyCity: onlyRef.current,
+        items: itemsRef.current,
+        total: totalRef.current,
+        scrollY: window.scrollY,
+      }
+    }
+  }, [])
+
+  // вернулись «назад» к сохранённому списку — восстанавливаем позицию скролла
+  // (после scrollTo(0,0) в App, поэтому через таймер)
+  useEffect(() => {
+    if (!restore) return
+    const y = restore.scrollY
+    const t = setTimeout(() => window.scrollTo(0, y), 0)
+    return () => clearTimeout(t)
+  }, [])
 
   useEffect(() => {
-    api.facets(onlyMyCity ? city : undefined).then(setFacets).catch(() => {})
+    // тумблер города: медленные фасеты старого фильтра не перетирают новые
+    const id = facetsGuard.next()
+    api
+      .facets(onlyMyCity ? city : undefined)
+      .then((f) => facetsGuard.isCurrent(id) && setFacets(f))
+      .catch(() => {})
   }, [city, onlyMyCity])
 
   useEffect(() => {
@@ -46,12 +114,17 @@ export function Library({
       genre,
       kind,
       city: onlyMyCity ? city : undefined,
-      limit: 40,
+      limit: PAGE,
     }),
     [q, genre, kind, onlyMyCity, city],
   )
 
   useEffect(() => {
+    // сразу после восстановления состояния список уже на руках — не перезапрашиваем
+    if (skipFirstLoad.current) {
+      skipFirstLoad.current = false
+      return
+    }
     const id = ++seq.current
     setLoading(true)
     const timer = setTimeout(() => {
@@ -59,6 +132,7 @@ export function Library({
         .books(params)
         .then((r) => {
           if (id !== seq.current) return
+          // смена фильтра/запроса начинает пагинацию заново
           setItems(r.items)
           setTotal(r.total)
         })
@@ -67,6 +141,40 @@ export function Library({
     }, 250)
     return () => clearTimeout(timer)
   }, [params])
+
+  // «в моём городе пусто» — подсказываем, есть ли книга в других городах
+  useEffect(() => {
+    setElsewhere(null)
+    if (loading || total > 0 || !onlyMyCity || !city) return
+    if (!q.trim() && !genre) return // без запроса счётчик «всей библиотеки» не подсказка
+    const id = seq.current
+    api
+      .books({ ...params, city: undefined, limit: 1 })
+      .then((r) => {
+        if (id === seq.current) setElsewhere(r.total)
+      })
+      .catch(() => {})
+  }, [loading, total, onlyMyCity, city, params])
+
+  /** Следующая страница добавляется к текущей; её ошибка не трогает загруженное. */
+  async function loadMore() {
+    if (loadingMore || loading || items.length >= total) return
+    const id = seq.current // страница валидна, пока не сменились фильтры
+    setLoadingMore(true)
+    try {
+      const r = await api.books({ ...params, offset: items.length })
+      if (id !== seq.current) return
+      setItems((prev) => {
+        const seen = new Set(prev.map((b) => b.id))
+        return [...prev, ...r.items.filter((b) => !seen.has(b.id))]
+      })
+      setTotal(r.total)
+    } catch {
+      /* следующая страница не пришла — уже показанное не разрушаем */
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   // при поиске подводим найденную книгу (с обложкой) в центр карусели;
   // если её нет в витрине — вставляем в СЕРЕДИНУ (там же старт), чтобы карусель
@@ -78,7 +186,9 @@ export function Library({
       arr.splice(Math.floor(arr.length / 2), 0, {
         id: firstMatch.id,
         title: firstMatch.title,
-        coverUrl: firstMatch.coverUrl!,
+        // центр карусели рисуется 156 CSS px (312 физических) — превью списка
+        // (96px) здесь превращалось в мыло на самом крупном элементе экрана
+        coverUrl: firstMatch.coverUrl320 ?? firstMatch.coverUrl!,
       })
       return arr
     }
@@ -159,7 +269,21 @@ export function Library({
       {!loading && items.length === 0 && (
         <div className="empty">
           <img className="illus sm" src="/il/stack.jpg" alt="" loading="lazy" />
-          Ничего не нашлось. Попробуйте другое слово или снимите фильтры.
+          {onlyMyCity && city
+            ? `В городе ${city} такого не нашлось.`
+            : 'Ничего не нашлось. Попробуйте другое слово или снимите фильтры.'}
+          {elsewhere !== null && elsewhere > 0 && (
+            <>
+              <div style={{ height: 'var(--sp-4)' }} />
+              <button className="btn" onClick={() => setOnlyMyCity(false)}>
+                Показать в других городах ({elsewhere})
+              </button>
+            </>
+          )}
+          <div style={{ height: 'var(--sp-4)' }} />
+          <button className="btn ghost" onClick={() => openTg(MAIN_CHAT)}>
+            💬 Спросить в чате проекта
+          </button>
         </div>
       )}
 
@@ -168,7 +292,9 @@ export function Library({
       ))}
 
       {items.length > 0 && total > items.length && (
-        <div className="foot">Показаны первые {items.length} из {total} — уточните запрос</div>
+        <button className="btn ghost" onClick={loadMore} disabled={loadingMore}>
+          {loadingMore ? 'Загружаю…' : `Показать ещё (осталось ${total - items.length})`}
+        </button>
       )}
     </>
   )

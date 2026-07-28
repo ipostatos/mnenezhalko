@@ -5,7 +5,7 @@ import { upsertUser, verifyInitData, type TgUser } from './auth.js'
 import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
-import { decodeDataUrl, readCover, saveCover } from './covers.js'
+import { decodeDataUrl, readCover, readCoverVariant, saveCover } from './covers.js'
 import { recognizePhoto, visionEnabled, LANGUAGES } from './vision.js'
 import { looksLikeIsbn, lookupIsbnDetailed } from './isbn.js'
 import {
@@ -41,7 +41,10 @@ import {
   proxyCover,
   warmShowcaseCovers,
 } from './imgcache.js'
-import { isSafeCoverUrl } from './net.js'
+import { fetchWithTimeout, isSafeCoverUrl, readBodyLimited } from './net.js'
+import { prewarmCoverage } from './prewarm.js'
+import { createHmac } from 'node:crypto'
+import sharp from 'sharp'
 import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -58,6 +61,21 @@ const maySeeContacts = (req: FastifyRequest): boolean => who(req) !== null
 
 const json = (v: unknown) =>
   JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)))
+
+/**
+ * Числовой query-параметр с дефолтом и границами: `limit=abc` раньше уезжал
+ * NaN'ом в prisma take и ронял ручку 500-й; отрицательные и гигантские
+ * значения зажимаются в допустимый диапазон.
+ */
+function intParam(v: string | undefined, def: number, min: number, max: number): number {
+  if (v === undefined || v === '') return def
+  const n = Number(v)
+  if (!Number.isFinite(n)) return def
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+/** Город из query: принимаем только известные проекту значения. */
+const isKnownCity = (city: string): boolean => (CITIES as readonly string[]).includes(city)
 
 /**
  * `/api/loans` отдавал `book.coverUrl` сырой строкой прямо из базы — обложка
@@ -173,6 +191,8 @@ export async function registerRoutes(app: FastifyInstance) {
       ok: true,
       books,
       librarians,
+      // число городов — из справочника, а не хардкод «9» в двух местах фронта
+      cities: CITIES.length,
       lastSync: sync?.value ?? null,
       ai: aiEnabled(),
       vision: visionEnabled(),
@@ -207,22 +227,24 @@ export async function registerRoutes(app: FastifyInstance) {
     return json({ user })
   })
 
-  app.get('/api/facets', async (req) => {
+  app.get('/api/facets', async (req, reply) => {
     const { city } = req.query as { city?: string }
+    // facets кэшируется по городу — произвольная строка раздувала бы кэш
+    if (city && !isKnownCity(city)) return reply.code(400).send({ error: 'unknown_city' })
     return facets(city || undefined)
   })
 
   app.get('/api/books', async (req) => {
     const q = req.query as Record<string, string>
     const found = await searchBooks({
-      q: q.q,
-      city: q.city,
-      genre: q.genre,
-      language: q.language,
+      q: q.q?.slice(0, 200),
+      city: q.city && isKnownCity(q.city) ? q.city : undefined,
+      genre: q.genre?.slice(0, 100),
+      language: q.language?.slice(0, 50),
       kind: q.kind === 'game' ? 'game' : q.kind === 'book' ? 'book' : undefined,
       ownerId: q.ownerId,
-      limit: q.limit ? Number(q.limit) : 30,
-      offset: q.offset ? Number(q.offset) : 0,
+      limit: intParam(q.limit, 30, 1, 100),
+      offset: intParam(q.offset, 0, 0, 100_000),
     })
     return { ...found, items: redactCards(found.items, maySeeContacts(req)) }
   })
@@ -235,10 +257,10 @@ export async function registerRoutes(app: FastifyInstance) {
    */
   app.get('/api/showcase', async (req, reply) => {
     const { city, limit: limitRaw } = req.query as { city?: string; limit?: string }
-    const parsed = limitRaw ? Number(limitRaw) : NaN
-    const limit = Number.isFinite(parsed) && parsed > 0
-      ? Math.min(Math.round(parsed), SHOWCASE_LIMIT_MAX)
-      : SHOWCASE_LIMIT_DEFAULT
+    // каждый уникальный city+limit — своя строка кэша и SyncState: произвольный
+    // ?city= с улицы раздувал бы базу RANDOM()-запросами до бесконечности
+    if (city && !isKnownCity(city)) return reply.code(400).send({ error: 'unknown_city' })
+    const limit = intParam(limitRaw, SHOWCASE_LIMIT_DEFAULT, 1, SHOWCASE_LIMIT_MAX)
     reply.header('Cache-Control', 'private, max-age=1800')
     return showcaseFor(city, limit)
   })
@@ -286,13 +308,14 @@ export async function registerRoutes(app: FastifyInstance) {
     return reply.send(img.body)
   })
 
-  /** Метрики image pipeline (HIT/MISS/NEGATIVE, длительности, диск) — только админу. */
+  /** Метрики image pipeline + прогрев каталога (HIT/MISS/NEGATIVE, по хостам, диск) — только админу. */
   app.get('/api/admin/img-metrics', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const user = await upsertUser(u)
     if (!user.isAdmin) return reply.code(403).send({ error: 'admin_only' })
-    return imgPipelineMetrics()
+    const [pipeline, prewarm] = await Promise.all([imgPipelineMetrics(), prewarmCoverage()])
+    return json({ ...pipeline, prewarm })
   })
 
   app.get('/api/books/:id', async (req, reply) => {
@@ -360,7 +383,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const [given, taken, history] = await Promise.all([
-      listLoans(u.id, 'active'),
+      listLoans(u.id),
       listBorrowed(u.id),
       listHistory(u.id),
     ])
@@ -381,7 +404,15 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const { id } = req.params as { id: string }
-    const r = await reopenLoan(id, u.id)
+    let r
+    try {
+      r = await reopenLoan(id, u.id)
+    } catch (e: any) {
+      // гонка с параллельной выдачей: unique(activeBookId) сработал — это
+      // честный конфликт 409, а не 500
+      if (e?.code === 'P2002') return reply.code(409).send({ error: 'book_relent' })
+      throw e
+    }
     if ('error' in r) {
       const code = r.error === 'not_found' ? 404 : r.error === 'forbidden' ? 403 : 409
       return reply.code(code).send({ error: r.error })
@@ -419,9 +450,15 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const { id } = req.params as { id: string }
-    const loan = await markReturned(id, u.id)
-    if (!loan) return reply.code(404).send({ error: 'not_found' })
-    return json({ loan })
+    try {
+      const loan = await markReturned(id, u.id)
+      if (!loan) return reply.code(404).send({ error: 'not_found' })
+      return json({ loan })
+    } catch (e: any) {
+      // «не ваша выдача» — 403, раньше неотличимо маскировалось под 404
+      if (e?.message === 'forbidden') return reply.code(403).send({ error: 'forbidden' })
+      throw e
+    }
   })
 
   /** Мои книги на полке — из них удобно выбирать, что отдаёшь. */
@@ -563,11 +600,15 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!user.isAdmin) return reply.code(403).send({ error: 'admin_only' })
     const b = req.body as Record<string, string>
     if (!b.city || !b.title || !b.startsAt) return reply.code(400).send({ error: 'bad_request' })
+    if (!isKnownCity(b.city)) return reply.code(400).send({ error: 'unknown_city' })
+    const startsAt = new Date(b.startsAt)
+    // кривая дата раньше уезжала Invalid Date'ом в prisma и роняла ручку 500-й
+    if (Number.isNaN(startsAt.getTime())) return reply.code(400).send({ error: 'bad_date' })
     const ev = await prisma.event.create({
       data: {
         city: b.city,
         title: b.title.slice(0, 200),
-        startsAt: new Date(b.startsAt),
+        startsAt,
         place: b.place?.slice(0, 200) || null,
         description: b.description?.slice(0, 1000) || null,
         url: b.url?.slice(0, 500) || null,
@@ -587,7 +628,17 @@ export async function registerRoutes(app: FastifyInstance) {
     // раньше отдавались сырые строки: числовой authorTg + ник всех, кто писал
     // в барахолку, без всякой авторизации (см. privacy.ts)
     const allowed = maySeeContacts(req)
-    return json(items.map((i) => redactMarketItem(i, allowed)))
+    return json(
+      items.map((i) => {
+        const r = redactMarketItem(i, allowed) as Record<string, any>
+        // сырой file_id превращаем в подписанную ссылку — только такие
+        // ссылки обслуживает /api/photo (см. ниже), это не открытый прокси
+        if (r.photo && !/^https?:\/\//.test(r.photo) && !r.photo.startsWith('/')) {
+          r.photo = photoProxyUrl(r.photo)
+        }
+        return r
+      }),
+    )
   })
 
   /** Фото обложки → предзаполненная карточка + сохранённая обложка. */
@@ -645,9 +696,15 @@ export async function registerRoutes(app: FastifyInstance) {
     return json({ cover: saved.url, recognized, dup, extraBooks, languages: LANGUAGES })
   })
 
+  /** Своя обложка; с ?w= — превью нужной ширины через тот же sharp-конвейер. */
   app.get('/api/cover/:file', async (req, reply) => {
     const { file } = req.params as { file: string }
-    const found = await readCover(file)
+    const { w } = req.query as { w?: string }
+    const width = w ? Number(w) : null
+    const found =
+      width && ALLOWED_WIDTHS.includes(width)
+        ? await readCoverVariant(file, width)
+        : await readCover(file) // без ?w= (ссылка в Notion) — оригинал, как раньше
     if (!found) return reply.code(404).send({ error: 'not_found' })
     reply.header('Cache-Control', 'public, max-age=31536000, immutable')
     reply.type(found.type)
@@ -711,11 +768,11 @@ export async function registerRoutes(app: FastifyInstance) {
             .map((s) => s.trim())
             .filter(Boolean)
 
-    let coverUrl: string | null = b.coverUrl ? String(b.coverUrl) : null
+    let coverUrl: string | null = b.coverUrl ? String(b.coverUrl).slice(0, 1000) : null
     // coverUrl от пользователя нельзя брать на веру — иначе через него можно
-    // заставить сервер сходить внутрь сети (SSRF). Внешний http(s) — только на
-    // публичный хост; свой относительный /api/cover сюда не попадает.
-    if (coverUrl && /^https?:\/\//i.test(coverUrl) && !isSafeCoverUrl(coverUrl)) {
+    // заставить сервер сходить внутрь сети (SSRF). Принимаем ТОЛЬКО http(s) на
+    // публичный хост: раньше произвольный мусор (не-URL) проходил в базу и Notion.
+    if (coverUrl && (!/^https?:\/\//i.test(coverUrl) || !isSafeCoverUrl(coverUrl))) {
       return reply.code(400).send({ error: 'bad_cover_url' })
     }
     if (!coverUrl && b.coverImage) {
@@ -742,18 +799,80 @@ export async function registerRoutes(app: FastifyInstance) {
     return json(res)
   })
 
-  /** Прокси картинок из Telegram (file_id → байты), чтобы Mini App их видел. */
+  /**
+   * Фото объявлений барахолки (Telegram file_id → байты для Mini App).
+   *
+   * Это НЕ открытый прокси: `<img>` не умеет слать заголовки, поэтому вместо
+   * initData ссылка несёт подпись, которую проставляет только сам сервер в
+   * `/api/market` — обслуживаются исключительно file_id из нашей барахолки.
+   * Плюс: лимиты частоты, таймауты, потолок размера С ОБРЫВОМ по ходу чтения
+   * (не 20 МБ в память), проверка фактического декода и перекодирование в webp
+   * (заодно срезает EXIF/GPS). В логи не попадают ни токен бота, ни file URL.
+   */
   app.get('/api/photo/:fileId', async (req, reply) => {
     const { fileId } = req.params as { fileId: string }
-    const meta = (await (
-      await fetch(`https://api.telegram.org/bot${env.botToken}/getFile?file_id=${fileId}`)
-    ).json()) as { ok: boolean; result?: { file_path: string } }
-    if (!meta.ok || !meta.result) return reply.code(404).send({ error: 'not_found' })
-    const file = await fetch(
-      `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
-    )
-    reply.header('Cache-Control', 'public, max-age=86400')
-    reply.type(file.headers.get('content-type') || 'image/jpeg')
-    return reply.send(Buffer.from(await file.arrayBuffer()))
+    const { s } = req.query as { s?: string }
+    if (!fileId || fileId.length > 200 || !/^[\w-]+$/.test(fileId)) {
+      return reply.code(400).send({ error: 'bad_file_id' })
+    }
+    if (!s || s !== signPhoto(fileId)) return reply.code(403).send({ error: 'bad_signature' })
+    if (tooOften(`photo:${req.ip}`, 60, 60_000) || tooOften('photo:*', 600, 60_000)) {
+      return reply.code(429).send({ error: 'too_many' })
+    }
+
+    try {
+      const metaRes = await fetchWithTimeout(
+        `https://api.telegram.org/bot${env.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+        {},
+        10_000,
+      )
+      const meta = (await metaRes.json().catch(() => null)) as {
+        ok: boolean
+        result?: { file_path: string }
+      } | null
+      if (!meta?.ok || !meta.result?.file_path) return reply.code(404).send({ error: 'not_found' })
+
+      const file = await fetchWithTimeout(
+        `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
+        {},
+        15_000,
+      )
+      if (!file.ok) return reply.code(502).send({ error: 'upstream_failed' })
+      const type = file.headers.get('content-type') || 'image/jpeg'
+      if (!type.startsWith('image/')) return reply.code(415).send({ error: 'not_an_image' })
+      const raw = await readBodyLimited(file, PHOTO_MAX_BYTES)
+
+      // фактический декод обязателен: Content-Type можно прислать любой
+      let body: Buffer
+      try {
+        body = await sharp(raw, { failOn: 'none' })
+          .rotate()
+          .resize({ width: PHOTO_MAX_W, withoutEnlargement: true })
+          .webp({ quality: 80 })
+          .toBuffer()
+      } catch {
+        return reply.code(415).send({ error: 'bad_image' })
+      }
+      reply.header('Cache-Control', 'public, max-age=86400')
+      reply.type('image/webp')
+      return reply.send(body)
+    } catch (e: any) {
+      const msg = String(e?.message ?? e)
+      if (msg === 'too_large') return reply.code(413).send({ error: 'too_large' })
+      const timedOut = msg.startsWith('timeout_')
+      // без url — в нём токен бота; категории достаточно
+      req.log.warn(`[photo] файл не получен: ${timedOut ? 'timeout' : 'network'}`)
+      return reply.code(timedOut ? 504 : 502).send({ error: 'upstream_failed' })
+    }
   })
 }
+
+/** Подпись фото-ссылки: обслуживаем только file_id, которые сами и выдали. */
+const signPhoto = (fileId: string) =>
+  createHmac('sha256', env.webhookSecret).update(`photo:${fileId}`).digest('hex').slice(0, 16)
+
+export const photoProxyUrl = (fileId: string) =>
+  `/api/photo/${encodeURIComponent(fileId)}?s=${signPhoto(fileId)}`
+
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024
+const PHOTO_MAX_W = 640 // объявление в списке — не больше этого на экране

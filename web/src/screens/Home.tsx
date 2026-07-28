@@ -1,11 +1,9 @@
 import type { Route } from '../App'
 import type { Health, LoanSummary, Me } from '../types'
 import { haptic, openTg } from '../telegram'
+import { MAIN_CHAT, INSTAGRAM } from '../links'
 import { MoodBoard } from './MoodBoard'
 import { Icon, type IconName } from './Icon'
-
-const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
-const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
 
 type Tile = {
   icon: IconName
@@ -146,18 +144,31 @@ export function Home({
 
       {health && (
         <div className="stat-tiles">
-          <div className="s">
+          {/* счётчики ведут в свои разделы — раньше были некликабельными div */}
+          <button
+            className="s"
+            aria-label={`Открыть библиотеку: ${health.books} книг и игр`}
+            onClick={() => { haptic(); go({ name: 'library' }) }}
+          >
             <div className="n">{health.books}</div>
             <div className="c">книг и игр</div>
-          </div>
-          <div className="s">
+          </button>
+          <button
+            className="s"
+            aria-label={`Города и библиотекари: ${health.librarians}`}
+            onClick={() => { haptic(); go({ name: 'cities' }) }}
+          >
             <div className="n">{health.librarians}</div>
             <div className="c">библиотекарей</div>
-          </div>
-          <div className="s">
-            <div className="n">9</div>
+          </button>
+          <button
+            className="s"
+            aria-label={`Города проекта: ${health.cities ?? 9}`}
+            onClick={() => { haptic(); go({ name: 'cities' }) }}
+          >
+            <div className="n">{health.cities ?? 9}</div>
             <div className="c">городов</div>
-          </div>
+          </button>
         </div>
       )}
 

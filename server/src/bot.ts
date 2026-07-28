@@ -53,6 +53,7 @@ import {
 } from './librarian.js'
 import { normHandle } from './notion.js'
 import { lookupIsbnDetailed, looksLikeIsbn } from './isbn.js'
+import { warsawTime } from './time.js'
 
 // при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
 // (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
@@ -377,6 +378,12 @@ async function handleAi(ctx: any, text: string) {
       link_preview_options: { is_disabled: true },
       reply_markup: mainKeyboard(),
     })
+  } catch (e: any) {
+    // после «typing…» молчать нельзя — человек так и ждал ответа
+    console.error('[ai] подбор упал:', e?.message ?? e)
+    await ctx
+      .reply('Помощник сейчас недоступен — попробуйте через пару минут или поищите через /find.')
+      .catch(() => {})
   } finally {
     aiBusy.delete(tgId)
   }
@@ -462,7 +469,7 @@ function loanDashboard(loans: { title: string; takenAt: Date; dueAt: Date | null
 
 bot.command('loans', async (ctx) => {
   const tgId = BigInt(ctx.from!.id)
-  const [given, taken] = await Promise.all([listLoans(tgId, 'active'), listBorrowed(tgId)])
+  const [given, taken] = await Promise.all([listLoans(tgId), listBorrowed(tgId)])
 
   if (!given.length && !taken.length) {
     return ctx.reply(
@@ -540,18 +547,25 @@ bot.command('lend', async (ctx) => {
     { tgId: BigInt(ctx.from!.id), username: ctx.from!.username, firstName: ctx.from!.first_name },
     { allowCreate: false },
   )
-  const book = own
-    ? await prisma.book.findFirst({
-        where: { ownerId: own.id, active: true, title: { contains: title } },
-        select: { id: true },
-      })
-    : null
+  // привязываем карточку только при ОДНОЗНАЧНОМ совпадении названия свободной
+  // книги: прежний contains мог зацепить не ту (или занятую) книгу с полки
+  let bookId: string | null = null
+  if (own) {
+    const candidates = await prisma.book.findMany({
+      where: { ownerId: own.id, active: true, reviewStatus: 'approved', status: 'free' },
+      select: { id: true, title: true },
+      take: 300,
+    })
+    const nt = title.trim().toLowerCase()
+    const exact = candidates.filter((b) => b.title.trim().toLowerCase() === nt)
+    if (exact.length === 1) bookId = exact[0].id
+  }
 
   try {
     const loan = await createLoan({
       ownerTg: BigInt(ctx.from!.id),
       title,
-      bookId: book?.id ?? null,
+      bookId,
       holder,
       days: when ? Number(when) || null : undefined,
       takenAt: takenAt ?? null,
@@ -583,7 +597,8 @@ async function sendLoanCreated(ctx: any, loan: any) {
       reached
         ? 'Читателю написал — он сможет отметить возврат сам.'
         : 'Читатель ещё не знаком с ботом. Перешлите ему ссылку, чтобы он получал напоминания:',
-      reached ? '' : loanLink(loan.claimToken),
+      // без токена ссылку не строим: раньше сюда попадал буквальный «loan_null»
+      reached ? '' : loan.claimToken ? loanLink(loan.claimToken) : 'Список выдач: /loans',
       '',
       'Все выдачи — /loans',
     ]
@@ -641,7 +656,13 @@ bot.callbackQuery(/^loan:back:(.+)$/, async (ctx) => {
 // шаг 2 — подтверждено: закрываем выдачу и даём отменить в течение суток
 bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
   const id = ctx.match![1]
-  const loan = await markReturned(id, BigInt(ctx.from.id))
+  let loan
+  try {
+    loan = await markReturned(id, BigInt(ctx.from.id))
+  } catch (e: any) {
+    if (e?.message === 'forbidden') return ctx.answerCallbackQuery({ text: 'Это не ваша выдача' })
+    throw e
+  }
   if (!loan) return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })
   await ctx.answerCallbackQuery({ text: 'Книга дома 🎉' })
   await ctx.editMessageText(`✅ «${esc(loan.title)}» вернулась. Спасибо!`, {
@@ -670,7 +691,14 @@ bot.callbackQuery(/^loan:no:(.+)$/, async (ctx) => {
 // undo возврата
 bot.callbackQuery(/^loan:undo:(.+)$/, async (ctx) => {
   const id = ctx.match![1]
-  const r = await reopenLoan(id, BigInt(ctx.from.id))
+  let r
+  try {
+    r = await reopenLoan(id, BigInt(ctx.from.id))
+  } catch (e: any) {
+    // гонка с параллельной выдачей той же книги (unique activeBookId)
+    if (e?.code === 'P2002') return ctx.answerCallbackQuery({ text: 'Книга уже выдана другому' })
+    throw e
+  }
   if ('error' in r) {
     const msg: Record<string, string> = {
       too_late: 'Отменить уже нельзя — прошло больше суток',
@@ -853,8 +881,8 @@ async function handleAnnouncement(ctx: any, text: string) {
     console.error('[events] не разобрал афишу:', e?.message ?? e)
     return []
   })
-  for (const e of events) {
-    const created = await saveAnnouncement(e, ctx.message.message_id)
+  for (const [i, e] of events.entries()) {
+    const created = await saveAnnouncement(e, ctx.message.message_id, i)
     if (created) await notifyNewEvent(created)
   }
 }
@@ -969,6 +997,27 @@ function marketCard(i: {
 type ShelfDraft = Recognized & { coverUrl: string | null }
 const shelfDrafts = new Map<number, ShelfDraft>()
 
+/**
+ * TTL диалоговых черновиков: карточки «поставить на полку» и пачки с фото
+ * живут в памяти — забытый черновик не должен висеть вечно (и внезапно
+ * сработать через неделю по старой кнопке). Потеря при рестарте не страшна:
+ * бот честно попросит прислать фото ещё раз.
+ */
+const DRAFT_TTL_MS = 2 * 3600_000
+const draftTouched = new Map<number, number>()
+const touchDraft = (tgId: number) => draftTouched.set(tgId, Date.now())
+const draftSweeper = setInterval(() => {
+  const cutoff = Date.now() - DRAFT_TTL_MS
+  for (const [tgId, at] of draftTouched) {
+    if (at < cutoff) {
+      draftTouched.delete(tgId)
+      shelfDrafts.delete(tgId)
+      shelfBatches.delete(tgId)
+    }
+  }
+}, 30 * 60_000)
+draftSweeper.unref?.()
+
 const shelfCard = (d: ShelfDraft) => {
   const lines = [`<b>${esc(d.title)}</b>`]
   if (d.author) lines.push(esc(d.author))
@@ -1062,14 +1111,20 @@ async function handleBookPhoto(ctx: any) {
     )
   }
 
+  // админ в режиме «от имени» должен видеть это ДО сохранения, а не после
+  const ob = await behalfFor(ctx)
+  const behalfNote = ob ? `\n<i>Добавится на полку: ${esc(ob.name)}</i>` : ''
+
   // на фото несколько книг (стопка или полка корешками) — подтверждаем списком
   if (r.books.length > 1) {
     shelfDrafts.delete(ctx.from.id)
     shelfBatches.set(ctx.from.id, r.books)
+    touchDraft(ctx.from.id)
     const card = await batchCard(r.books, BigInt(ctx.from.id))
     const tail = [
       r.note ? `\n\n<i>${esc(r.note)}</i>` : '',
       '\n\nОбложку с общего фото не ставлю — на нём несколько книг. Нужна обложка — пришлите книгу отдельным снимком.',
+      behalfNote,
     ].join('')
     return ctx.reply(
       `Нашёл ${r.books.length} ${plural(r.books.length, ['книгу', 'книги', 'книг'])}:\n\n${card}${tail}`,
@@ -1080,6 +1135,7 @@ async function handleBookPhoto(ctx: any) {
   const recognized = r.books[0]
   shelfBatches.delete(ctx.from.id)
   shelfDrafts.set(ctx.from.id, { ...recognized, note: r.note, coverUrl: saved.url })
+  touchDraft(ctx.from.id)
 
   const dup = await checkDuplicates({
     title: recognized.title,
@@ -1087,10 +1143,13 @@ async function handleBookPhoto(ctx: any) {
     kind: recognized.kind === 'game' ? 'game' : 'book',
     ownerTg: BigInt(ctx.from.id),
   })
-  await ctx.reply(`Похоже, это:\n\n${shelfCard(shelfDrafts.get(ctx.from.id)!)}${duplicatesText(dup)}`, {
-    parse_mode: 'HTML',
-    reply_markup: shelfKeyboard(),
-  })
+  await ctx.reply(
+    `Похоже, это:\n\n${shelfCard(shelfDrafts.get(ctx.from.id)!)}${duplicatesText(dup)}${behalfNote}`,
+    {
+      parse_mode: 'HTML',
+      reply_markup: shelfKeyboard(),
+    },
+  )
 }
 
 /**
@@ -1128,6 +1187,7 @@ async function handleIsbnMessage(ctx: any, raw: string) {
     coverUrl: r.book.coverUrl,
   }
   shelfDrafts.set(ctx.from.id, draft)
+  touchDraft(ctx.from.id)
 
   const dup = await checkDuplicates({
     title: draft.title,
@@ -1136,7 +1196,9 @@ async function handleIsbnMessage(ctx: any, raw: string) {
     ownerTg: BigInt(ctx.from.id),
   })
 
-  await ctx.reply(`Нашёл по ISBN:\n\n${shelfCard(draft)}${duplicatesText(dup)}`, {
+  const ob = await behalfFor(ctx)
+  const behalfNote = ob ? `\n<i>Добавится на полку: ${esc(ob.name)}</i>` : ''
+  await ctx.reply(`Нашёл по ISBN:\n\n${shelfCard(draft)}${duplicatesText(dup)}${behalfNote}`, {
     parse_mode: 'HTML',
     reply_markup: shelfKeyboard(),
   })
@@ -1152,9 +1214,62 @@ type AlbumBuf = { fileIds: string[]; timer: ReturnType<typeof setTimeout>; ctx: 
 const albums = new Map<string, AlbumBuf>()
 const ALBUM_WAIT_MS = 1500
 
-/** Админ добавляет книги от имени библиотекаря (пока не сбросит /onbehalf off). */
-const onBehalf = new Map<number, { id: string; name: string; city: string | null }>()
-const behalfFor = (ctx: any) => (isAdmin(ctx.from.id) ? onBehalf.get(ctx.from.id) : undefined)
+/**
+ * Админ добавляет книги от имени библиотекаря (пока не сбросит /onbehalf off).
+ *
+ * Состояние ПЕРСИСТЕНТНОЕ (SyncState) с TTL: раньше жило только в памяти, и
+ * после незаметного рестарта (деплоя) админ молча продолжал добавлять книги
+ * уже СЕБЕ. Память — только кэш поверх базы.
+ */
+type BehalfState = { id: string; name: string; city: string | null; at: number }
+const ONBEHALF_TTL_MS = 12 * 3600_000
+const onBehalf = new Map<number, BehalfState>()
+const behalfKey = (tgId: number) => `onbehalf:${tgId}`
+
+async function setBehalf(tgId: number, value: BehalfState | null): Promise<void> {
+  if (value) onBehalf.set(tgId, value)
+  else onBehalf.delete(tgId)
+  const key = behalfKey(tgId)
+  try {
+    if (value) {
+      await prisma.syncState.upsert({
+        where: { key },
+        create: { key, value: JSON.stringify(value) },
+        update: { value: JSON.stringify(value) },
+      })
+    } else {
+      await prisma.syncState.deleteMany({ where: { key } })
+    }
+  } catch (e: any) {
+    console.error('[onbehalf] состояние не сохранилось:', e?.message ?? e)
+  }
+}
+
+/** Активный режим «от имени» с учётом рестарта и TTL; истёкший — сбрасывается. */
+async function behalfFor(ctx: any): Promise<BehalfState | undefined> {
+  if (!isAdmin(ctx.from.id)) return undefined
+  const tgId = ctx.from.id as number
+  let state = onBehalf.get(tgId)
+  if (!state) {
+    const row = await prisma.syncState.findUnique({ where: { key: behalfKey(tgId) } }).catch(() => null)
+    if (!row) return undefined
+    try {
+      state = JSON.parse(row.value) as BehalfState
+      onBehalf.set(tgId, state)
+    } catch {
+      await setBehalf(tgId, null)
+      return undefined
+    }
+  }
+  if (Date.now() - state.at > ONBEHALF_TTL_MS) {
+    await setBehalf(tgId, null)
+    await ctx
+      .reply(`Режим «от имени ${esc(state.name)}» истёк — добавляю снова от вашего имени. Вернуть: /onbehalf @ник.`, { parse_mode: 'HTML' })
+      .catch(() => {})
+    return undefined
+  }
+  return state
+}
 
 function bufferAlbumPhoto(ctx: any) {
   const key = `${ctx.chat.id}:${ctx.message.media_group_id}`
@@ -1174,7 +1289,7 @@ async function handlePhotoBatch(ctx: any, fileIds: string[]) {
   if (!visionEnabled()) {
     return ctx.reply('Распознавание по фото сейчас недоступно. Добавьте книги вручную в приложении.')
   }
-  const ob = behalfFor(ctx)
+  const ob = await behalfFor(ctx)
   const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from.id) } })
   if (!ob && !user?.city) {
     return ctx.reply(
@@ -1241,7 +1356,7 @@ async function handleListImport(ctx: any, raw: string) {
       { parse_mode: 'HTML' },
     )
   }
-  const ob = behalfFor(ctx)
+  const ob = await behalfFor(ctx)
   const user = await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from.id) },
     create: {
@@ -1273,7 +1388,10 @@ async function handleListImport(ctx: any, raw: string) {
       }
     } else {
       const [title, author] = line.split(/\s[—–-]\s|\s*\|\s*/).map((s) => s.trim())
-      if (!title || title.length < 2) continue
+      if (!title || title.length < 2) {
+        failed++ // строка «Не разобрал: N» в сводке была недостижима
+        continue
+      }
       book = { title, author: author || null, coverUrl: null }
     }
     const res = await putOnShelf({
@@ -1337,7 +1455,7 @@ bot.command('onbehalf', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
   const arg = ctx.match?.toString().trim() ?? ''
   if (!arg || /^(off|стоп|сброс)$/i.test(arg)) {
-    onBehalf.delete(ctx.from!.id)
+    await setBehalf(ctx.from!.id, null)
     return ctx.reply('Ок, добавляю снова от своего имени.')
   }
   const nick = normHandle(arg)
@@ -1356,10 +1474,11 @@ bot.command('onbehalf', async (ctx) => {
       { parse_mode: 'HTML' },
     )
   }
-  onBehalf.set(ctx.from!.id, { id: lib.id, name: lib.name, city: lib.city })
+  await setBehalf(ctx.from!.id, { id: lib.id, name: lib.name, city: lib.city, at: Date.now() })
   await ctx.reply(
     `Теперь книги (фото, альбом, список, ISBN) добавляю от имени <b>${esc(lib.name)}</b>` +
-      `${lib.city ? ` · ${esc(lib.city)}` : ''}.\nСбросить — /onbehalf off.`,
+      `${lib.city ? ` · ${esc(lib.city)}` : ''}.\n` +
+      'Режим переживает перезапуски и сам сбросится через 12 часов. Сбросить — /onbehalf off.',
     { parse_mode: 'HTML' },
   )
 })
@@ -1369,7 +1488,7 @@ bot.callbackQuery('shelf:save', async (ctx) => {
   if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
 
   // админ добавляет от имени библиотекаря — город берём у него, не спрашиваем
-  const ob = behalfFor(ctx)
+  const ob = await behalfFor(ctx)
   if (ob) {
     await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
     return saveShelfDraft(ctx, d, ob.city ?? '', ob)
@@ -1395,7 +1514,7 @@ bot.callbackQuery('shelfbatch:save', async (ctx) => {
   const books = shelfBatches.get(ctx.from.id)
   if (!books?.length) return ctx.answerCallbackQuery({ text: 'Пришлите фото ещё раз' })
 
-  const ob = behalfFor(ctx)
+  const ob = await behalfFor(ctx)
   if (ob) {
     await ctx.answerCallbackQuery({ text: 'Ставлю на полку…' })
     return saveShelfBatch(ctx, books, ob.city ?? '', ob)
@@ -1562,7 +1681,31 @@ setModerationNotifier(async (book, owner) => {
 bot.callbackQuery(/^mod:ok:(.+)$/, async (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
   const res = await approveBook(ctx.match![1], BigInt(ctx.from.id))
-  if (!res) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+
+  // карточка уходит каждому админу: повторный тап и второй админ — штатные случаи
+  if (res.status === 'not_found') return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  if (res.status === 'in_progress') {
+    return ctx.answerCallbackQuery({ text: 'Уже одобряется другим админом' })
+  }
+  if (res.status === 'bad_state') {
+    return ctx.answerCallbackQuery({
+      text: res.reviewStatus === 'rejected' ? 'Книга уже отклонена' : 'Книга удалена',
+    })
+  }
+  if (res.status === 'failed') {
+    return ctx.answerCallbackQuery({ text: `Не получилось: ${res.error.slice(0, 150)}` })
+  }
+
+  if (res.already) {
+    await ctx.answerCallbackQuery({ text: 'Уже одобрено ✅' })
+    await ctx
+      .editMessageText(`✅ Одобрено: «${esc(res.card.title)}» — теперь в каталоге.`, {
+        parse_mode: 'HTML',
+      })
+      .catch(() => {})
+    return // владельцу второй раз не пишем
+  }
+
   await ctx.answerCallbackQuery({ text: 'Одобрено ✅' })
   await ctx.editMessageText(`✅ Одобрено: «${esc(res.card.title)}» — теперь в каталоге.`, {
     parse_mode: 'HTML',
@@ -1581,7 +1724,9 @@ bot.callbackQuery(/^mod:ok:(.+)$/, async (ctx) => {
 bot.callbackQuery(/^mod:no:(.+)$/, async (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
   const res = await rejectBook(ctx.match![1], BigInt(ctx.from.id), null)
-  if (!res) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  if (!res) {
+    return ctx.answerCallbackQuery({ text: 'Книга не найдена или уже одобряется другим админом' })
+  }
   await ctx.answerCallbackQuery({ text: 'Отклонено' })
   await ctx.editMessageText(`❌ Отклонено: «${esc(res.card.title)}».`, { parse_mode: 'HTML' })
   if (res.addedByTg) {
@@ -1767,7 +1912,9 @@ bot.command('addevent', async (ctx) => {
     return ctx.reply('Формат: /addevent Город | 2026-08-01 18:30 | Название | Место')
   }
   const [city, when, title, place] = parts
-  const startsAt = new Date(when.replace(' ', 'T') + ':00+02:00')
+  // варшавское время с учётом CET/CEST, не захардкоженный +02:00
+  const m = when.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/)
+  const startsAt = m ? warsawTime(m[1], m[2]) : new Date(NaN)
   if (Number.isNaN(startsAt.getTime())) return ctx.reply('Не понял дату. Формат: 2026-08-01 18:30')
   const event = await prisma.event.create({
     data: { city, title, startsAt, place: place || null, createdBy: BigInt(ctx.from!.id) },
@@ -1850,17 +1997,24 @@ async function tellAdmins(text: string) {
   }
 }
 
-/** null — ещё не проверяли; иначе последнее известное состояние токена. */
+/** null — ещё не читали ни память, ни базу; иначе последнее известное состояние. */
 let notionTokenOk: boolean | null = null
+const NOTION_OK_KEY = 'notion:tokenOk'
 
 /**
  * NOTION_TOKEN_V2 — cookie живого аккаунта: живёт около года и слетает молча
  * (логаут, смена пароля). Раньше об этом узнавали по накопившимся карточкам
  * `pending`, то есть сильно позже. Проверяем сами и говорим админам при
- * изменении состояния — и когда сломалось, и когда починили.
+ * изменении состояния — и когда сломалось, и когда починили. Последнее
+ * состояние лежит в базе: иначе каждый деплой обнулял память, и админам
+ * повторно прилетал один и тот же алерт «Notion не пускает».
  */
 export async function checkNotionToken() {
   if (!notionWriteEnabled()) return
+  if (notionTokenOk === null) {
+    const row = await prisma.syncState.findUnique({ where: { key: NOTION_OK_KEY } }).catch(() => null)
+    if (row) notionTokenOk = row.value === '1'
+  }
   const ok = await whoAmI()
     .then(() => true)
     .catch((e) => {
@@ -1871,6 +2025,13 @@ export async function checkNotionToken() {
   if (notionTokenOk === ok) return
   const first = notionTokenOk === null
   notionTokenOk = ok
+  await prisma.syncState
+    .upsert({
+      where: { key: NOTION_OK_KEY },
+      create: { key: NOTION_OK_KEY, value: ok ? '1' : '0' },
+      update: { value: ok ? '1' : '0' },
+    })
+    .catch(() => {})
 
   if (!ok) {
     const waiting = await pendingCount()

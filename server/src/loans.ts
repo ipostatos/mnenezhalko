@@ -23,7 +23,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { prisma } from './db.js'
-import { tgHandle } from './notion.js'
+import { normHandle } from './notion.js'
 import { archiveRow, notionWriteEnabled } from './notion-write.js'
 import { invalidateFacets } from './search.js'
 
@@ -44,7 +44,6 @@ export type LoanEventKind =
   | 'reminded'
   | 'returned'
   | 'reopened'
-  | 'cancelled'
 
 /** Пишет событие выдачи; не роняет основной путь, если запись не удалась. */
 export function logLoanEvent(loanId: string, kind: LoanEventKind, byTg?: bigint | null, meta?: string) {
@@ -63,6 +62,12 @@ export type LoanDraft = {
   note?: string | null
   /** когда книгу отдали: записать можно и задним числом */
   takenAt?: Date | string | null
+  /**
+   * ПРОВЕРЕННЫЙ tgId читателя — только когда человек явно выбран из
+   * подтверждённого источника (контакт, список с id), не догадка по нику.
+   * Единственный путь привязать holderTg при создании; иначе — claim-токен.
+   */
+  holderTgVerified?: bigint | null
 }
 
 const day = 86_400_000
@@ -82,22 +87,32 @@ function parseTakenAt(value?: Date | string | null): Date {
 }
 
 export async function createLoan(d: LoanDraft) {
-  const holderUsername = tgHandle(d.holder)
+  // канонический ник: lower-case, без @/ссылки (normHandle) — ники Telegram
+  // регистронезависимы, а `@Anna` и `anna` раньше просто не совпадали в SQLite
+  const holderUsername = normHandle(d.holder)
   const title = d.title.trim().slice(0, 300)
   if (!title) throw new Error('empty_title')
   if (!holderUsername) throw new Error('bad_holder')
 
-  // если такой человек уже писал боту — сможем напоминать сразу
-  const known = await prisma.user.findFirst({
-    where: { username: { equals: holderUsername } },
-    select: { tgId: true, firstName: true },
-  })
+  /**
+   * Ник — ПОДСКАЗКА, а не идентификатор: username переназначаем, а запись в
+   * нашей таблице User могла протухнуть — автопривязка по нику вешала выдачу
+   * на чужого человека (и напоминания уходили ему же). Реальная привязка
+   * holderTg происходит только через одноразовый claim-токен
+   * (claimLoanByToken) либо через явно проверенный d.holderTgVerified.
+   * По нику берём лишь имя для текста сообщений.
+   */
+  const known = holderUsername
+    ? await prisma.$queryRaw<{ firstName: string | null }[]>`
+        SELECT firstName FROM User WHERE lower(username) = ${holderUsername} LIMIT 1`
+    : []
 
   const days = d.days === null ? null : d.days ?? DEFAULT_DAYS
   const takenAt = parseTakenAt(d.takenAt)
 
-  // читателя ещё не знаем — понадобится ссылка-приглашение с одноразовым токеном
-  const claimToken = known?.tgId ? null : randomBytes(24).toString('base64url')
+  const holderTg = d.holderTgVerified ?? null
+  // без проверенного tgId понадобится ссылка-приглашение с одноразовым токеном
+  const claimToken = holderTg ? null : randomBytes(24).toString('base64url')
   const claimTokenHash = claimToken ? hashClaimToken(claimToken) : null
   const claimTokenExpiresAt = claimToken ? new Date(Date.now() + CLAIM_TOKEN_TTL_MS) : null
 
@@ -130,8 +145,8 @@ export async function createLoan(d: LoanDraft) {
         activeBookId: d.bookId ?? null,
         ownerTg: d.ownerTg,
         holderUsername,
-        holderName: d.holderName ?? known?.firstName ?? null,
-        holderTg: known?.tgId ?? null,
+        holderName: d.holderName ?? known[0]?.firstName ?? null,
+        holderTg,
         takenAt,
         // срок отсчитываем от дня выдачи, а не от момента записи
         dueAt: days ? new Date(takenAt.getTime() + days * day) : null,
@@ -153,10 +168,11 @@ export async function createLoan(d: LoanDraft) {
   return { ...loan, claimToken }
 }
 
-export const listLoans = (ownerTg: bigint, status: 'active' | 'returned' | 'all' = 'active') =>
+/** Активные выдачи владельца; закрытые живут в listHistory. */
+export const listLoans = (ownerTg: bigint) =>
   prisma.loan.findMany({
-    where: { ownerTg, ...(status === 'all' ? {} : { status }) },
-    orderBy: [{ status: 'asc' }, { takenAt: 'desc' }],
+    where: { ownerTg, status: 'active' },
+    orderBy: { takenAt: 'desc' },
     include: { book: { select: { id: true, title: true, coverUrl: true } } },
     take: 100,
   })
@@ -177,8 +193,9 @@ export async function markReturned(id: string, byTg: bigint) {
   const result = await prisma.$transaction(async (tx) => {
     const loan = await tx.loan.findUnique({ where: { id } })
     if (!loan) return null
-    // закрыть выдачу может владелец или сам читатель
-    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return null
+    // закрыть выдачу может владелец или сам читатель; «не ваша» — отдельная
+    // ошибка, чтобы API отвечал 403, а не маскировал её под «не найдено»
+    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) throw new Error('forbidden')
 
     const updated = await tx.loan.update({
       where: { id },
@@ -196,6 +213,7 @@ export async function markReturned(id: string, byTg: bigint) {
         const book = await tx.book.findUnique({ where: { id: updated.bookId } })
         // владелец просил скрыть книгу после возврата — мягко удаляем её сейчас
         if (book?.hideAfterReturn) {
+          const wantArchive = Boolean(book.notionId && notionWriteEnabled())
           await tx.book.update({
             where: { id: book.id },
             data: {
@@ -205,9 +223,12 @@ export async function markReturned(id: string, byTg: bigint) {
               deletedAt: new Date(),
               deletedByTg: loan.ownerTg,
               hideAfterReturn: false,
+              // флаг снимается после успешного archiveRow; упавшая попытка
+              // дожимается flushPending, а tombstone не даёт синку воскресить
+              notionArchivePending: wantArchive,
             },
           })
-          if (book.notionId && notionWriteEnabled()) archiveNotionId = book.notionId
+          if (wantArchive) archiveNotionId = book.notionId
         } else {
           await tx.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
         }
@@ -221,7 +242,16 @@ export async function markReturned(id: string, byTg: bigint) {
   if (result.archiveNotionId) {
     invalidateFacets()
     // внешний вызов в Notion — намеренно вне транзакции, откатывать тут нечего
-    await archiveRow(result.archiveNotionId).catch(() => {})
+    await archiveRow(result.archiveNotionId)
+      .then(() =>
+        prisma.book.updateMany({
+          where: { notionId: result.archiveNotionId },
+          data: { notionArchivePending: false },
+        }),
+      )
+      .catch((e) =>
+        console.error('[notion] архивирование после возврата не удалось (дожмётся flushPending):', e?.message ?? e),
+      )
   }
   return result.updated
 }
@@ -400,19 +430,25 @@ export async function runOverdueReminders(opts: {
   botUsername: string
   now?: Date
   delayMs?: number
-}): Promise<{ loans: number; sent: number; failed: number }> {
+}): Promise<{ loans: number; sent: number; failed: number; reminded: number }> {
   const now = opts.now ?? new Date()
   const loans = await dueLoans(now)
   let sent = 0
   let failed = 0
-  const track = (p: Promise<unknown>) =>
-    p.then(() => {
-      sent++
-    }).catch(() => {
-      failed++
-    })
+  let reminded = 0
 
   for (const loan of loans) {
+    // доставку считаем по каждой выдаче отдельно: remindedAt честно ставится,
+    // только если сообщение реально дошло хотя бы одной из сторон — иначе
+    // Telegram лежал, никто ничего не получил, а повтор блокировался на 7 дней
+    let delivered = 0
+    const track = (p: Promise<unknown>) =>
+      p.then(() => {
+        sent++
+        delivered++
+      }).catch(() => {
+        failed++
+      })
     const days = daysOut(loan.takenAt, now)
     const kb = {
       inline_keyboard: [[{ text: '✅ Книга вернулась', callback_data: `loan:back:${loan.id}` }]],
@@ -441,10 +477,13 @@ export async function runOverdueReminders(opts: {
         { reply_markup: kb, link_preview_options: { is_disabled: true } },
       ),
     )
-    await markReminded(loan.id)
+    if (delivered > 0) {
+      await markReminded(loan.id)
+      reminded++
+    }
     if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs))
   }
-  return { loans: loans.length, sent, failed }
+  return { loans: loans.length, sent, failed, reminded }
 }
 
 /** Сколько дней книга на руках. */

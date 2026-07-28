@@ -6,11 +6,12 @@
  * поэтому она обязана быть абсолютной и стабильной.
  */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, statfs, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { env } from './env.js'
+import { fetchWithTimeout, readBodyLimited } from './net.js'
 import { isSupportedMedia, type MediaType } from './vision.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -100,18 +101,167 @@ export async function readCover(file: string): Promise<{ body: Buffer; type: str
   }
 }
 
-/** Скачивает фото из Telegram (file_id) и сохраняет как обложку. */
-export async function saveCoverFromTelegram(fileId: string): Promise<{ file: string; url: string; decoded: Decoded } | null> {
-  const meta = (await (
-    await fetch(`https://api.telegram.org/bot${env.botToken}/getFile?file_id=${fileId}`)
-  ).json()) as { ok: boolean; result?: { file_path: string } }
-  if (!meta.ok || !meta.result) return null
+/**
+ * Превью собственной обложки шириной `w` — тот же sharp-конвейер, что у внешних
+ * (imgcache.ts), только источник локальный. Без этого фото с телефона (до
+ * 1600px, сотни КБ) уезжало в строку списка 44 CSS px как есть. Варианты
+ * лежат рядом (`variants/<w>-<файл>.webp`) и создаются на первый запрос;
+ * имя исходного файла — UUID, так что ссылка с ?w= остаётся immutable.
+ */
+const VARIANTS_DIR = path.join(COVERS_DIR, 'variants')
+const VARIANT_QUALITY = 78
 
-  const res = await fetch(
-    `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
+export const variantName = (file: string, w: number) => `${w}-${file}.webp`
+
+export async function readCoverVariant(
+  file: string,
+  w: number,
+): Promise<{ body: Buffer; type: string } | null> {
+  if (!/^[\w-]+\.(jpg|png|webp|gif)$/.test(file)) return null
+  // GIF не ресайзим (см. normalizeForStorage) — отдаём как есть
+  if (file.endsWith('.gif')) return readCover(file)
+  try {
+    const body = await readFile(path.join(VARIANTS_DIR, variantName(file, w)))
+    return { body, type: 'image/webp' }
+  } catch {
+    /* варианта ещё нет — соберём ниже */
+  }
+  const orig = await readCover(file)
+  if (!orig) return null
+  try {
+    const body = await sharp(orig.body, { failOn: 'none' })
+      .rotate()
+      .resize({ width: w, withoutEnlargement: true })
+      .webp({ quality: VARIANT_QUALITY })
+      .toBuffer()
+    await mkdir(VARIANTS_DIR, { recursive: true })
+    await writeFile(path.join(VARIANTS_DIR, variantName(file, w)), body).catch(() => {})
+    return { body, type: 'image/webp' }
+  } catch {
+    return orig // битый файл — лучше оригинал, чем ничего
+  }
+}
+
+/** Есть ли уже готовый вариант на диске (для прогрева) — stat, без чтения. */
+export async function isCoverVariantCached(file: string, w: number): Promise<boolean> {
+  if (file.endsWith('.gif')) return true
+  try {
+    await stat(path.join(VARIANTS_DIR, variantName(file, w)))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/* ── lifecycle файлов data/covers ─────────────────────────── */
+
+/**
+ * Файл обложки пишется при КАЖДОМ распознавании (/api/recognize, фото боту) —
+ * ДО того, как человек решил сохранять книгу. Прикреплённым файл считается,
+ * когда на него ссылается какая-нибудь книга (Book.coverUrl); остальное —
+ * временные файлы, которые без чистки копили гигабайты на VPS со свободными
+ * ~4 ГБ. Оставляем щедрый запас (48 ч) на недописанные черновики.
+ */
+export const COVER_ORPHAN_TTL_MS = 48 * 3600_000
+
+/** Мало свободного места на разделе с обложками — предупреждаем в лог. */
+const DISK_WARN_FREE_BYTES = 500 * 1024 * 1024
+
+const COVER_NAME_RE = /^[\w-]+\.(jpg|png|webp|gif)$/
+
+export async function housekeepCovers(
+  now = Date.now(),
+  dir = COVERS_DIR,
+): Promise<{ scanned: number; attached: number; removed: number; freedBytes: number }> {
+  const { prisma } = await import('./db.js')
+  // прикреплённые: на файл ссылается любая книга (включая мягко удалённые —
+  // история и возможное восстановление важнее пары сотен килобайт)
+  const rows = await prisma.book.findMany({
+    where: { coverUrl: { contains: '/api/cover/' } },
+    select: { coverUrl: true },
+  })
+  const referenced = new Set(
+    rows
+      .map((b) => b.coverUrl!.match(/\/api\/cover\/([\w-]+\.\w+)/)?.[1])
+      .filter((f): f is string => Boolean(f)),
   )
-  if (!res.ok) return null
-  const buffer = Buffer.from(await res.arrayBuffer())
+
+  let scanned = 0
+  let removed = 0
+  let freedBytes = 0
+  const names = await readdir(dir).catch(() => [] as string[])
+  const survivors = new Set<string>()
+  for (const name of names) {
+    if (!COVER_NAME_RE.test(name)) continue
+    scanned++
+    if (referenced.has(name)) {
+      survivors.add(name)
+      continue
+    }
+    const full = path.join(dir, name)
+    const st = await stat(full).catch(() => null)
+    if (!st?.isFile()) continue
+    if (now - st.mtimeMs < COVER_ORPHAN_TTL_MS) {
+      survivors.add(name) // возможно, черновик ещё ждёт подтверждения
+      continue
+    }
+    await unlink(full).catch(() => {})
+    removed++
+    freedBytes += st.size
+  }
+
+  // варианты (превью) файлов, которых больше нет — тоже мусор
+  const variantsDir = path.join(dir, 'variants')
+  for (const v of await readdir(variantsDir).catch(() => [] as string[])) {
+    const base = v.match(/^\d+-(.+)\.webp$/)?.[1]
+    if (!base || survivors.has(base)) continue
+    const full = path.join(variantsDir, v)
+    const st = await stat(full).catch(() => null)
+    await unlink(full).catch(() => {})
+    if (st) {
+      removed++
+      freedBytes += st.size
+    }
+  }
+
+  // предупреждение о заканчивающемся диске — до того, как перестанут влезать фото
+  try {
+    const fsStat = await statfs(dir)
+    const free = fsStat.bavail * fsStat.bsize
+    if (free < DISK_WARN_FREE_BYTES) {
+      console.warn(`[covers] на диске осталось ${(free / 1024 / 1024).toFixed(0)} МБ — пора чистить или расширять`)
+    }
+  } catch {
+    /* statfs недоступен — просто без предупреждения */
+  }
+
+  return { scanned, attached: referenced.size, removed, freedBytes }
+}
+
+/** Скачивает фото из Telegram (file_id) и сохраняет как обложку.
+ * Таймауты и потолок размера обязательны: зависший Telegram не должен держать
+ * обработчик апдейта, а гигантский файл — осесть в памяти целиком. */
+export async function saveCoverFromTelegram(fileId: string): Promise<{ file: string; url: string; decoded: Decoded } | null> {
+  const metaRes = await fetchWithTimeout(
+    `https://api.telegram.org/bot${env.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+    {},
+    10_000,
+  ).catch(() => null)
+  if (!metaRes) return null
+  const meta = (await metaRes.json().catch(() => null)) as {
+    ok: boolean
+    result?: { file_path: string }
+  } | null
+  if (!meta?.ok || !meta.result) return null
+
+  const res = await fetchWithTimeout(
+    `https://api.telegram.org/file/bot${env.botToken}/${meta.result.file_path}`,
+    {},
+    20_000,
+  ).catch(() => null)
+  if (!res || !res.ok) return null
+  const buffer = await readBodyLimited(res, MAX_BYTES).catch(() => null)
+  if (!buffer) return null
   const type = res.headers.get('content-type') || 'image/jpeg'
   const mediaType = (isSupportedMedia(type) ? type : 'image/jpeg') as MediaType
   const decoded: Decoded = { buffer, mediaType, data: buffer.toString('base64') }

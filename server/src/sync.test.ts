@@ -34,8 +34,11 @@ after(async () => {
 // deactivationGuard считает по ВСЕЙ таблице для данного kind — без чистки
 // между тестами данные одного теста искажали бы проценты в следующем.
 beforeEach(async () => {
+  await prisma.loanEvent.deleteMany()
+  await prisma.loan.deleteMany()
   await prisma.book.deleteMany()
   await prisma.librarian.deleteMany()
+  await prisma.user.deleteMany()
   await prisma.syncState.deleteMany()
 })
 
@@ -230,6 +233,116 @@ test('merged librarian остаётся корректным владельце�
   assert.equal(book.ownerId, primary.id, 'книга должна привязаться к главной записи, а не к архивному дублю')
 })
 
+
+// ── источники истины: синк не портит локальные данные (аудит 2026-07-28, P0.2) ──
+// См. docs/DATA_OWNERSHIP.md. До фикса upsert слепо перезаписывал всё из Notion.
+
+test('выданная книга остаётся busy после синка (Notion шлёт free)', async () => {
+  const notionId = randomUUID()
+  const book = await prisma.book.create({
+    data: { notionId, title: 'Выданная', kind: 'book', source: 'notion', active: true, reviewStatus: 'approved', status: 'busy' },
+  })
+  await prisma.user.upsert({ where: { tgId: 1n }, create: { tgId: 1n }, update: {} })
+  await prisma.loan.create({
+    data: { title: 'Выданная', bookId: book.id, activeBookId: book.id, ownerTg: 1n, status: 'active' },
+  })
+  await syncFromNotion(silentLog, deps([fakeBook(notionId)])) // status: 'free' из Notion
+  const fresh = await prisma.book.findUniqueOrThrow({ where: { id: book.id } })
+  assert.equal(fresh.status, 'busy', 'активная выдача — источник истины для статуса')
+})
+
+test('после возврата следующий синк НЕ возвращает книгу в busy', async () => {
+  const notionId = randomUUID()
+  const book = await prisma.book.create({
+    data: { notionId, title: 'Вернулась', kind: 'book', source: 'notion', active: true, reviewStatus: 'approved', status: 'free' },
+  })
+  await prisma.user.upsert({ where: { tgId: 1n }, create: { tgId: 1n }, update: {} })
+  await prisma.loan.create({
+    data: { title: 'Вернулась', bookId: book.id, ownerTg: 1n, status: 'returned', returnedAt: new Date() },
+  })
+  await syncFromNotion(silentLog, deps([fakeBook(notionId)]))
+  const fresh = await prisma.book.findUniqueOrThrow({ where: { id: book.id } })
+  assert.equal(fresh.status, 'free')
+})
+
+test('локальный город книги не затирается пустым значением из Notion', async () => {
+  const notionId = randomUUID()
+  await prisma.book.create({
+    data: { notionId, title: 'С городом', kind: 'book', source: 'notion', active: true, reviewStatus: 'approved', city: 'Warszawa', district: 'Wola' },
+  })
+  await syncFromNotion(silentLog, deps([fakeBook(notionId, { city: null })]))
+  const fresh = await prisma.book.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(fresh.city, 'Warszawa')
+  assert.equal(fresh.district, 'Wola')
+})
+
+test('непустой город из Notion применяется (правки уезжают в Notion — он свежее)', async () => {
+  const notionId = randomUUID()
+  await prisma.book.create({
+    data: { notionId, title: 'Переехала', kind: 'book', source: 'notion', active: true, reviewStatus: 'approved', city: 'Warszawa' },
+  })
+  await syncFromNotion(silentLog, deps([fakeBook(notionId, { city: 'Kraków' })]))
+  const fresh = await prisma.book.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(fresh.city, 'Kraków')
+})
+
+test('город библиотекаря не затирается пустым City из Notion', async () => {
+  const libNotionId = randomUUID()
+  await prisma.librarian.create({
+    data: { notionId: libNotionId, name: 'С городом', city: 'Warszawa', district: 'Wola' },
+  })
+  await syncFromNotion(silentLog, deps([], [], [fakeLibrarian(libNotionId, 'С городом')])) // city: null
+  const fresh = await prisma.librarian.findUniqueOrThrow({ where: { notionId: libNotionId } })
+  assert.equal(fresh.city, 'Warszawa', 'backfill-город должен пережить пустое City из Notion')
+  assert.equal(fresh.district, 'Wola')
+})
+
+test('addedAt не обнуляется, когда Notion не прислал дату', async () => {
+  const notionId = randomUUID()
+  const added = new Date('2026-05-01T00:00:00Z')
+  await prisma.book.create({
+    data: { notionId, title: 'Настолка', kind: 'game', source: 'notion', active: true, reviewStatus: 'approved', addedAt: added },
+  })
+  await syncFromNotion(silentLog, deps([], [{ ...fakeBook(notionId), kind: 'game' }]))
+  const fresh = await prisma.book.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(fresh.addedAt?.getTime(), added.getTime())
+})
+
+test('удалённая книга не воскресает, даже если строка осталась в Notion', async () => {
+  const notionId = randomUUID()
+  await prisma.book.create({
+    data: {
+      notionId,
+      title: 'Удалённая',
+      kind: 'book',
+      source: 'notion',
+      active: false,
+      reviewStatus: 'deleted',
+      deletedAt: new Date(),
+    },
+  })
+  await syncFromNotion(silentLog, deps([fakeBook(notionId)]))
+  const fresh = await prisma.book.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(fresh.active, false, 'tombstone: синк не воскрешает удалённое')
+  assert.equal(fresh.reviewStatus, 'deleted')
+})
+
+test('второй синк не стартует, пока идёт первый', async () => {
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const slow = {
+    fetchBooks: async () => {
+      await gate
+      return []
+    },
+    fetchGames: async () => [],
+    fetchLibrarians: async () => [],
+  }
+  const first = syncFromNotion(silentLog, slow)
+  await assert.rejects(() => syncFromNotion(silentLog, deps()), /уже идёт/)
+  release()
+  await first
+})
 
 // ── планирование фонового синка ────────────────────────────────────────────────
 // Регрессия с прода 2026-07-25: `setInterval` отсчитывался от старта процесса,

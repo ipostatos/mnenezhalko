@@ -72,17 +72,24 @@ model Book {
   /// путь карточки в общую таблицу: local | pending | synced | failed
   notionStatus String @default("local")
   notionError  String?
-  /// состояние модерации: pending | approved | rejected | deleted.
+  /// состояние модерации: pending | approving | approved | rejected | deleted.
+  /// approving — переходное: один админ уже жмёт «одобрить» (см. approveBook).
   /// Дефолт approved — книги из Notion и режим без модерации попадают в каталог сразу.
   reviewStatus    String    @default("approved")
   reviewedByTg    BigInt?
   reviewedAt      DateTime?
+  /// когда и кто начал одобрение — для восстановления зависшего approving
+  approvalStartedAt   DateTime?
+  approvalStartedByTg BigInt?
+  approvalAttempt     Int       @default(0)
   rejectionReason String?
   submittedAt     DateTime?
   deletedAt       DateTime?
   deletedByTg     BigInt?
   /// книга на руках, владелец попросил скрыть её после возврата
   hideAfterReturn Boolean @default(false)
+  /// строку в Notion не удалось заархивировать при удалении — дожать (flushPending)
+  notionArchivePending Boolean @default(false)
   addedByTg BigInt?
   search    String    @default("") // нормализованная строка для поиска
   active    Boolean   @default(true)
@@ -182,13 +189,16 @@ model Event {
   url         String?
   /// откуда встреча: admin | topic (афиша из чата проекта)
   source      String   @default("admin")
-  /// id сообщения-афиши, чтобы не заводить встречу дважды
-  sourceMsgId Int?     @unique
+  /// id сообщения-афиши + порядковый номер встречи в нём: одно сообщение может
+  /// нести несколько встреч, дедуп только по msgId терял все, кроме первой
+  sourceMsgId      Int?
+  sourceEventIndex Int?
   createdAt   DateTime @default(now())
   createdBy   BigInt?
 
   author User? @relation(fields: [createdBy], references: [tgId])
 
+  @@unique([sourceMsgId, sourceEventIndex])
   @@index([city, startsAt])
 }
 
@@ -202,6 +212,9 @@ model MarketItem {
   price       String?
   photo       String? // telegram file_id
   status      String   @default("active") // active | closed
+  /// когда объявление протухает и закрывается автоматически (см. expireMarketItems);
+  /// null у старых строк — для них срок считается от bumpedAt
+  expiresAt   DateTime?
   /// откуда объявление: bot | topic (барахолка в чате проекта)
   source      String   @default("bot")
   /// id сообщения в теме барахолки — чтобы не заводить дважды

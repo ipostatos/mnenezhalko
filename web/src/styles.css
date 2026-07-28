@@ -66,6 +66,17 @@ body {
   touch-action: pan-y;
 }
 
+/* двойной тап по контролам не должен ни зумить, ни ждать 300 мс —
+   а JS-глушитель тапов больше не трогает интерактивные элементы */
+button,
+a,
+input,
+textarea,
+select,
+label {
+  touch-action: manipulation;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
@@ -245,13 +256,6 @@ h1 {
   background: color-mix(in srgb, var(--tone, var(--accent)) 16%, transparent);
 }
 
-.ic-tile.lg {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--r-md);
-  font-size: 30px;
-}
-
 .ic-tile.sm {
   width: 34px;
   height: 34px;
@@ -282,12 +286,6 @@ h1 {
   font-weight: 800;
   flex-shrink: 0;
   overflow: hidden;
-}
-
-.avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 /* ── кнопки ──────────────────────────────────── */
@@ -329,11 +327,6 @@ h1 {
   width: auto;
   padding: 10px 12px;
   font-size: var(--fs-sm);
-}
-
-.btn.ok {
-  background: var(--ok);
-  color: #fff;
 }
 
 /* ── сегменты и чипсы ────────────────────────── */
@@ -398,6 +391,14 @@ h1 {
   font-size: var(--fs-xs);
 }
 
+/* информационный чип (счётчики городов в «Новинках»): выглядит спокойнее и
+   не притворяется кнопкой — раньше класса не существовало вовсе */
+.chip.static {
+  background: transparent;
+  color: var(--hint);
+  pointer-events: none;
+}
+
 /* ── формы ───────────────────────────────────── */
 
 .input {
@@ -420,13 +421,6 @@ h1 {
   color: var(--hint);
 }
 
-.input-amount {
-  font-size: 32px;
-  font-weight: 800;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
 .input.inline {
   padding: 8px 10px;
   font-size: var(--fs-sm);
@@ -441,54 +435,9 @@ h1 {
   margin-bottom: var(--sp-4);
 }
 
-.emoji-picker {
-  display: flex;
-  gap: var(--sp-2);
-  flex-wrap: wrap;
-}
-
-.emoji-picker button {
-  width: 48px;
-  height: 48px;
-  font-size: 24px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--card);
-  cursor: pointer;
-  transition: transform 0.12s;
-}
-
-.emoji-picker button:active {
-  transform: scale(0.95);
-}
-
-.emoji-picker button.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
 /* ── балансы и статусы ───────────────────────── */
 
-.amount-positive {
-  color: var(--ok);
-}
-
-.amount-negative {
-  color: var(--bad);
-}
-
 /* баннер-рекомендация «кто кому переводит» */
-.rec {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  border: 1px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--card));
-  border-radius: var(--r-md);
-  padding: var(--sp-3) var(--sp-4);
-  margin-bottom: var(--sp-2);
-}
-
 .error-banner {
   border: 1px solid var(--bad);
   background: color-mix(in srgb, var(--bad) 12%, var(--card));
@@ -555,6 +504,15 @@ h1 {
   border-radius: var(--r-md);
   padding: var(--sp-3);
   text-align: center;
+  /* счётчики — кнопки, ведущие в разделы */
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.stat-tiles .s:active {
+  transform: scale(0.97);
 }
 
 .stat-tiles .s .n {
@@ -576,51 +534,7 @@ h1 {
 }
 
 /* прогресс-метр (как в ISSA) */
-.meter {
-  height: 8px;
-  background: var(--border);
-  border-radius: var(--r-pill);
-  overflow: hidden;
-}
-
-.meter > i {
-  display: block;
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: var(--accent);
-  transition: width 0.25s;
-}
-
 /* свайп вправо для удаления */
-.swipe-wrap {
-  position: relative;
-  margin-bottom: var(--sp-2);
-  touch-action: pan-y;
-}
-
-.swipe-wrap .row-card {
-  margin-bottom: 0;
-}
-
-.swipe-bg {
-  position: absolute;
-  inset: 0;
-  border: none;
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--bad) 22%, var(--card));
-  color: var(--bad);
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding-left: 30px;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.swipe-bg:active {
-  background: color-mix(in srgb, var(--bad) 34%, var(--card));
-}
-
 /* ── книжные обложки и карточка книги ────────── */
 
 .cover {
@@ -1183,29 +1097,6 @@ textarea.input {
   background: color-mix(in srgb, var(--accent) 12%, var(--card));
   border: 1px solid var(--accent);
   border-radius: var(--r-lg);
-}
-
-.curator {
-  margin: var(--sp-6) 0 var(--sp-5);
-  padding: var(--sp-4);
-  text-align: center;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-}
-
-.curator .role {
-  font-size: var(--fs-sm);
-  color: var(--hint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.curator .who {
-  font-size: var(--fs-h2);
-  font-weight: 600;
-  color: var(--link);
-  margin-top: 2px;
 }
 
 .foot-link {

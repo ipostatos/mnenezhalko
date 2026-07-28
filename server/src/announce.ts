@@ -9,6 +9,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { env } from './env.js'
 import { prisma } from './db.js'
 import { CITIES } from './seed.js'
+import { warsawTime } from './time.js'
 
 const client = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
 
@@ -85,8 +86,8 @@ export async function parseAnnouncement(text: string, now = new Date()): Promise
       .filter((e) => CITIES.includes(e.city as (typeof CITIES)[number]) && /^\d{4}-\d{2}-\d{2}$/.test(e.date))
       .map((e) => {
         const time = /^\d{2}:\d{2}$/.test(e.time) ? e.time : '19:00'
-        // летом Польша на UTC+2; вечернее время встреч, точность до часа не критична
-        const startsAt = new Date(`${e.date}T${time}:00+02:00`)
+        // варшавское время с учётом CET/CEST — не захардкоженное +02:00
+        const startsAt = warsawTime(e.date, time)
         return {
           city: e.city,
           startsAt,
@@ -101,17 +102,44 @@ export async function parseAnnouncement(text: string, now = new Date()): Promise
   }
 }
 
-/** Заводит встречу из афиши, если такой ещё нет. */
-export async function saveAnnouncement(e: ParsedEvent, msgId: number) {
-  const already = await prisma.event.findFirst({
-    where: {
-      OR: [
-        { sourceMsgId: msgId },
-        { city: e.city, startsAt: e.startsAt, title: e.title },
-      ],
-    },
+/**
+ * Заводит встречу из афиши. Одно сообщение может нести НЕСКОЛЬКО встреч,
+ * поэтому ключ дедупа — (sourceMsgId, index), а не только id сообщения:
+ * старый дедуп по msgId молча глотал все встречи, кроме первой.
+ * Повторный разбор того же сообщения обновляет свою запись (правка афиши),
+ * но не создаёт дубль и не шлёт повторный алерт (создание возвращает Event,
+ * обновление и дубль — null).
+ */
+export async function saveAnnouncement(e: ParsedEvent, msgId: number, index = 0) {
+  const bySource = await prisma.event.findFirst({
+    where: { sourceMsgId: msgId, sourceEventIndex: index },
   })
-  if (already) return null
+  if (bySource) {
+    const changed =
+      bySource.city !== e.city ||
+      bySource.startsAt.getTime() !== e.startsAt.getTime() ||
+      bySource.title !== e.title ||
+      bySource.place !== (e.place ?? null) ||
+      bySource.description !== (e.description ?? null)
+    if (changed) {
+      await prisma.event.update({
+        where: { id: bySource.id },
+        data: {
+          city: e.city,
+          title: e.title,
+          startsAt: e.startsAt,
+          place: e.place,
+          description: e.description,
+        },
+      })
+    }
+    return null
+  }
+  // ту же встречу мог руками завести админ — не плодим копию
+  const duplicate = await prisma.event.findFirst({
+    where: { city: e.city, startsAt: e.startsAt, title: e.title },
+  })
+  if (duplicate) return null
   return prisma.event.create({
     data: {
       city: e.city,
@@ -121,6 +149,7 @@ export async function saveAnnouncement(e: ParsedEvent, msgId: number) {
       description: e.description,
       source: 'topic',
       sourceMsgId: msgId,
+      sourceEventIndex: index,
     },
   })
 }

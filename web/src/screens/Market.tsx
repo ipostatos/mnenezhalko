@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { MarketItem } from '../types'
 import { openTg } from '../telegram'
+import { useSeqGuard } from '../useSeqGuard'
 
 const LABEL: Record<string, string> = {
   give: '🎁 Отдам',
@@ -15,12 +16,15 @@ const MARKET_TOPIC = 'https://t.me/c/1856176764/4547'
 export function Market({ city }: { city?: string }) {
   const [items, setItems] = useState<MarketItem[] | null>(null)
   const [onlyMyCity, setOnlyMyCity] = useState(Boolean(city))
+  const guard = useSeqGuard()
 
   useEffect(() => {
+    // тумблер города: старый медленный ответ не перетирает новый фильтр
+    const id = guard.next()
     api
       .market(onlyMyCity ? city : undefined)
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((r) => guard.isCurrent(id) && setItems(r))
+      .catch(() => guard.isCurrent(id) && setItems([]))
   }, [city, onlyMyCity])
 
   return (

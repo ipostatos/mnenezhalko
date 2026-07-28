@@ -28,8 +28,11 @@ jobs:
       - name: Типы сервера
         run: npx tsc -p server/tsconfig.json --noEmit
 
-      - name: Тесты напоминаний
+      - name: Тесты сервера (планировщик, синк, модерация, прогрев, безопасность…)
         run: npm run test -w server
+
+      - name: Тесты Mini App (vitest)
+        run: npm run test -w web
 
       - name: Сборка Mini App (внутри свой tsc)
         run: npm run build -w web

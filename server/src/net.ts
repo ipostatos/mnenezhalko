@@ -89,6 +89,62 @@ export async function assertPublicUrl(raw: string): Promise<ResolvedAddr[]> {
 }
 
 /**
+ * fetch с жёстким таймаутом. Все внешние вызовы (Notion, Telegram-файлы) обязаны
+ * идти через него: зависший запрос без AbortController замораживал синк-цикл
+ * целиком — следующий прогон планируется только после завершения текущего.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal })
+  } catch (e: any) {
+    if (ctrl.signal.aborted) throw new Error(`timeout_${timeoutMs}ms`)
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Читает тело ответа с обрывом ПО ХОДУ чтения, а не после полной буферизации:
+ * origin, приславший гигабайты (или без Content-Length), не должен целиком
+ * осесть в памяти процесса, прежде чем мы заметим превышение.
+ */
+export async function readBodyLimited(res: Response, maxBytes: number): Promise<Buffer> {
+  if (Number(res.headers.get('content-length') || 0) > maxBytes) throw new Error('too_large')
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length > maxBytes) throw new Error('too_large')
+    return buf
+  }
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        throw new Error('too_large')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {}
+  }
+  return Buffer.concat(chunks)
+}
+
+/**
  * Дешёвая синхронная проверка coverUrl при приёме от пользователя (без DNS) —
  * быстрый отказ на очевидно небезопасном. Полную проверку с DNS делает
  * assertPublicUrl уже при загрузке (в т.ч. защита от DNS-rebinding).

@@ -185,3 +185,43 @@ test('пустой payload — not_found, без побочных эффекто
   const result = await claimLoanByToken(102n, 'anyone', undefined)
   assert.deepEqual(result, { status: 'not_found' })
 })
+
+/* ── аудит 2026-07-28, P1.1: ник — подсказка, а не идентификатор ── */
+
+test('известный боту ник НЕ привязывает выдачу автоматически — только claim-токен', async () => {
+  const ownerTg = await seedOwner()
+  // человек с таким ником уже писал боту — но ник мог быть переназначен
+  await ensureUser(1200n, 'known_reader')
+  const loan = await createLoan({ ownerTg, title: 'Книга K', holder: '@known_reader' })
+
+  assert.equal(loan.holderTg, null, 'автопривязки по нику быть не должно')
+  assert.ok(loan.claimToken, 'привязка — только через ссылку-приглашение')
+
+  // настоящий обладатель ника проходит по токену как обычно
+  const r = await claimLoanByToken(1200n, 'known_reader', loan.claimToken!)
+  assert.deepEqual(r, { status: 'claimed', loanId: loan.id })
+})
+
+test('проверенный tgId (holderTgVerified) привязывает сразу, без токена', async () => {
+  const ownerTg = await seedOwner()
+  await ensureUser(1300n, 'trusted_reader')
+  const loan = await createLoan({
+    ownerTg,
+    title: 'Книга L',
+    holder: '@trusted_reader',
+    holderTgVerified: 1300n,
+  })
+  assert.equal(loan.holderTg, 1300n)
+  assert.equal(loan.claimToken, null, 'токен не нужен — id уже подтверждён')
+})
+
+test('ник нормализуется: @MixedCase хранится как mixedcase и claim регистронезависим', async () => {
+  const ownerTg = await seedOwner()
+  const loan = await createLoan({ ownerTg, title: 'Книга M', holder: '@MixedCase' })
+  const fresh = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } })
+  assert.equal(fresh.holderUsername, 'mixedcase')
+
+  await ensureUser(1400n, 'MIXEDCASE')
+  const r = await claimLoanByToken(1400n, 'MIXEDCASE', loan.claimToken!)
+  assert.deepEqual(r, { status: 'claimed', loanId: loan.id })
+})

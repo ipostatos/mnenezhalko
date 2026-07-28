@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
 import type { DigestResult } from '../types'
+import { useSeqGuard } from '../useSeqGuard'
 import { BookRow } from './BookRow'
 
 const LABEL: Record<'day' | 'month', string> = { day: 'за сутки', month: 'за месяц' }
@@ -11,14 +12,18 @@ export function Digest({ city, go }: { city?: string; go: (r: Route) => void }) 
   const [period, setPeriod] = useState<'day' | 'month'>('day')
   const [data, setData] = useState<DigestResult | null>(null)
   const [loading, setLoading] = useState(true)
+  const guard = useSeqGuard()
 
   useEffect(() => {
+    // быстрое переключение 24ч↔месяц: медленный старый ответ не должен
+    // перезаписать данные уже выбранного периода
+    const id = guard.next()
     setLoading(true)
     api
       .digest(period, city)
-      .then(setData)
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
+      .then((r) => guard.isCurrent(id) && setData(r))
+      .catch(() => guard.isCurrent(id) && setData(null))
+      .finally(() => guard.isCurrent(id) && setLoading(false))
   }, [period, city])
 
   return (

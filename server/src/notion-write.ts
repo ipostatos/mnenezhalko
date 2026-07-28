@@ -11,9 +11,10 @@
  * API неофициальный: имена эндпоинтов Notion меняет (submitTransaction уже
  * исчез), поэтому пишем через первый живой из списка и говорим об ошибке вслух.
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { env } from './env.js'
-import { collectionSchema, type Schema } from './notion.js'
+import { collectionSchema, NOTION_TIMEOUT_MS, type Schema } from './notion.js'
+import { fetchWithTimeout } from './net.js'
 
 const API = 'https://www.notion.so/api/v3'
 const SAVE_ENDPOINTS = ['saveTransactionsFanout', 'saveTransactions']
@@ -32,11 +33,12 @@ function headers(): Record<string, string> {
 }
 
 async function call(path: string, body: unknown): Promise<any> {
-  const res = await fetch(`${API}/${path}`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify(body),
-  })
+  // таймаут обязателен: зависшая запись стопорила бы синк и одобрение книг
+  const res = await fetchWithTimeout(
+    `${API}/${path}`,
+    { method: 'POST', headers: headers(), body: JSON.stringify(body) },
+    NOTION_TIMEOUT_MS,
+  )
   const text = await res.text()
   if (!res.ok) throw new Error(`Notion ${path} → ${res.status} ${text.slice(0, 300)}`)
   return text ? JSON.parse(text) : {}
@@ -122,8 +124,23 @@ async function schemas() {
 
 type Props = Array<[pid: string | undefined, value: unknown]>
 
-function createRowOps(collectionId: string, props: Props): { id: string; ops: Op[] } {
-  const id = randomUUID()
+/**
+ * Детерминированный id страницы Notion из локального id записи. Это и есть
+ * idempotency marker: повторная попытка создания (ретрай после ошибки, второй
+ * админ на модерации) целится в ТУ ЖЕ страницу — операции `set`/`update` по
+ * существующему id перезаписывают её, а не плодят дубль строки в таблице.
+ */
+export function stableNotionRowId(seed: string): string {
+  const h = createHash('sha256').update(`mnenezhalko:notion-row:${seed}`).digest('hex')
+  const variant = ((parseInt(h[16], 16) & 0x3) | 0x8).toString(16)
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`
+}
+
+function createRowOps(
+  collectionId: string,
+  props: Props,
+  id: string = randomUUID(),
+): { id: string; ops: Op[] } {
   const now = Date.now()
   const ops: Op[] = [
     op(id, [], 'set', { type: 'page', id, version: 1 }),
@@ -154,14 +171,18 @@ export type OwnerDraft = {
 }
 
 /** Заводит библиотекаря в таблице Owners, возвращает id страницы. */
-export async function createOwner(o: OwnerDraft): Promise<string> {
+export async function createOwner(o: OwnerDraft, stableId?: string): Promise<string> {
   const { owners } = await schemas()
-  const { id, ops } = createRowOps(env.notion.librarians.collection, [
+  const { id, ops } = createRowOps(
+    env.notion.librarians.collection,
+    [
     ['title', vText(o.name)],
     [owners.byName['City/District'], o.cityDistrict ? vMulti([o.cityDistrict]) : null],
     [owners.byName['@Telegram'], o.telegram ? vUrl(`https://t.me/${o.telegram.replace(/^@/, '')}`) : null],
-    [owners.byName['Instagram'], o.instagram ? vUrl(o.instagram) : null],
-  ])
+      [owners.byName['Instagram'], o.instagram ? vUrl(o.instagram) : null],
+    ],
+    stableId,
+  )
   await submit(ops)
   return id
 }
@@ -191,28 +212,36 @@ export type BookDraft = {
  * Добавляет строку в All Books либо в Board Games — по типу карточки.
  * Возвращает id созданной страницы Notion.
  */
-export async function createBook(b: BookDraft): Promise<string> {
+export async function createBook(b: BookDraft, stableId?: string): Promise<string> {
   const s = await schemas()
   const owners = b.ownerNotionId ? [b.ownerNotionId] : []
 
   const { id, ops } =
     b.kind === 'game'
-      ? createRowOps(env.notion.games.collection, [
-          ['title', vText(b.title)],
-          [s.games.byName['Owner'], owners.length ? vRelation(owners) : null],
-          [s.games.byName['Cover'], b.coverUrl ? vFile(b.coverUrl) : null],
-          [s.games.byName['City/District'], b.cityDistrict ? vMulti([b.cityDistrict]) : null],
-          [s.games.byName['Status'], vStatus('Free')],
-        ])
-      : createRowOps(env.notion.books.collection, [
-          ['title', vText(b.title)],
-          [s.books.byName['Author'], b.author ? vMulti([b.author]) : null],
-          [s.books.byName['Genre'], b.genres?.length ? vMulti(b.genres) : null],
-          [s.books.byName['Language'], b.languages?.length ? vMulti(b.languages) : null],
-          [s.books.byName['Cover'], b.coverUrl ? vFile(b.coverUrl) : null],
-          [s.books.byName['Owner (click on the name)'], owners.length ? vRelation(owners) : null],
-          [s.books.byName['Date added'], vDate(new Date().toISOString())],
-        ])
+      ? createRowOps(
+          env.notion.games.collection,
+          [
+            ['title', vText(b.title)],
+            [s.games.byName['Owner'], owners.length ? vRelation(owners) : null],
+            [s.games.byName['Cover'], b.coverUrl ? vFile(b.coverUrl) : null],
+            [s.games.byName['City/District'], b.cityDistrict ? vMulti([b.cityDistrict]) : null],
+            [s.games.byName['Status'], vStatus('Free')],
+          ],
+          stableId,
+        )
+      : createRowOps(
+          env.notion.books.collection,
+          [
+            ['title', vText(b.title)],
+            [s.books.byName['Author'], b.author ? vMulti([b.author]) : null],
+            [s.books.byName['Genre'], b.genres?.length ? vMulti(b.genres) : null],
+            [s.books.byName['Language'], b.languages?.length ? vMulti(b.languages) : null],
+            [s.books.byName['Cover'], b.coverUrl ? vFile(b.coverUrl) : null],
+            [s.books.byName['Owner (click on the name)'], owners.length ? vRelation(owners) : null],
+            [s.books.byName['Date added'], vDate(new Date().toISOString())],
+          ],
+          stableId,
+        )
 
   await submit(ops)
 
@@ -264,8 +293,29 @@ export async function loadBlock(id: string): Promise<any> {
   return unwrap(res.recordMap?.block?.[id]) ?? null
 }
 
+/**
+ * Очередь на владельца: linkOwnerSide — это read-modify-write relation-поля,
+ * два параллельных добавления книг одному владельцу теряли одну из связей.
+ * Экземпляр один, поэтому достаточно промис-цепочки в процессе.
+ */
+const ownerQueues = new Map<string, Promise<unknown>>()
+function queuedPerOwner<T>(ownerId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = ownerQueues.get(ownerId) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  const stored = next.catch(() => {})
+  ownerQueues.set(ownerId, stored)
+  void stored.finally(() => {
+    if (ownerQueues.get(ownerId) === stored) ownerQueues.delete(ownerId)
+  })
+  return next
+}
+
 /** Добавляет книгу в relation-поле владельца, сохраняя уже связанные. */
-async function linkOwnerSide(ownerId: string, bookId: string, kind: 'book' | 'game'): Promise<void> {
+function linkOwnerSide(ownerId: string, bookId: string, kind: 'book' | 'game'): Promise<void> {
+  return queuedPerOwner(ownerId, () => linkOwnerSideNow(ownerId, bookId, kind))
+}
+
+async function linkOwnerSideNow(ownerId: string, bookId: string, kind: 'book' | 'game'): Promise<void> {
   const { owners } = await schemas()
   const pid = owners.byName[kind === 'game' ? '🎲 Board Games' : '🎃 All Books']
   if (!pid) return

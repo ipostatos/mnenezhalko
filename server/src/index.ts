@@ -11,6 +11,10 @@ import { bot, checkNotionToken, remindOverdueLoans, setupBotCommands } from './b
 import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
 import { housekeepImgCache } from './imgcache.js'
+import { startJobLoop } from './scheduler.js'
+import { coverPrewarmJob } from './prewarm.js'
+import { housekeepCovers } from './covers.js'
+import { expireMarketItems } from './market.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
@@ -134,25 +138,77 @@ if (botDisabled) {
 
 startSyncLoop()
 
+/**
+ * Фоновые джобы — через персистентный планировщик (scheduler.ts), не setInterval:
+ * отсчёт от последнего успешного прогона в базе, просроченная джоба выполняется
+ * сразу после старта, рестарт (деплой) не обнуляет таймер. На голом setInterval
+ * напоминания о просрочке не отработали НИ РАЗУ (аудит 2026-07-28).
+ */
 // диск под превью обложек иначе растёт бесконечно (см. imgcache.ts) — не зависит от бота
-const imgHousekeep = () =>
-  housekeepImgCache()
-    .then((r) => {
-      if (r.removed) {
-        app.log.info(`[imgcache] чистка: ${r.removed}/${r.scanned} файлов, освобождено ${(r.freedBytes / 1024 / 1024).toFixed(1)} МБ`)
-      }
-    })
-    .catch((e) => app.log.error(`[imgcache] ${e?.message ?? e}`))
-const imgHousekeepTimer = setInterval(imgHousekeep, 6 * 3600_000)
-imgHousekeepTimer.unref?.()
+// прогрев превью всего каталога: людям — тёплые обложки, а не поход на CDN
+startJobLoop({ ...coverPrewarmJob, log: (m) => app.log.info(m), logError: (m) => app.log.error(m) })
 
-// раз в сутки напоминаем про книги, которые загостились у читателей
+startJobLoop({
+  name: 'imgcache-housekeep',
+  periodMs: 6 * 3600_000,
+  run: async () => {
+    const r = await housekeepImgCache()
+    return r.removed
+      ? `удалено ${r.removed}/${r.scanned} файлов, освобождено ${(r.freedBytes / 1024 / 1024).toFixed(1)} МБ`
+      : `диск в норме (${r.scanned} файлов)`
+  },
+  log: (m) => app.log.info(m),
+  logError: (m) => app.log.error(m),
+})
+
+// временные файлы обложек (фото до решения «сохранить») без чистки копят гигабайты
+startJobLoop({
+  name: 'covers-housekeep',
+  periodMs: 12 * 3600_000,
+  run: async () => {
+    const r = await housekeepCovers()
+    return `файлов ${r.scanned} (прикреплено ${r.attached}), удалено ${r.removed}, освобождено ${(r.freedBytes / 1024 / 1024).toFixed(1)} МБ`
+  },
+  log: (m) => app.log.info(m),
+  logError: (m) => app.log.error(m),
+})
+
+// барахолка: прошлогодние объявления закрываются сами, авторов предупреждаем
+startJobLoop({
+  name: 'market-expire',
+  periodMs: 24 * 3600_000,
+  run: async () => {
+    const r = await expireMarketItems()
+    if (!botDisabled) {
+      for (const item of r.items) {
+        await bot.api
+          .sendMessage(
+            String(item.authorTg),
+            `Ваше объявление «${item.title}» на барахолке закрылось по сроку. ` +
+              'Всё ещё актуально? Просто опубликуйте его в теме барахолки ещё раз.',
+          )
+          .catch(() => {})
+        await new Promise((res) => setTimeout(res, 40))
+      }
+    }
+    return `закрыто ${r.closed}`
+  },
+  log: (m) => app.log.info(m),
+  logError: (m) => app.log.error(m),
+})
+
 if (!botDisabled) {
-  const loansTimer = setInterval(
-    () => remindOverdueLoans().catch((e) => app.log.error(`[loans] ${e?.message ?? e}`)),
-    24 * 3600_000,
-  )
-  loansTimer.unref?.()
+  // раз в сутки напоминаем про книги, которые загостились у читателей
+  startJobLoop({
+    name: 'loan-reminders',
+    periodMs: 24 * 3600_000,
+    run: async () => {
+      const r = await remindOverdueLoans()
+      return `выдач ${r.loans}, доставлено ${r.sent}, помечено ${r.reminded}, ошибок ${r.failed}`
+    },
+    log: (m) => app.log.info(m),
+    logError: (m) => app.log.error(m),
+  })
 
   // cookie Notion слетает молча — узнаём об этом сами, а не по жалобам
   const notionCheck = () =>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { EventItem } from '../types'
 import { openTg } from '../telegram'
+import { useSeqGuard } from '../useSeqGuard'
 
 const fmt = new Intl.DateTimeFormat('ru-RU', {
   weekday: 'short',
@@ -15,12 +16,15 @@ const fmt = new Intl.DateTimeFormat('ru-RU', {
 export function Events({ city }: { city?: string }) {
   const [events, setEvents] = useState<EventItem[] | null>(null)
   const [onlyMyCity, setOnlyMyCity] = useState(Boolean(city))
+  const guard = useSeqGuard()
 
   useEffect(() => {
+    // тумблер города: старый медленный ответ не перетирает новый фильтр
+    const id = guard.next()
     api
       .events(onlyMyCity ? city : undefined)
-      .then(setEvents)
-      .catch(() => setEvents([]))
+      .then((r) => guard.isCurrent(id) && setEvents(r))
+      .catch(() => guard.isCurrent(id) && setEvents([]))
   }, [city, onlyMyCity])
 
   return (

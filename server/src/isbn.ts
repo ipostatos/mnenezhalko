@@ -215,7 +215,3 @@ export async function lookupIsbnDetailed(raw: string): Promise<IsbnLookup> {
     serviceDown: g.serviceDown,
   }
 }
-
-export async function lookupIsbn(raw: string): Promise<IsbnBook | null> {
-  return (await lookupIsbnDetailed(raw)).book
-}

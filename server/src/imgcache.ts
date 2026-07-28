@@ -25,7 +25,16 @@ const CACHE_DIR = path.resolve(here, '../data/imgcache')
 
 const MAX_BYTES = 8 * 1024 * 1024
 const TIMEOUT_MS = 8000
-const MAX_CONCURRENT = 4
+
+/**
+ * Двухуровневый лимит одновременных внешних загрузок. Один глобальный семафор
+ * на 4 слота давал head-of-line blocking: один зависший origin (8 с таймаута)
+ * держал слот, и 14 холодных обложек приходили «волнами по 4» за 6 секунд
+ * (замер прода 2026-07-28). Теперь: общий потолок держит сеть/CPU, per-host —
+ * не даёт одному медленному хосту занять все слоты и защищает чужие сайты.
+ */
+const GLOBAL_LIMIT = Number(process.env.IMG_MAX_CONCURRENT || 8)
+const PER_HOST_LIMIT = Number(process.env.IMG_MAX_PER_HOST || 2)
 
 /**
  * Реальные размеры отрисовки обложки в Mini App (см. web/src/styles.css):
@@ -52,17 +61,22 @@ export const ALLOWED_WIDTHS: readonly number[] = [LIST_W, CARD_W, CAROUSEL_W]
 
 /**
  * Внешнюю обложку заменяем на ссылку через наш конвейер с целевой шириной `w`;
- * свои (/api/cover) и data: оставляем как есть.
+ * data: оставляем как есть. Свои фото (/api/cover) раньше шли МИМО ресайза —
+ * в строку списка 44px уезжала картинка до 1600px; теперь они получают ?w= и
+ * ресайзятся тем же sharp-конвейером локально (см. readCoverVariant в covers.ts).
  */
 export function proxyCover(url: string | null, w = LIST_W): string | null {
   if (!url) return null
   if (url.startsWith('data:')) return url
-  if (url.includes('/api/cover/') || url.includes('/api/img')) return url
   if (!ALLOWED_WIDTHS.includes(w)) {
     // лучше выдать рабочую ссылку размера по умолчанию, чем заведомо битую
     console.error(`[img] недопустимая ширина превью ${w}, беру ${LIST_W}`)
     w = LIST_W
   }
+  if (url.includes('/api/img')) return url
+  const own = url.match(/\/api\/cover\/([\w-]+\.\w+)/)
+  // свои обложки отдаём относительной ссылкой: Mini App живёт на том же origin
+  if (own) return `/api/cover/${own[1]}?w=${w}`
   if (/^https?:\/\//.test(url))
     return `/api/img?u=${encodeURIComponent(url)}&w=${w}&s=${sign(url, w)}`
   return url
@@ -70,29 +84,96 @@ export function proxyCover(url: string | null, w = LIST_W): string | null {
 
 const keyOf = (url: string, w: number) => createHash('sha1').update(`${w}:${url}`).digest('hex')
 
-// Ограничитель одновременных внешних загрузок: холодный кэш карусели = десятки
-// запросов разом, иначе сервер открывает столько же соединений к чужим хостам.
-let active = 0
-const waiters: Array<() => void> = []
-async function acquire() {
-  if (active < MAX_CONCURRENT) {
-    active++
+/* ── семафоры: общий потолок + отдельный на каждый hostname ── */
+
+type Sem = { active: number; queue: Array<() => void> }
+const globalSem: Sem = { active: 0, queue: [] }
+const hostSems = new Map<string, Sem>()
+
+async function acquireSem(sem: Sem, limit: number) {
+  while (sem.active >= limit) await new Promise<void>((resolve) => sem.queue.push(resolve))
+  sem.active++
+}
+function releaseSem(sem: Sem) {
+  sem.active--
+  sem.queue.shift()?.()
+}
+
+/**
+ * Порядок взятия важен: СНАЧАЛА слот хоста, ПОТОМ глобальный — иначе очередь
+ * к медленному хосту занимала бы глобальные слоты, и один зависший origin
+ * снова выстраивал бы всех остальных в очередь (та самая «волна по 4»).
+ */
+export async function acquireSlot(host: string): Promise<void> {
+  let hs = hostSems.get(host)
+  if (!hs) {
+    hs = { active: 0, queue: [] }
+    hostSems.set(host, hs)
+  }
+  await acquireSem(hs, PER_HOST_LIMIT)
+  await acquireSem(globalSem, GLOBAL_LIMIT)
+}
+
+export function releaseSlot(host: string): void {
+  releaseSem(globalSem)
+  const hs = hostSems.get(host)
+  if (hs) {
+    releaseSem(hs)
+    if (!hs.active && !hs.queue.length) hostSems.delete(host) // карта не растёт бесконечно
+  }
+}
+
+/* ── circuit breaker: серия таймаутов выключает хост на паузу ── */
+
+const HOST_COOLDOWN_AFTER = 3 // подряд таймаутов/сетевых ошибок
+const HOST_COOLDOWN_MS = 10 * 60_000
+const hostTimeouts = new Map<string, number>() // host → таймаутов подряд
+const hostCooldownUntil = new Map<string, number>()
+
+function noteHostOutcome(host: string, category: ImgErrorCategory | 'ok'): void {
+  if (category === 'ok') {
+    hostTimeouts.delete(host)
+    hostCooldownUntil.delete(host)
     return
   }
-  await new Promise<void>((resolve) => waiters.push(resolve))
-  active++
+  if (category !== 'timeout' && category !== 'network') return
+  const n = (hostTimeouts.get(host) ?? 0) + 1
+  hostTimeouts.set(host, n)
+  if (n >= HOST_COOLDOWN_AFTER) {
+    hostCooldownUntil.set(host, Date.now() + HOST_COOLDOWN_MS)
+    console.log(`[img] host=${host}: ${n} таймаутов подряд — пауза ${HOST_COOLDOWN_MS / 60_000} мин`)
+  }
 }
-function release() {
-  active--
-  waiters.shift()?.()
-}
+
+const hostOnCooldown = (host: string) => (hostCooldownUntil.get(host) ?? 0) > Date.now()
 
 // Дедуп одинаковых (url,w), пока идёт загрузка: два запроса на одну обложку
 // делят одну внешнюю загрузку, а не тянут дважды.
 const inflight = new Map<string, Promise<{ body: Buffer; type: string } | null>>()
 
-// Негативный кэш: у битой/недоступной обложки не долбим origin на каждый заход.
-const NEG_TTL_MS = 60 * 60 * 1000 // 1 час
+/**
+ * Негативный кэш: у битой/недоступной обложки не долбим origin на каждый заход.
+ * TTL зависит от причины: стабильно мёртвый хост (404/410, не-картинка) раньше
+ * повторно съедал слоты по 8 с таймаута каждый час.
+ */
+export function negativeTtlMs(category: ImgErrorCategory, status?: number): number {
+  if (category === 'http_error') {
+    if (status === 404 || status === 410) return 24 * 3600_000 // ресурса нет — и завтра не будет
+    if (status && status >= 500) return 45 * 60_000 // сервер прилёг — может ожить
+    return 6 * 3600_000 // 403 и прочее — вряд ли изменится быстро
+  }
+  switch (category) {
+    case 'timeout':
+      return 45 * 60_000
+    case 'network':
+      return 6 * 3600_000 // DNS/соединение: даём шанс, но не каждый час
+    case 'host_cooldown':
+      return 10 * 60_000 // короткий: пауза хоста сама истечёт
+    default:
+      return 24 * 3600_000 // bad_content_type, too_large, empty, private_host, редиректы
+  }
+}
+
 const negative = new Map<string, number>() // ключ → до какого времени не пробовать
 
 /**
@@ -200,13 +281,17 @@ export type ImgErrorCategory =
   | 'empty' // тело пустое
   | 'timeout' // не уложились в TIMEOUT_MS
   | 'network' // сеть/DNS/прочее
+  | 'host_cooldown' // хост на паузе после серии таймаутов — origin не трогали
 
 type FetchOutcome =
   | { ok: true; body: Buffer; type: string; inputBytes: number; resizeMs: number }
-  | { ok: false; category: ImgErrorCategory }
+  | { ok: false; category: ImgErrorCategory; status?: number }
 
 async function fetchAndResize(url: string, w: number): Promise<FetchOutcome> {
-  await acquire()
+  const host = safeHostname(url)
+  // серия таймаутов уже выключила хост — не занимаем слоты зря
+  if (hostOnCooldown(host)) return { ok: false, category: 'host_cooldown' }
+  await acquireSlot(host)
   const ctrl = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
@@ -216,7 +301,7 @@ async function fetchAndResize(url: string, w: number): Promise<FetchOutcome> {
   try {
     const res = await safeFetch(url, ctrl.signal)
     if (!res) return { ok: false, category: 'too_many_redirects' }
-    if (!res.ok) return { ok: false, category: 'http_error' }
+    if (!res.ok) return { ok: false, category: 'http_error', status: res.status }
     const type = res.headers.get('content-type') || 'image/jpeg'
     if (!type.startsWith('image/')) return { ok: false, category: 'bad_content_type' }
     const orig = await readLimited(res, ctrl)
@@ -241,7 +326,7 @@ async function fetchAndResize(url: string, w: number): Promise<FetchOutcome> {
     return { ok: false, category: timedOut ? 'timeout' : 'network' }
   } finally {
     clearTimeout(timer)
-    release()
+    releaseSlot(host)
   }
 }
 
@@ -256,6 +341,7 @@ const DURATION_BUCKETS_MS = [10, 50, 200, 500, 2000] // последний «б�
 const counters = { hit: 0, miss: 0, negative: 0 }
 const durationBuckets = new Array(DURATION_BUCKETS_MS.length + 1).fill(0)
 const originFailures = new Map<ImgErrorCategory, number>()
+const hostFailures = new Map<string, number>() // hostname → неудач (видно битые CDN)
 
 function bucketOf(ms: number): number {
   for (let i = 0; i < DURATION_BUCKETS_MS.length; i++) if (ms < DURATION_BUCKETS_MS[i]) return i
@@ -286,6 +372,10 @@ export async function imgPipelineMetrics() {
       count: durationBuckets[i],
     })),
     originFailures: Object.fromEntries(originFailures),
+    // топ проблемных хостов: стабильно мёртвые CDN видно сразу, без чтения логов
+    hostFailures: Object.fromEntries(
+      [...hostFailures.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20),
+    ),
     cacheFiles: disk.length,
     cacheBytes: disk.reduce((s, e) => s + e.size, 0),
   }
@@ -303,6 +393,27 @@ export function warmShowcaseCovers(urls: (string | null)[], w = CAROUSEL_W): voi
   for (const url of urls) {
     if (!url || !/^https?:\/\//.test(url)) continue
     void cachedImage(url, w, sign(url, w)).catch(() => {})
+  }
+}
+
+/**
+ * Один прогрев для фонового обхода каталога (prewarm.ts): считает подпись сам
+ * и возвращает исход. Семафоры и негативный кэш — те же, что у живых запросов,
+ * так что прогрев не может ни обойти лимиты, ни задолбить мёртвый хост.
+ */
+export async function warmCover(url: string, w: number): Promise<'HIT' | 'MISS' | 'NEGATIVE' | 'SKIP'> {
+  if (!/^https?:\/\//.test(url)) return 'SKIP'
+  const r = await cachedImage(url, w, sign(url, w)).catch(() => null)
+  return r && 'cache' in r ? r.cache : 'NEGATIVE'
+}
+
+/** Есть ли уже превью на диске — дешёвая проверка без чтения файла и сети. */
+export async function isCachedExternal(url: string, w: number): Promise<boolean> {
+  try {
+    await stat(path.join(CACHE_DIR, keyOf(url, w)))
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -356,6 +467,7 @@ export async function cachedImage(
         recordDuration(dur)
         if (r.ok) {
           negative.delete(base)
+          noteHostOutcome(host, 'ok')
           await Promise.all([
             writeFile(base, r.body),
             writeFile(`${base}.type`, r.type),
@@ -365,10 +477,14 @@ export async function cachedImage(
           )
           return { body: r.body, type: r.type }
         }
-        negative.set(base, Date.now() + NEG_TTL_MS)
+        negative.set(base, Date.now() + negativeTtlMs(r.category, r.status))
+        noteHostOutcome(host, r.category)
         originFailures.set(r.category, (originFailures.get(r.category) ?? 0) + 1)
+        if (host) hostFailures.set(host, (hostFailures.get(host) ?? 0) + 1)
         // без полного url — он может нести query-токены чужого сервиса; хостом достаточно
-        console.log(`[img] fail host=${host} w=${w} category=${r.category} total=${dur}ms`)
+        console.log(
+          `[img] fail host=${host} w=${w} category=${r.category}${r.status ? ` status=${r.status}` : ''} total=${dur}ms`,
+        )
         return null
       })
       .finally(() => inflight.delete(base))

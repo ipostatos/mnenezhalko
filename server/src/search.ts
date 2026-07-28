@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { norm, prisma } from './db.js'
-import { CARD_W, proxyCover } from './imgcache.js'
+import { CARD_W, CAROUSEL_W, proxyCover } from './imgcache.js'
 
 export type SearchParams = {
   q?: string
@@ -23,6 +23,8 @@ export type BookCard = {
   city: string | null
   district: string | null
   coverUrl: string | null
+  /** та же обложка в 320px — для найденной поиском книги в центре карусели */
+  coverUrl320: string | null
   status: string
   source: string
   /** состояние модерации: pending | approved | rejected | deleted */
@@ -79,6 +81,7 @@ export function toCard(b: any, opts?: { w: number }): BookCard {
     city: b.city,
     district: b.district,
     coverUrl: proxyCover(b.coverUrl, w),
+    coverUrl320: proxyCover(b.coverUrl, CAROUSEL_W),
     status: b.status,
     source: b.source,
     reviewStatus: b.reviewStatus ?? 'approved',
@@ -103,12 +106,13 @@ function whereOf(p: SearchParams): Prisma.BookWhereInput {
 }
 
 /**
- * Сколько совпадений подтягиваем, чтобы ранжировать их целиком.
- * На библиотеке в 3000+ книг ни один осмысленный запрос столько не находит,
- * так что практически это «все совпадения», а потолок — защита от `q` из одной
- * буквы, под которую подходит половина базы.
+ * Сколько совпадений подтягиваем, чтобы ранжировать их целиком. Потолок выше
+ * размера библиотеки (3249): прежние 500 молча теряли хвост результатов при
+ * пагинации — страница за пределами окна отдавала пусто, хотя total больше.
+ * Худший случай (`q` из одной буквы ловит полбазы) — ~2–3 тыс. строк в памяти
+ * на один запрос; facets и так регулярно сканируют столько же.
  */
-const SCORE_WINDOW = 500
+const SCORE_WINDOW = 5000
 
 const relevance = (b: { title: string; author: string | null }, q: string) => {
   const title = norm(b.title)
