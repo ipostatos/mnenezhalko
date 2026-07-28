@@ -2,7 +2,6 @@ import { tg } from './telegram'
 import type {
   Book,
   CityInfo,
-  CityGroup,
   EventItem,
   Facets,
   Health,
@@ -108,7 +107,6 @@ export const api = {
   digest: (period: 'day' | 'month', city?: string) =>
     req<DigestResult>('GET', `/api/digest${qs({ period, city })}`),
   cities: () => req<CityInfo[]>('GET', '/api/cities'),
-  groups: (city?: string) => req<CityGroup[]>('GET', `/api/groups${qs({ city })}`),
   events: (city?: string) => req<EventItem[]>('GET', `/api/events${qs({ city })}`),
   market: (city?: string) => req<MarketItem[]>('GET', `/api/market${qs({ city })}`),
   addBook: (data: {

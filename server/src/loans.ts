@@ -44,7 +44,6 @@ export type LoanEventKind =
   | 'reminded'
   | 'returned'
   | 'reopened'
-  | 'cancelled'
 
 /** Пишет событие выдачи; не роняет основной путь, если запись не удалась. */
 export function logLoanEvent(loanId: string, kind: LoanEventKind, byTg?: bigint | null, meta?: string) {
@@ -169,10 +168,11 @@ export async function createLoan(d: LoanDraft) {
   return { ...loan, claimToken }
 }
 
-export const listLoans = (ownerTg: bigint, status: 'active' | 'returned' | 'all' = 'active') =>
+/** Активные выдачи владельца; закрытые живут в listHistory. */
+export const listLoans = (ownerTg: bigint) =>
   prisma.loan.findMany({
-    where: { ownerTg, ...(status === 'all' ? {} : { status }) },
-    orderBy: [{ status: 'asc' }, { takenAt: 'desc' }],
+    where: { ownerTg, status: 'active' },
+    orderBy: { takenAt: 'desc' },
     include: { book: { select: { id: true, title: true, coverUrl: true } } },
     take: 100,
   })

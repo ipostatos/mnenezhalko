@@ -381,7 +381,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const [given, taken, history] = await Promise.all([
-      listLoans(u.id, 'active'),
+      listLoans(u.id),
       listBorrowed(u.id),
       listHistory(u.id),
     ])

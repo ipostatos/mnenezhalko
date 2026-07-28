@@ -199,25 +199,3 @@ export async function recognizePhoto(
   return parsePhotoAnswer(text, genreList)
 }
 
-/**
- * Одна книга с фото — для мастера добавления в Mini App, который ведёт по одной
- * карточке. Если на фото несколько книг, берём первую распознанную.
- */
-export async function recognizeCover(data: string, mediaType: MediaType): Promise<Recognized | null> {
-  const r = await recognizePhoto(data, mediaType)
-  if (!r) return null
-  const first = r.books[0]
-  if (!first) {
-    return {
-      recognized: false,
-      kind: 'book',
-      title: '',
-      author: null,
-      languages: [],
-      genres: [],
-      confidence: 'low',
-      note: r.note,
-    }
-  }
-  return { ...first, note: r.note }
-}

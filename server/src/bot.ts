@@ -469,7 +469,7 @@ function loanDashboard(loans: { title: string; takenAt: Date; dueAt: Date | null
 
 bot.command('loans', async (ctx) => {
   const tgId = BigInt(ctx.from!.id)
-  const [given, taken] = await Promise.all([listLoans(tgId, 'active'), listBorrowed(tgId)])
+  const [given, taken] = await Promise.all([listLoans(tgId), listBorrowed(tgId)])
 
   if (!given.length && !taken.length) {
     return ctx.reply(
