@@ -5,7 +5,7 @@ import { upsertUser, verifyInitData, type TgUser } from './auth.js'
 import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
-import { decodeDataUrl, readCover, saveCover } from './covers.js'
+import { decodeDataUrl, readCover, readCoverVariant, saveCover } from './covers.js'
 import { recognizePhoto, visionEnabled, LANGUAGES } from './vision.js'
 import { looksLikeIsbn, lookupIsbnDetailed } from './isbn.js'
 import {
@@ -42,6 +42,7 @@ import {
   warmShowcaseCovers,
 } from './imgcache.js'
 import { isSafeCoverUrl } from './net.js'
+import { prewarmCoverage } from './prewarm.js'
 import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -286,13 +287,14 @@ export async function registerRoutes(app: FastifyInstance) {
     return reply.send(img.body)
   })
 
-  /** Метрики image pipeline (HIT/MISS/NEGATIVE, длительности, диск) — только админу. */
+  /** Метрики image pipeline + прогрев каталога (HIT/MISS/NEGATIVE, по хостам, диск) — только админу. */
   app.get('/api/admin/img-metrics', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const user = await upsertUser(u)
     if (!user.isAdmin) return reply.code(403).send({ error: 'admin_only' })
-    return imgPipelineMetrics()
+    const [pipeline, prewarm] = await Promise.all([imgPipelineMetrics(), prewarmCoverage()])
+    return json({ ...pipeline, prewarm })
   })
 
   app.get('/api/books/:id', async (req, reply) => {
@@ -645,9 +647,15 @@ export async function registerRoutes(app: FastifyInstance) {
     return json({ cover: saved.url, recognized, dup, extraBooks, languages: LANGUAGES })
   })
 
+  /** Своя обложка; с ?w= — превью нужной ширины через тот же sharp-конвейер. */
   app.get('/api/cover/:file', async (req, reply) => {
     const { file } = req.params as { file: string }
-    const found = await readCover(file)
+    const { w } = req.query as { w?: string }
+    const width = w ? Number(w) : null
+    const found =
+      width && ALLOWED_WIDTHS.includes(width)
+        ? await readCoverVariant(file, width)
+        : await readCover(file) // без ?w= (ссылка в Notion) — оригинал, как раньше
     if (!found) return reply.code(404).send({ error: 'not_found' })
     reply.header('Cache-Control', 'public, max-age=31536000, immutable')
     reply.type(found.type)

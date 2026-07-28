@@ -12,6 +12,7 @@ import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
 import { housekeepImgCache } from './imgcache.js'
 import { startJobLoop } from './scheduler.js'
+import { coverPrewarmJob } from './prewarm.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
@@ -142,6 +143,9 @@ startSyncLoop()
  * напоминания о просрочке не отработали НИ РАЗУ (аудит 2026-07-28).
  */
 // диск под превью обложек иначе растёт бесконечно (см. imgcache.ts) — не зависит от бота
+// прогрев превью всего каталога: людям — тёплые обложки, а не поход на CDN
+startJobLoop({ ...coverPrewarmJob, log: (m) => app.log.info(m), logError: (m) => app.log.error(m) })
+
 startJobLoop({
   name: 'imgcache-housekeep',
   periodMs: 6 * 3600_000,

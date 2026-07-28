@@ -6,7 +6,7 @@
  * поэтому она обязана быть абсолютной и стабильной.
  */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
@@ -97,6 +97,58 @@ export async function readCover(file: string): Promise<{ body: Buffer; type: str
     return { body, type: BY_EXT[file.split('.').pop()!] }
   } catch {
     return null
+  }
+}
+
+/**
+ * Превью собственной обложки шириной `w` — тот же sharp-конвейер, что у внешних
+ * (imgcache.ts), только источник локальный. Без этого фото с телефона (до
+ * 1600px, сотни КБ) уезжало в строку списка 44 CSS px как есть. Варианты
+ * лежат рядом (`variants/<w>-<файл>.webp`) и создаются на первый запрос;
+ * имя исходного файла — UUID, так что ссылка с ?w= остаётся immutable.
+ */
+const VARIANTS_DIR = path.join(COVERS_DIR, 'variants')
+const VARIANT_QUALITY = 78
+
+export const variantName = (file: string, w: number) => `${w}-${file}.webp`
+
+export async function readCoverVariant(
+  file: string,
+  w: number,
+): Promise<{ body: Buffer; type: string } | null> {
+  if (!/^[\w-]+\.(jpg|png|webp|gif)$/.test(file)) return null
+  // GIF не ресайзим (см. normalizeForStorage) — отдаём как есть
+  if (file.endsWith('.gif')) return readCover(file)
+  try {
+    const body = await readFile(path.join(VARIANTS_DIR, variantName(file, w)))
+    return { body, type: 'image/webp' }
+  } catch {
+    /* варианта ещё нет — соберём ниже */
+  }
+  const orig = await readCover(file)
+  if (!orig) return null
+  try {
+    const body = await sharp(orig.body, { failOn: 'none' })
+      .rotate()
+      .resize({ width: w, withoutEnlargement: true })
+      .webp({ quality: VARIANT_QUALITY })
+      .toBuffer()
+    await mkdir(VARIANTS_DIR, { recursive: true })
+    await writeFile(path.join(VARIANTS_DIR, variantName(file, w)), body).catch(() => {})
+    return { body, type: 'image/webp' }
+  } catch {
+    return orig // битый файл — лучше оригинал, чем ничего
+  }
+}
+
+/** Есть ли уже готовый вариант на диске (для прогрева) — stat, без чтения. */
+export async function isCoverVariantCached(file: string, w: number): Promise<boolean> {
+  if (file.endsWith('.gif')) return true
+  try {
+    await stat(path.join(VARIANTS_DIR, variantName(file, w)))
+    return true
+  } catch {
+    return false
   }
 }
 

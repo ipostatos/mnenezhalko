@@ -11,6 +11,8 @@ import {
 import { flushPending } from './publish.js'
 import { flushTelegramUpdates } from './librarian.js'
 import { invalidateFacets } from './search.js'
+import { runJobOnce } from './scheduler.js'
+import { coverPrewarmJob } from './prewarm.js'
 
 /** Источники Notion — инъекция для тестов циркуит-брейкера, без реальной сети. */
 export type SyncDeps = {
@@ -302,6 +304,10 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
     })
   }
   invalidateFacets()
+
+  // после синка могли появиться новые обложки — продолжаем прогрев, не дожидаясь
+  // очередного тика планировщика (повторный запуск поверх идущего он пропустит сам)
+  if (trusted) void runJobOnce(coverPrewarmJob)
 
   const report: SyncReport = {
     librarians: librarians.length,

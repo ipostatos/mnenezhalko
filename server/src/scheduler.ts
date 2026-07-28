@@ -142,7 +142,8 @@ export function startJobLoop(def: JobDef): void {
     )
     const timer = setTimeout(async () => {
       const r = await runJobOnce(def)
-      failures = r.ok ? 0 : failures + 1
+      // пропуск из-за уже идущего прогона (например, запуск после синка) — не ошибка
+      failures = r.ok ? 0 : r.skipped ? failures : failures + 1
       void schedule()
     }, delay)
     timer.unref?.()
