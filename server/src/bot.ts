@@ -52,6 +52,13 @@ import {
   pendingTelegramCount,
 } from './librarian.js'
 import { normHandle } from './notion.js'
+import {
+  REVIEW_TEXT_MAX,
+  canReview,
+  upsertReview,
+  validateReview,
+  workKeyOf,
+} from './reviews.js'
 import { lookupIsbnDetailed, looksLikeIsbn } from './isbn.js'
 import { warsawTime } from './time.js'
 
@@ -675,7 +682,136 @@ bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
       .sendMessage(String(other), `✅ «${loan.title}» отмечена как вернувшаяся.`)
       .catch(() => {})
   }
+  await askForRating(loan)
 })
+
+/* ── оценка книги после прочтения (issue #18) ─────────────── */
+
+/**
+ * Оценку спрашиваем ровно один раз и только у читателя: он книгу прочитал,
+ * владелец — не обязательно. Молчим, если выдача была «по названию», без
+ * карточки в каталоге: оценивать нечего, показать её будет негде.
+ */
+export async function askForRating(loan: { holderTg: bigint | null; bookId: string | null }) {
+  if (!loan.holderTg || !loan.bookId) return
+  const book = await prisma.book.findUnique({
+    where: { id: loan.bookId },
+    select: { id: true, title: true, active: true },
+  })
+  if (!book?.active) return
+  await bot.api
+    .sendMessage(
+      String(loan.holderTg),
+      [
+        `📖 Как вам «${esc(book.title)}»?`,
+        '',
+        'Поставьте оценку — её увидят все, кто ищет эту книгу в библиотеке.',
+      ].join('\n'),
+      { parse_mode: 'HTML', reply_markup: starsKeyboard(book.id) },
+    )
+    .catch(() => {})
+}
+
+const starsKeyboard = (bookId: string) => {
+  const kb = new InlineKeyboard()
+  for (let n = 1; n <= 5; n++) kb.text('⭐'.repeat(n), `rev:${bookId}:${n}`).row()
+  return kb
+}
+
+const starsLine = (n: number) => '⭐'.repeat(n) + '☆'.repeat(5 - n)
+
+/**
+ * Кто сейчас пишет аннотацию: tgId → книга и когда попросили. В памяти, как и
+ * черновики полки: потеря при рестарте не страшна, человек просто нажмёт
+ * кнопку ещё раз, а забытый диалог не должен ловить случайное сообщение через
+ * неделю.
+ */
+const reviewTextWait = new Map<number, { bookId: string; at: number }>()
+const REVIEW_WAIT_TTL_MS = 2 * 3600_000
+
+bot.callbackQuery(/^rev:([^:]+):([1-5])$/, async (ctx) => {
+  const bookId = ctx.match![1]
+  const rating = Number(ctx.match![2])
+  const book = await prisma.book.findUnique({
+    where: { id: bookId },
+    select: { id: true, title: true, author: true },
+  })
+  if (!book) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+
+  const tgId = BigInt(ctx.from.id)
+  if (!(await canReview(tgId, workKeyOf(book)))) {
+    return ctx.answerCallbackQuery({
+      text: 'Оценку ставит тот, кто книгу читал',
+      show_alert: true,
+    })
+  }
+
+  await upsertReview({ authorTg: tgId, book, rating, text: null })
+  reviewTextWait.set(ctx.from.id, { bookId, at: Date.now() })
+  await ctx.answerCallbackQuery({ text: 'Спасибо!' })
+  await ctx
+    .editMessageText(
+      [
+        `📖 «${esc(book.title)}» — ваша оценка: ${starsLine(rating)}`,
+        '',
+        'Если хотите, напишите пару слов о книге — следующим сообщением. ' +
+          `Не больше ${REVIEW_TEXT_MAX} знаков, увидят все.`,
+      ].join('\n'),
+      { parse_mode: 'HTML', reply_markup: starsKeyboard(book.id) },
+    )
+    .catch(() => {})
+})
+
+/** Аннотация пришла обычным сообщением — дописываем её к своей оценке. */
+async function handleReviewText(ctx: any, text: string): Promise<boolean> {
+  const wait = reviewTextWait.get(ctx.from.id)
+  if (!wait) return false
+  if (Date.now() - wait.at > REVIEW_WAIT_TTL_MS) {
+    reviewTextWait.delete(ctx.from.id)
+    return false
+  }
+  const book = await prisma.book.findUnique({
+    where: { id: wait.bookId },
+    select: { id: true, title: true, author: true },
+  })
+  if (!book) {
+    reviewTextWait.delete(ctx.from.id)
+    return false
+  }
+
+  const tgId = BigInt(ctx.from.id)
+  const mine = await prisma.review.findUnique({
+    where: { workKey_authorTg: { workKey: workKeyOf(book), authorTg: tgId } },
+    select: { rating: true },
+  })
+  // оценки нет — значит человек её удалил или это чужая переписка: не молчим,
+  // но и не придумываем оценку за него
+  if (!mine) {
+    reviewTextWait.delete(ctx.from.id)
+    await ctx.reply('Сначала поставьте оценку книге, потом добавлю к ней текст.')
+    return true
+  }
+
+  let parsed
+  try {
+    parsed = validateReview({ rating: mine.rating, text })
+  } catch (e: any) {
+    const msg: Record<string, string> = {
+      text_too_long: `Слишком длинно: не больше ${REVIEW_TEXT_MAX} знаков. Пришлите покороче.`,
+      links_not_allowed: 'Ссылки в отзывах не публикуем. Пришлите текст без ссылки.',
+    }
+    await ctx.reply(msg[e?.message] ?? 'Не получилось сохранить, попробуйте ещё раз.')
+    return true
+  }
+
+  await upsertReview({ authorTg: tgId, book, rating: mine.rating, text: parsed.text })
+  reviewTextWait.delete(ctx.from.id)
+  await ctx.reply(
+    `Записал: ${starsLine(mine.rating)} «${esc(book.title)}». Спасибо, это помогает выбирать.`,
+    { parse_mode: 'HTML' },
+  )
+  return true
+}
 
 // отмена подтверждения — возвращаем обычную кнопку
 bot.callbackQuery(/^loan:no:(.+)$/, async (ctx) => {
@@ -1944,6 +2080,9 @@ bot.on('message:text', async (ctx) => {
   if (isEventsTopic(ctx)) return handleAnnouncement(ctx, text)
   if (isMarketTopic(ctx)) return handleMarketPost(ctx, text)
   if (ctx.chat.type !== 'private') return
+  // человек только что поставил оценку и пишет пару слов о книге — это не
+  // вопрос к ИИ-подбору, куда уходит любой другой текст
+  if (await handleReviewText(ctx, text)) return
   // ISBN одной строкой — это «поставь вот эту книгу», а не вопрос к ИИ-подбору,
   // куда такое сообщение уходило раньше
   if (looksLikeIsbn(text)) return handleIsbnMessage(ctx, text)

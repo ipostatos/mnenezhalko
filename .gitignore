@@ -10,3 +10,4 @@ web/dist/
 .playwright-mcp/
 # исходные референсы дизайна от заказчика — в приложение уходят копии в web/public/il/
 ui/
+shadow-*.db

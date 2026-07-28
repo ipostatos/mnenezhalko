@@ -29,6 +29,11 @@ export const BookRow = memo(function BookRow({ book, onOpen }: { book: Book; onO
       <div className="grow">
         <div className="t-sm">{book.title}</div>
         <div className="d">{meta || 'Книга проекта'}</div>
+        {book.rating?.avg != null && (
+          <div className="rating-badge">
+            ★ {book.rating.avg.toFixed(1)} <span className="muted">({book.rating.count})</span>
+          </div>
+        )}
         {book.why && <div className="why">✨ {book.why}</div>}
       </div>
       <div className="chev">›</div>

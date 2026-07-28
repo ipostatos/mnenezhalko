@@ -4,6 +4,7 @@ import type { Route } from '../App'
 import type { Book } from '../types'
 import { haptic, openTg } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
+import { Reviews, Stars } from './Reviews'
 
 export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
   const [book, setBook] = useState<Book | null>(null)
@@ -45,6 +46,14 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
         <div className="grow">
           <h1>{book.title}</h1>
           {book.author && <div className="sub" style={{ marginBottom: 8 }}>{book.author}</div>}
+          {book.rating?.avg != null && (
+            <div className="rating-inline">
+              <Stars value={book.rating.avg} />
+              <span className="d muted">
+                {book.rating.avg.toFixed(1)} · {book.rating.count}
+              </span>
+            </div>
+          )}
           <div className="chips">
             {book.genres.slice(0, 4).map((g) => (
               <span key={g} className="chip sm" style={{ cursor: 'default' }}>
@@ -103,6 +112,8 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
       ) : (
         <div className="warn-banner">Владелец не указан — уточните в чате проекта.</div>
       )}
+
+      <Reviews bookId={book.id} />
 
       <div className="foot">
         Договоритесь напрямую: когда и где встретиться, на какой срок берёте книгу.

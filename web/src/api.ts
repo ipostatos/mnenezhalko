@@ -17,6 +17,9 @@ import type {
   HistoryLoan,
   ShelfBook,
   IsbnLookup,
+  Rating,
+  Review,
+  ReviewsPayload,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -128,4 +131,12 @@ export const api = {
   isbn: (code: string) => req<IsbnLookup>('GET', `/api/isbn${qs({ code })}`),
   /** Ссылка на счёт Telegram Stars для доната прямо в Mini App. */
   donateLink: (amount: number) => req<{ link: string }>('POST', '/api/donate/link', { amount }),
+  /** Оценки и аннотации к книге; canReview приходит только для читавших. */
+  reviews: (bookId: string) => req<ReviewsPayload>('GET', `/api/books/${bookId}/reviews`),
+  saveReview: (bookId: string, data: { rating: number; text: string | null }) =>
+    req<{ rating: Rating; items: Review[] }>('POST', `/api/books/${bookId}/review`, data),
+  deleteReview: (bookId: string) =>
+    req<{ rating: Rating; items: Review[] }>('DELETE', `/api/books/${bookId}/review`),
+  reportReview: (id: string) =>
+    req<{ hidden: boolean; reports: number }>('POST', `/api/reviews/${id}/report`, {}),
 }

@@ -26,6 +26,32 @@ export type Book = {
   rejectionReason?: string | null
   owner: Owner | null
   why?: string
+  /** оценка произведения; null — книгу ещё никто не оценил */
+  rating?: Rating | null
+}
+
+/** Средняя оценка книги и сколько людей её поставили. */
+export type Rating = { avg: number | null; count: number }
+
+/** Публичный отзыв: имя автора, без ника и без числового id (см. privacy.ts). */
+export type Review = {
+  id: string
+  rating: number
+  text: string | null
+  authorName: string
+  mine: boolean
+  createdAt: string
+}
+
+export type ReviewsPayload = {
+  rating: Rating
+  items: Review[]
+  /** запрос пришёл из Mini App с подписью Telegram (жалоба требует её) */
+  signed: boolean
+  /** право оценить есть только у того, кто книгу читал */
+  canReview: boolean
+  myReview: Review | null
+  textMax: number
 }
 
 /** Книга на моей полке с вычисленным состоянием. */
