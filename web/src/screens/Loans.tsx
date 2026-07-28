@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Loan, LoanSummary, HistoryLoan } from '../types'
 import { haptic, openTg, showAlert, showConfirm, onAppShow } from '../telegram'
+import { warsawDay } from '../dates'
 import { MoodBoard } from './MoodBoard'
 
 const UNDO_ERRORS: Record<string, string> = {
@@ -35,7 +36,8 @@ export function Loans({ go }: { go: (r: Route) => void }) {
   const [bookId, setBookId] = useState<string | null>(null)
   const [holder, setHolder] = useState('')
   const [term, setTerm] = useState<number | null>(30)
-  const [takenAt, setTakenAt] = useState(() => new Date().toISOString().slice(0, 10))
+  // варшавский календарный день: ночью «сегодня» не уезжает на вчера (UTC)
+  const [takenAt, setTakenAt] = useState(() => warsawDay())
   const [saving, setSaving] = useState(false)
   const [invite, setInvite] = useState<string | null>(null)
 
@@ -160,7 +162,7 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         <input
           className="input"
           type="date"
-          max={new Date().toISOString().slice(0, 10)}
+          max={warsawDay()}
           value={takenAt}
           onChange={(e) => setTakenAt(e.target.value)}
         />

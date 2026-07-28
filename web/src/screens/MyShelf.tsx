@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { ShelfBook, ShelfState } from '../types'
 import { haptic, showAlert, showConfirm, onAppShow } from '../telegram'
+import { useSeqGuard } from '../useSeqGuard'
 import { Icon } from './Icon'
 
 /* Тона состояний берём из фирменной палитры (см. :root в styles.css), а не
@@ -23,19 +24,40 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
+  const guard = useSeqGuard()
 
-  const load = () =>
-    api
+  // ошибка сбрасывается перед каждой загрузкой и после успеха: раньше один
+  // моргнувший запрос оставлял баннер ошибки до полного перезапуска Mini App
+  const load = () => {
+    const id = guard.next()
+    setError('')
+    return api
       .myShelf()
-      .then((r) => setBooks(r.books))
-      .catch((e) => setError(e.message))
+      .then((r) => {
+        if (!guard.isCurrent(id)) return
+        setBooks(r.books)
+        setError('')
+      })
+      .catch((e) => {
+        if (guard.isCurrent(id)) setError(e.message)
+      })
+  }
 
   useEffect(() => {
     load()
     return onAppShow(load)
   }, [])
 
-  if (error) return <div className="error-banner">{error}</div>
+  if (error && !books) {
+    return (
+      <div className="empty">
+        <div className="error-banner">{error}</div>
+        <button className="btn" onClick={load}>
+          Попробовать ещё раз
+        </button>
+      </div>
+    )
+  }
   if (!books) return <div className="spinner">Загружаю полку…</div>
 
   const grouped = ORDER.map((s) => ({ state: s, items: books.filter((b) => b.state === s) })).filter(

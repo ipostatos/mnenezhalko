@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Facets } from '../types'
+import { useSeqGuard } from '../useSeqGuard'
 import { BookRow } from './BookRow'
 import { CoverCarousel, type CarouselBook } from './CoverCarousel'
 
@@ -27,9 +28,15 @@ export function Library({
   const [showcase, setShowcase] = useState<CarouselBook[]>([])
   const [showcaseLoaded, setShowcaseLoaded] = useState(false)
   const seq = useRef(0)
+  const facetsGuard = useSeqGuard()
 
   useEffect(() => {
-    api.facets(onlyMyCity ? city : undefined).then(setFacets).catch(() => {})
+    // тумблер города: медленные фасеты старого фильтра не перетирают новые
+    const id = facetsGuard.next()
+    api
+      .facets(onlyMyCity ? city : undefined)
+      .then((f) => facetsGuard.isCurrent(id) && setFacets(f))
+      .catch(() => {})
   }, [city, onlyMyCity])
 
   useEffect(() => {
@@ -78,7 +85,9 @@ export function Library({
       arr.splice(Math.floor(arr.length / 2), 0, {
         id: firstMatch.id,
         title: firstMatch.title,
-        coverUrl: firstMatch.coverUrl!,
+        // центр карусели рисуется 156 CSS px (312 физических) — превью списка
+        // (96px) здесь превращалось в мыло на самом крупном элементе экрана
+        coverUrl: firstMatch.coverUrl320 ?? firstMatch.coverUrl!,
       })
       return arr
     }

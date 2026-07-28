@@ -17,6 +17,8 @@ export type Book = {
   city: string | null
   district: string | null
   coverUrl: string | null
+  /** та же обложка в 320px — для найденной поиском книги в центре карусели */
+  coverUrl320?: string | null
   status: string
   source: string
   /** состояние модерации: pending | approved | rejected | deleted */

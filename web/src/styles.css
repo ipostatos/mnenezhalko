@@ -66,6 +66,17 @@ body {
   touch-action: pan-y;
 }
 
+/* двойной тап по контролам не должен ни зумить, ни ждать 300 мс —
+   а JS-глушитель тапов больше не трогает интерактивные элементы */
+button,
+a,
+input,
+textarea,
+select,
+label {
+  touch-action: manipulation;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);

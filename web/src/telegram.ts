@@ -1,16 +1,35 @@
-export const tg: any = (window as any).Telegram?.WebApp
+// через globalThis: модуль импортируется и в node-тестах, где window нет
+export const tg: any = (globalThis as any).window?.Telegram?.WebApp
+
+/**
+ * Элементы, по которым люди осознанно «тапают быстро»: чипы жанров, кнопки,
+ * поля ввода. Глобальный глушитель двойного тапа раньше гасил КАЖДЫЙ второй
+ * быстрый тап по всему документу — быстрые тапы по чипам не срабатывали,
+ * а тап в input сразу после кнопки не давал фокус.
+ */
+const INTERACTIVE_SELECTOR = 'button, a, input, textarea, select, label, [role="button"]'
+
+/** Гасим только двойной тап по «пустому» месту (зум страницы), не по контролам. */
+export function shouldSuppressDoubleTap(sinceLastMs: number, target: EventTarget | null): boolean {
+  if (sinceLastMs > 300) return false
+  const el = target as Element | null
+  if (el && typeof el.closest === 'function' && el.closest(INTERACTIVE_SELECTOR)) return false
+  return true
+}
 
 export function initTelegram() {
   // жест «щипок» и двойной тап на iOS зумят страницу мимо viewport-правил
   for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
     document.addEventListener(type, (e) => e.preventDefault(), { passive: false })
   }
+  // основную защиту от зума двойным тапом даёт touch-action: manipulation
+  // (styles.css); этот обработчик — только страховка для старых WebView
   let lastTouch = 0
   document.addEventListener(
     'touchend',
     (e) => {
       const now = Date.now()
-      if (now - lastTouch <= 300) e.preventDefault()
+      if (shouldSuppressDoubleTap(now - lastTouch, e.target)) e.preventDefault()
       lastTouch = now
     },
     { passive: false },

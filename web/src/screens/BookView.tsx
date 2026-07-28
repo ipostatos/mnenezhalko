@@ -3,13 +3,23 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { Book } from '../types'
 import { haptic, openTg } from '../telegram'
+import { useSeqGuard } from '../useSeqGuard'
 
 export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
   const [book, setBook] = useState<Book | null>(null)
   const [error, setError] = useState('')
+  const guard = useSeqGuard()
 
   useEffect(() => {
-    api.book(id).then(setBook).catch((e) => setError(e.message))
+    // быстрый переход между книгами: медленный ответ прежней книги не должен
+    // показать чужие данные на новом экране
+    const seq = guard.next()
+    setBook(null)
+    setError('')
+    api
+      .book(id)
+      .then((b) => guard.isCurrent(seq) && setBook(b))
+      .catch((e) => guard.isCurrent(seq) && setError(e.message))
   }, [id])
 
   if (error) return <div className="error-banner">Не получилось открыть карточку: {error}</div>

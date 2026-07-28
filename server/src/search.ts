@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { norm, prisma } from './db.js'
-import { CARD_W, proxyCover } from './imgcache.js'
+import { CARD_W, CAROUSEL_W, proxyCover } from './imgcache.js'
 
 export type SearchParams = {
   q?: string
@@ -23,6 +23,8 @@ export type BookCard = {
   city: string | null
   district: string | null
   coverUrl: string | null
+  /** та же обложка в 320px — для найденной поиском книги в центре карусели */
+  coverUrl320: string | null
   status: string
   source: string
   /** состояние модерации: pending | approved | rejected | deleted */
@@ -79,6 +81,7 @@ export function toCard(b: any, opts?: { w: number }): BookCard {
     city: b.city,
     district: b.district,
     coverUrl: proxyCover(b.coverUrl, w),
+    coverUrl320: proxyCover(b.coverUrl, CAROUSEL_W),
     status: b.status,
     source: b.source,
     reviewStatus: b.reviewStatus ?? 'approved',
