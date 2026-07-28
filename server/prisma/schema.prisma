@@ -72,11 +72,16 @@ model Book {
   /// путь карточки в общую таблицу: local | pending | synced | failed
   notionStatus String @default("local")
   notionError  String?
-  /// состояние модерации: pending | approved | rejected | deleted.
+  /// состояние модерации: pending | approving | approved | rejected | deleted.
+  /// approving — переходное: один админ уже жмёт «одобрить» (см. approveBook).
   /// Дефолт approved — книги из Notion и режим без модерации попадают в каталог сразу.
   reviewStatus    String    @default("approved")
   reviewedByTg    BigInt?
   reviewedAt      DateTime?
+  /// когда и кто начал одобрение — для восстановления зависшего approving
+  approvalStartedAt   DateTime?
+  approvalStartedByTg BigInt?
+  approvalAttempt     Int       @default(0)
   rejectionReason String?
   submittedAt     DateTime?
   deletedAt       DateTime?

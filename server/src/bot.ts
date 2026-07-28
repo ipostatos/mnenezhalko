@@ -1562,7 +1562,31 @@ setModerationNotifier(async (book, owner) => {
 bot.callbackQuery(/^mod:ok:(.+)$/, async (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
   const res = await approveBook(ctx.match![1], BigInt(ctx.from.id))
-  if (!res) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+
+  // карточка уходит каждому админу: повторный тап и второй админ — штатные случаи
+  if (res.status === 'not_found') return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  if (res.status === 'in_progress') {
+    return ctx.answerCallbackQuery({ text: 'Уже одобряется другим админом' })
+  }
+  if (res.status === 'bad_state') {
+    return ctx.answerCallbackQuery({
+      text: res.reviewStatus === 'rejected' ? 'Книга уже отклонена' : 'Книга удалена',
+    })
+  }
+  if (res.status === 'failed') {
+    return ctx.answerCallbackQuery({ text: `Не получилось: ${res.error.slice(0, 150)}` })
+  }
+
+  if (res.already) {
+    await ctx.answerCallbackQuery({ text: 'Уже одобрено ✅' })
+    await ctx
+      .editMessageText(`✅ Одобрено: «${esc(res.card.title)}» — теперь в каталоге.`, {
+        parse_mode: 'HTML',
+      })
+      .catch(() => {})
+    return // владельцу второй раз не пишем
+  }
+
   await ctx.answerCallbackQuery({ text: 'Одобрено ✅' })
   await ctx.editMessageText(`✅ Одобрено: «${esc(res.card.title)}» — теперь в каталоге.`, {
     parse_mode: 'HTML',
@@ -1581,7 +1605,9 @@ bot.callbackQuery(/^mod:ok:(.+)$/, async (ctx) => {
 bot.callbackQuery(/^mod:no:(.+)$/, async (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
   const res = await rejectBook(ctx.match![1], BigInt(ctx.from.id), null)
-  if (!res) return ctx.answerCallbackQuery({ text: 'Книга не найдена' })
+  if (!res) {
+    return ctx.answerCallbackQuery({ text: 'Книга не найдена или уже одобряется другим админом' })
+  }
   await ctx.answerCallbackQuery({ text: 'Отклонено' })
   await ctx.editMessageText(`❌ Отклонено: «${esc(res.card.title)}».`, { parse_mode: 'HTML' })
   if (res.addedByTg) {

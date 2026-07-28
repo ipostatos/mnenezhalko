@@ -12,7 +12,14 @@ import type { Librarian } from '@prisma/client'
 import { prisma, buildSearch, norm } from './db.js'
 import { env, isAdmin } from './env.js'
 import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
-import { archiveRow, createBook, createOwner, notionWriteEnabled, updateBook } from './notion-write.js'
+import {
+  archiveRow,
+  createBook,
+  createOwner,
+  notionWriteEnabled,
+  stableNotionRowId,
+  updateBook,
+} from './notion-write.js'
 import { linkLibrarian } from './librarian.js'
 
 export type ShelfDraft = {
@@ -62,12 +69,16 @@ async function sendBookToNotion(bookId: string, librarian: Librarian) {
   let notionError: string | null = null
   if (notionWriteEnabled() && !librarian.notionId) {
     try {
-      const notionId = await createOwner({
-        name: librarian.name,
-        telegram: librarian.telegram,
-        instagram: librarian.instagram,
-        cityDistrict: cityDistrictOf(librarian.city, librarian.district),
-      })
+      const notionId = await createOwner(
+        {
+          name: librarian.name,
+          telegram: librarian.telegram,
+          instagram: librarian.instagram,
+          cityDistrict: cityDistrictOf(librarian.city, librarian.district),
+        },
+        // детерминированный id: ретрай после сбоя попадает в ту же строку Owners
+        stableNotionRowId(`owner:${librarian.id}`),
+      )
       await prisma.librarian.update({ where: { id: librarian.id }, data: { notionId } })
     } catch (e: any) {
       notionError = `Owners: ${e?.message ?? e}`
@@ -159,20 +170,92 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
 
 export type ReviewResult = { card: BookCard; addedByTg: bigint | null }
 
-/** Одобрить книгу с модерации: пускаем в каталог и в общую таблицу Notion. */
-export async function approveBook(bookId: string, adminTg: bigint): Promise<ReviewResult | null> {
+/** Зависший approving старше этого срока можно подхватить заново (процесс упал). */
+export const APPROVING_STALE_MS = 10 * 60_000
+
+export type ApproveOutcome =
+  /** одобрено сейчас; `already` — повторный тап по уже одобренной */
+  | ({ status: 'approved'; already: boolean } & ReviewResult)
+  /** другой админ жмёт «одобрить» прямо сейчас — не дублируем */
+  | { status: 'in_progress' }
+  /** отклонённую/удалённую так не одобрить — только явный resubmit */
+  | { status: 'bad_state'; reviewStatus: string }
+  | { status: 'not_found' }
+  /** публикация упала; книга возвращена в pending — можно повторить */
+  | { status: 'failed'; error: string }
+
+/**
+ * Одобрить книгу с модерации — идемпотентно и атомарно.
+ *
+ * Карточка «на проверку» уходит КАЖДОМУ админу, поэтому два одобрения (или
+ * двойной тап) — штатная ситуация, а не гонка. Инварианты: книгу можно одобрить
+ * один раз; публикацию в Notion выполняет один процесс; повторный callback
+ * получает `already`, а не вторую строку в таблице. Условный переход
+ * pending → approving в updateMany атомарен (SQLite — один писатель); ретраи
+ * создают строку Notion с детерминированным id (см. stableNotionRowId) — даже
+ * упавший на полпути повтор не плодит дубли.
+ */
+export async function approveBook(bookId: string, adminTg: bigint): Promise<ApproveOutcome> {
   const book = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
-  if (!book) return null
-  if (book.reviewStatus !== 'approved') {
-    await prisma.book.update({
+  if (!book) return { status: 'not_found' }
+  if (book.reviewStatus === 'approved') {
+    return {
+      status: 'approved',
+      already: true,
+      card: toCard({ ...book, owner: book.owner }),
+      addedByTg: book.addedByTg,
+    }
+  }
+  if (book.reviewStatus === 'rejected' || book.reviewStatus === 'deleted') {
+    return { status: 'bad_state', reviewStatus: book.reviewStatus }
+  }
+
+  // забираем право на одобрение: pending → approving; зависший approving
+  // (процесс упал посреди публикации) можно подхватить спустя таймаут
+  const claimed = await prisma.book.updateMany({
+    where: {
+      id: bookId,
+      OR: [
+        { reviewStatus: 'pending' },
+        {
+          reviewStatus: 'approving',
+          approvalStartedAt: { lt: new Date(Date.now() - APPROVING_STALE_MS) },
+        },
+      ],
+    },
+    data: {
+      reviewStatus: 'approving',
+      approvalStartedAt: new Date(),
+      approvalStartedByTg: adminTg,
+      approvalAttempt: { increment: 1 },
+    },
+  })
+  if (claimed.count === 0) return { status: 'in_progress' }
+
+  try {
+    let updated = await prisma.book.findUniqueOrThrow({ where: { id: bookId } })
+    if (book.owner) updated = await sendBookToNotion(bookId, book.owner)
+    updated = await prisma.book.update({
       where: { id: bookId },
       data: { reviewStatus: 'approved', reviewedByTg: adminTg, reviewedAt: new Date() },
     })
     invalidateFacets()
+    return {
+      status: 'approved',
+      already: false,
+      card: toCard({ ...updated, owner: book.owner }),
+      addedByTg: book.addedByTg,
+    }
+  } catch (e: any) {
+    const error = String(e?.message ?? e).slice(0, 300)
+    // повторяемое состояние: возвращаем pending, чтобы ретрай продолжил ту же
+    // операцию (строка Notion по детерминированному id не задвоится)
+    await prisma.book
+      .update({ where: { id: bookId }, data: { reviewStatus: 'pending' } })
+      .catch(() => {})
+    console.error('[moderation] одобрение не удалось:', error)
+    return { status: 'failed', error }
   }
-  let updated = await prisma.book.findUniqueOrThrow({ where: { id: bookId } })
-  if (book.owner) updated = await sendBookToNotion(bookId, book.owner)
-  return { card: toCard({ ...updated, owner: book.owner }), addedByTg: book.addedByTg }
 }
 
 /** Отклонить книгу: остаётся у владельца с причиной, в каталог/Notion не идёт. */
@@ -183,6 +266,8 @@ export async function rejectBook(
 ): Promise<ReviewResult | null> {
   const book = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
   if (!book) return null
+  // другой админ прямо сейчас одобряет — не выдёргиваем книгу у него из-под рук
+  if (book.reviewStatus === 'approving') return null
   const updated = await prisma.book.update({
     where: { id: bookId },
     data: {
@@ -206,7 +291,8 @@ export function shelfState(b: {
 }): 'active' | 'pending' | 'rejected' | 'onloan' | 'deleted' | 'syncerror' {
   if (b.reviewStatus === 'deleted') return 'deleted'
   if (b.reviewStatus === 'rejected') return 'rejected'
-  if (b.reviewStatus === 'pending') return 'pending'
+  // approving — мимолётное состояние одобрения, для владельца это всё ещё «на проверке»
+  if (b.reviewStatus === 'pending' || b.reviewStatus === 'approving') return 'pending'
   if (b.status === 'busy') return 'onloan'
   if (b.notionStatus === 'failed') return 'syncerror'
   return 'active'
@@ -339,12 +425,23 @@ export async function resubmitBook(bookId: string, ownerTg: bigint) {
   return { card, pending: true }
 }
 
-/** Одна попытка положить уже созданную карточку в общую таблицу. */
+/** Одна попытка положить уже созданную карточку в общую таблицу. Идемпотентна:
+ * у книги с notionId строка уже есть — второй раз не создаём, а новая строка
+ * создаётся с детерминированным id (ретрай попадает в ту же страницу). */
 async function pushToNotion(bookId: string, previousError: string | null = null) {
   const book = await prisma.book.findUniqueOrThrow({
     where: { id: bookId },
     include: { owner: true },
   })
+
+  if (book.notionId) {
+    return {
+      book: await prisma.book.update({
+        where: { id: bookId },
+        data: { notionStatus: 'synced', notionError: null },
+      }),
+    }
+  }
 
   if (!notionWriteEnabled()) {
     return {
@@ -356,18 +453,21 @@ async function pushToNotion(bookId: string, previousError: string | null = null)
   }
 
   try {
-    const notionId = await createBook({
-      kind: book.kind === 'game' ? 'game' : 'book',
-      title: book.title,
-      author: book.author,
-      genres: book.genres ? book.genres.split(',').map((s) => s.trim()).filter(Boolean) : [],
-      languages: book.languages
-        ? book.languages.split(',').map((s) => s.trim()).filter(Boolean)
-        : [],
-      coverUrl: book.coverUrl,
-      ownerNotionId: book.owner?.notionId ?? null,
-      cityDistrict: cityDistrictOf(book.city, book.district),
-    })
+    const notionId = await createBook(
+      {
+        kind: book.kind === 'game' ? 'game' : 'book',
+        title: book.title,
+        author: book.author,
+        genres: book.genres ? book.genres.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        languages: book.languages
+          ? book.languages.split(',').map((s) => s.trim()).filter(Boolean)
+          : [],
+        coverUrl: book.coverUrl,
+        ownerNotionId: book.owner?.notionId ?? null,
+        cityDistrict: cityDistrictOf(book.city, book.district),
+      },
+      stableNotionRowId(`book:${book.id}`),
+    )
     return {
       book: await prisma.book.update({
         where: { id: bookId },
