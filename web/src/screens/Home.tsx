@@ -1,11 +1,9 @@
 import type { Route } from '../App'
 import type { Health, LoanSummary, Me } from '../types'
 import { haptic, openTg } from '../telegram'
+import { MAIN_CHAT, INSTAGRAM } from '../links'
 import { MoodBoard } from './MoodBoard'
 import { Icon, type IconName } from './Icon'
-
-const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
-const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
 
 type Tile = {
   icon: IconName

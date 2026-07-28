@@ -3,6 +3,8 @@ import { api } from '../api'
 import type { Route } from '../App'
 import type { Book, Facets } from '../types'
 import { useSeqGuard } from '../useSeqGuard'
+import { openTg } from '../telegram'
+import { MAIN_CHAT } from '../links'
 import { BookRow } from './BookRow'
 import { CoverCarousel, type CarouselBook } from './CoverCarousel'
 
@@ -49,6 +51,8 @@ export function Library({
   const [total, setTotal] = useState(restore?.total ?? 0)
   const [loading, setLoading] = useState(!restore)
   const [loadingMore, setLoadingMore] = useState(false)
+  /** сколько нашлось в других городах, когда «у себя» пусто (null — не считали) */
+  const [elsewhere, setElsewhere] = useState<number | null>(null)
   const [showcase, setShowcase] = useState<CarouselBook[]>([])
   const [showcaseLoaded, setShowcaseLoaded] = useState(false)
   const seq = useRef(0)
@@ -137,6 +141,20 @@ export function Library({
     }, 250)
     return () => clearTimeout(timer)
   }, [params])
+
+  // «в моём городе пусто» — подсказываем, есть ли книга в других городах
+  useEffect(() => {
+    setElsewhere(null)
+    if (loading || total > 0 || !onlyMyCity || !city) return
+    if (!q.trim() && !genre) return // без запроса счётчик «всей библиотеки» не подсказка
+    const id = seq.current
+    api
+      .books({ ...params, city: undefined, limit: 1 })
+      .then((r) => {
+        if (id === seq.current) setElsewhere(r.total)
+      })
+      .catch(() => {})
+  }, [loading, total, onlyMyCity, city, params])
 
   /** Следующая страница добавляется к текущей; её ошибка не трогает загруженное. */
   async function loadMore() {
@@ -251,7 +269,21 @@ export function Library({
       {!loading && items.length === 0 && (
         <div className="empty">
           <img className="illus sm" src="/il/stack.jpg" alt="" loading="lazy" />
-          Ничего не нашлось. Попробуйте другое слово или снимите фильтры.
+          {onlyMyCity && city
+            ? `В городе ${city} такого не нашлось.`
+            : 'Ничего не нашлось. Попробуйте другое слово или снимите фильтры.'}
+          {elsewhere !== null && elsewhere > 0 && (
+            <>
+              <div style={{ height: 'var(--sp-4)' }} />
+              <button className="btn" onClick={() => setOnlyMyCity(false)}>
+                Показать в других городах ({elsewhere})
+              </button>
+            </>
+          )}
+          <div style={{ height: 'var(--sp-4)' }} />
+          <button className="btn ghost" onClick={() => openTg(MAIN_CHAT)}>
+            💬 Спросить в чате проекта
+          </button>
         </div>
       )}
 
