@@ -583,7 +583,8 @@ async function sendLoanCreated(ctx: any, loan: any) {
       reached
         ? 'Читателю написал — он сможет отметить возврат сам.'
         : 'Читатель ещё не знаком с ботом. Перешлите ему ссылку, чтобы он получал напоминания:',
-      reached ? '' : loanLink(loan.claimToken),
+      // без токена ссылку не строим: раньше сюда попадал буквальный «loan_null»
+      reached ? '' : loan.claimToken ? loanLink(loan.claimToken) : 'Список выдач: /loans',
       '',
       'Все выдачи — /loans',
     ]

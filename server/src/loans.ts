@@ -23,7 +23,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto'
 import { prisma } from './db.js'
-import { tgHandle } from './notion.js'
+import { normHandle } from './notion.js'
 import { archiveRow, notionWriteEnabled } from './notion-write.js'
 import { invalidateFacets } from './search.js'
 
@@ -63,6 +63,12 @@ export type LoanDraft = {
   note?: string | null
   /** когда книгу отдали: записать можно и задним числом */
   takenAt?: Date | string | null
+  /**
+   * ПРОВЕРЕННЫЙ tgId читателя — только когда человек явно выбран из
+   * подтверждённого источника (контакт, список с id), не догадка по нику.
+   * Единственный путь привязать holderTg при создании; иначе — claim-токен.
+   */
+  holderTgVerified?: bigint | null
 }
 
 const day = 86_400_000
@@ -82,22 +88,32 @@ function parseTakenAt(value?: Date | string | null): Date {
 }
 
 export async function createLoan(d: LoanDraft) {
-  const holderUsername = tgHandle(d.holder)
+  // канонический ник: lower-case, без @/ссылки (normHandle) — ники Telegram
+  // регистронезависимы, а `@Anna` и `anna` раньше просто не совпадали в SQLite
+  const holderUsername = normHandle(d.holder)
   const title = d.title.trim().slice(0, 300)
   if (!title) throw new Error('empty_title')
   if (!holderUsername) throw new Error('bad_holder')
 
-  // если такой человек уже писал боту — сможем напоминать сразу
-  const known = await prisma.user.findFirst({
-    where: { username: { equals: holderUsername } },
-    select: { tgId: true, firstName: true },
-  })
+  /**
+   * Ник — ПОДСКАЗКА, а не идентификатор: username переназначаем, а запись в
+   * нашей таблице User могла протухнуть — автопривязка по нику вешала выдачу
+   * на чужого человека (и напоминания уходили ему же). Реальная привязка
+   * holderTg происходит только через одноразовый claim-токен
+   * (claimLoanByToken) либо через явно проверенный d.holderTgVerified.
+   * По нику берём лишь имя для текста сообщений.
+   */
+  const known = holderUsername
+    ? await prisma.$queryRaw<{ firstName: string | null }[]>`
+        SELECT firstName FROM User WHERE lower(username) = ${holderUsername} LIMIT 1`
+    : []
 
   const days = d.days === null ? null : d.days ?? DEFAULT_DAYS
   const takenAt = parseTakenAt(d.takenAt)
 
-  // читателя ещё не знаем — понадобится ссылка-приглашение с одноразовым токеном
-  const claimToken = known?.tgId ? null : randomBytes(24).toString('base64url')
+  const holderTg = d.holderTgVerified ?? null
+  // без проверенного tgId понадобится ссылка-приглашение с одноразовым токеном
+  const claimToken = holderTg ? null : randomBytes(24).toString('base64url')
   const claimTokenHash = claimToken ? hashClaimToken(claimToken) : null
   const claimTokenExpiresAt = claimToken ? new Date(Date.now() + CLAIM_TOKEN_TTL_MS) : null
 
@@ -130,8 +146,8 @@ export async function createLoan(d: LoanDraft) {
         activeBookId: d.bookId ?? null,
         ownerTg: d.ownerTg,
         holderUsername,
-        holderName: d.holderName ?? known?.firstName ?? null,
-        holderTg: known?.tgId ?? null,
+        holderName: d.holderName ?? known[0]?.firstName ?? null,
+        holderTg,
         takenAt,
         // срок отсчитываем от дня выдачи, а не от момента записи
         dueAt: days ? new Date(takenAt.getTime() + days * day) : null,
