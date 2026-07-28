@@ -84,6 +84,8 @@ export type Health = {
   ok: boolean
   books: number
   librarians: number
+  /** число городов проекта — из справочника сервера, не хардкод */
+  cities?: number
   lastSync: string | null
   ai: boolean
   vision: boolean

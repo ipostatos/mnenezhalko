@@ -191,6 +191,8 @@ export async function registerRoutes(app: FastifyInstance) {
       ok: true,
       books,
       librarians,
+      // число городов — из справочника, а не хардкод «9» в двух местах фронта
+      cities: CITIES.length,
       lastSync: sync?.value ?? null,
       ai: aiEnabled(),
       vision: visionEnabled(),

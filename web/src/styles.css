@@ -504,6 +504,15 @@ h1 {
   border-radius: var(--r-md);
   padding: var(--sp-3);
   text-align: center;
+  /* счётчики — кнопки, ведущие в разделы */
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.stat-tiles .s:active {
+  transform: scale(0.97);
 }
 
 .stat-tiles .s .n {
