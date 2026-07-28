@@ -7,20 +7,40 @@
  * рекурсивным делением по диапазонам даты добавления.
  */
 import { env } from './env.js'
+import { fetchWithTimeout } from './net.js'
 
 const API = 'https://www.notion.so/api/v3'
+
+/**
+ * Потолок таймаута на один запрос к Notion: зависший fetch без AbortController
+ * замораживал весь синк-цикл (следующий прогон планируется после текущего).
+ */
+export const NOTION_TIMEOUT_MS = Number(process.env.NOTION_TIMEOUT_MS || 30_000)
+
+/**
+ * Сколько строк просим за один запрос. Проверено живым запросом 2026-07-28:
+ * queryCollection честно отдаёт limit=5000 (все 3240 книг, hasMore=false) —
+ * «потолок 1000» был самоограничением клиента. hasMore при этом остаётся
+ * страховкой: если сервер однажды начнёт резать, усечение не пройдёт молча
+ * (шардирование по датам для книг, громкая ошибка для остальных).
+ */
+export const NOTION_FETCH_LIMIT = Number(process.env.NOTION_FETCH_LIMIT || 5000)
 
 type Rec = Record<string, any>
 
 async function post(path: string, body: Rec): Promise<Rec> {
-  const res = await fetch(`${API}/${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (compatible; mnenezhalko-bot)',
+  const res = await fetchWithTimeout(
+    `${API}/${path}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; mnenezhalko-bot)',
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  })
+    NOTION_TIMEOUT_MS,
+  )
   if (!res.ok) {
     throw new Error(`Notion ${path} → ${res.status} ${await res.text().catch(() => '')}`)
   }
@@ -91,7 +111,7 @@ async function queryRaw(
   collection: string,
   view: string,
   filters: Rec[] | null,
-  limit = 1000,
+  limit = NOTION_FETCH_LIMIT,
 ): Promise<Rec> {
   const loader: Rec = {
     type: 'reducer',
@@ -154,8 +174,10 @@ const dateFilter = (pid: string, op: string, day: string) => ({
 })
 
 /**
- * Забирает все строки коллекции. Если ответ упирается в лимит сервера,
- * рекурсивно делит диапазон по датам пополам.
+ * Забирает все строки коллекции. Если ответ упирается в лимит, у коллекций с
+ * датой добавления рекурсивно делит диапазон по датам пополам, у остальных —
+ * громко падает: молчаливое усечение (раньше — первые 1000 строк Owners и
+ * Board Games) выглядело бы для синка как «эти строки пропали из Notion».
  */
 async function fetchAll(
   collection: string,
@@ -164,10 +186,20 @@ async function fetchAll(
 ): Promise<{ rows: NotionRow[]; schema: Schema }> {
   const first = await queryRaw(collection, view, null)
   const schema = schemaOf(first)
-  if (!hasMore(first) || !dateProp) return { rows: rowsOf(first), schema }
+  if (!hasMore(first)) return { rows: rowsOf(first), schema }
+  if (!dateProp) {
+    throw new Error(
+      `Notion: коллекция ${collection} вернула больше ${NOTION_FETCH_LIMIT} строк — ` +
+        'поднимите NOTION_FETCH_LIMIT, иначе часть строк потеряется',
+    )
+  }
 
   const pid = schema.byName[dateProp]
-  if (!pid) return { rows: rowsOf(first), schema }
+  if (!pid) {
+    throw new Error(
+      `Notion: коллекция ${collection} упёрлась в лимит, а поле «${dateProp}» для шардирования не нашлось`,
+    )
+  }
 
   const byId = new Map<string, NotionRow>()
   const take = (rs: NotionRow[]) => rs.forEach((r) => byId.set(r.id, r))

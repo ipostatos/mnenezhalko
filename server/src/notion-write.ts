@@ -13,7 +13,8 @@
  */
 import { randomUUID } from 'node:crypto'
 import { env } from './env.js'
-import { collectionSchema, type Schema } from './notion.js'
+import { collectionSchema, NOTION_TIMEOUT_MS, type Schema } from './notion.js'
+import { fetchWithTimeout } from './net.js'
 
 const API = 'https://www.notion.so/api/v3'
 const SAVE_ENDPOINTS = ['saveTransactionsFanout', 'saveTransactions']
@@ -32,11 +33,12 @@ function headers(): Record<string, string> {
 }
 
 async function call(path: string, body: unknown): Promise<any> {
-  const res = await fetch(`${API}/${path}`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify(body),
-  })
+  // таймаут обязателен: зависшая запись стопорила бы синк и одобрение книг
+  const res = await fetchWithTimeout(
+    `${API}/${path}`,
+    { method: 'POST', headers: headers(), body: JSON.stringify(body) },
+    NOTION_TIMEOUT_MS,
+  )
   const text = await res.text()
   if (!res.ok) throw new Error(`Notion ${path} → ${res.status} ${text.slice(0, 300)}`)
   return text ? JSON.parse(text) : {}

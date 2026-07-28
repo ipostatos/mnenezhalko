@@ -55,11 +55,25 @@ export function setSyncAlert(fn: (msg: string) => void) {
   syncAlert = fn
 }
 
+// Синк не должен идти в два потока: фоновый цикл сериализован сам по себе, но
+// ручной /sync или sync-cli могли наложиться на него и погонять upsert'ы вперегонки.
+let syncInProgress = false
+
 /**
  * Полная синхронизация из Notion. Идемпотентна: строки матчатся по notionId,
  * записи, добавленные через бота (source = 'bot'), не трогаются.
  */
 export async function syncFromNotion(log = console.log, deps: SyncDeps = defaultDeps): Promise<SyncReport> {
+  if (syncInProgress) throw new Error('синк уже идёт — дождитесь завершения')
+  syncInProgress = true
+  try {
+    return await runSync(log, deps)
+  } finally {
+    syncInProgress = false
+  }
+}
+
+async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncReport> {
   const started = Date.now()
 
   // сначала отдаём в Notion свои карточки, иначе синк их не увидит
@@ -97,10 +111,17 @@ export async function syncFromNotion(log = console.log, deps: SyncDeps = default
 
   for (const l of librarians) {
     const contact = { telegram: l.telegram, telegramNorm: normHandle(l.telegram) }
-    const common = { name: l.name, instagram: l.instagram, city: l.city, district: l.district }
+    const common: Record<string, unknown> = { name: l.name, instagram: l.instagram }
+    // Город из Notion применяем, только если он там ЗАПОЛНЕН: пустое City не
+    // должно затирать локальный backfill — иначе книги владельца каждые 12 часов
+    // выпадали из городских фильтров (см. docs/DATA_OWNERSHIP.md).
+    if (l.city) {
+      common.city = l.city
+      common.district = l.district
+    }
     await prisma.librarian.upsert({
       where: { notionId: l.notionId },
-      create: { notionId: l.notionId, ...common, ...contact },
+      create: { notionId: l.notionId, name: l.name, instagram: l.instagram, city: l.city, district: l.district, ...contact },
       // у записи с невыполненной отправкой локальный контакт — источник правды
       update: pendingContacts.has(l.notionId) ? common : { ...common, ...contact },
     })
@@ -153,11 +174,59 @@ export async function syncFromNotion(log = console.log, deps: SyncDeps = default
     log(`[sync] настолки не загрузились: ${e?.message ?? e}`)
   }
 
+  /**
+   * Merge-правила источников истины (docs/DATA_OWNERSHIP.md): Notion владеет
+   * библиографией, но НЕ владеет локальным состоянием — статусом выдачи,
+   * tombstone удаления, непустыми локальными правками города и датой добавления.
+   * До этого upsert слепо перезаписывал всё: каждые 12 часов выданная книга
+   * становилась «свободной», города обнулялись, удалённые книги воскресали.
+   */
+  const incoming = [...books, ...games]
+  const existingRows = incoming.length
+    ? await prisma.book.findMany({
+        where: { notionId: { in: incoming.map((b) => b.notionId) } },
+        select: {
+          id: true,
+          notionId: true,
+          city: true,
+          district: true,
+          addedAt: true,
+          reviewStatus: true,
+          deletedAt: true,
+        },
+      })
+    : []
+  const existingByNotion = new Map(existingRows.map((b) => [b.notionId!, b]))
+  // книга с активной выдачей остаётся busy, что бы ни сказал Notion (у книг
+  // там вообще захардкожен free); после возврата выдача закрыта — статус free
+  const busyBookIds = new Set(
+    (
+      await prisma.loan.findMany({
+        where: { status: 'active', bookId: { not: null } },
+        select: { bookId: true },
+      })
+    ).map((l) => l.bookId!),
+  )
+
   const seen = new Set<string>()
-  for (const b of [...books, ...games]) {
+  for (const b of incoming) {
+    seen.add(b.notionId)
+    const existing = existingByNotion.get(b.notionId)
+
+    // tombstone: удалённую у нас книгу синк не воскрешает, даже если строка
+    // осталась в Notion (архивирование могло упасть — его дожмёт flushPending)
+    if (existing && (existing.reviewStatus === 'deleted' || existing.deletedAt)) continue
+
     const owner = b.ownerNotionId ? ownerByNotion.get(b.ownerNotionId) : undefined
-    const city = b.city ?? owner?.city ?? null
-    const district = b.district ?? owner?.district ?? null
+    const cityIncoming = b.city ?? owner?.city ?? null
+    const districtIncoming = b.district ?? owner?.district ?? null
+    // непустое локальное значение города переживает пустое из Notion; непустой
+    // город из Notion применяется (правки уезжают туда же через updateBook)
+    const city = cityIncoming ?? existing?.city ?? null
+    const district = cityIncoming ? districtIncoming : (existing?.district ?? districtIncoming)
+    const status = existing && busyBookIds.has(existing.id) ? 'busy' : b.status
+    const addedAt = b.addedAt ?? existing?.addedAt ?? null
+
     const data = {
       kind: b.kind,
       title: b.title,
@@ -165,8 +234,8 @@ export async function syncFromNotion(log = console.log, deps: SyncDeps = default
       genres: b.genres,
       languages: b.languages,
       coverUrl: b.coverUrl,
-      status: b.status,
-      addedAt: b.addedAt,
+      status,
+      addedAt,
       city,
       district,
       ownerId: owner?.id ?? null,
@@ -186,7 +255,6 @@ export async function syncFromNotion(log = console.log, deps: SyncDeps = default
       create: { notionId: b.notionId, ...data },
       update: data,
     })
-    seen.add(b.notionId)
   }
 
   // То, что пропало из Notion, прячем, но не удаляем — отдельно для книг и

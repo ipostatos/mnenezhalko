@@ -196,6 +196,7 @@ export async function markReturned(id: string, byTg: bigint) {
         const book = await tx.book.findUnique({ where: { id: updated.bookId } })
         // владелец просил скрыть книгу после возврата — мягко удаляем её сейчас
         if (book?.hideAfterReturn) {
+          const wantArchive = Boolean(book.notionId && notionWriteEnabled())
           await tx.book.update({
             where: { id: book.id },
             data: {
@@ -205,9 +206,12 @@ export async function markReturned(id: string, byTg: bigint) {
               deletedAt: new Date(),
               deletedByTg: loan.ownerTg,
               hideAfterReturn: false,
+              // флаг снимается после успешного archiveRow; упавшая попытка
+              // дожимается flushPending, а tombstone не даёт синку воскресить
+              notionArchivePending: wantArchive,
             },
           })
-          if (book.notionId && notionWriteEnabled()) archiveNotionId = book.notionId
+          if (wantArchive) archiveNotionId = book.notionId
         } else {
           await tx.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
         }
@@ -221,7 +225,16 @@ export async function markReturned(id: string, byTg: bigint) {
   if (result.archiveNotionId) {
     invalidateFacets()
     // внешний вызов в Notion — намеренно вне транзакции, откатывать тут нечего
-    await archiveRow(result.archiveNotionId).catch(() => {})
+    await archiveRow(result.archiveNotionId)
+      .then(() =>
+        prisma.book.updateMany({
+          where: { notionId: result.archiveNotionId },
+          data: { notionArchivePending: false },
+        }),
+      )
+      .catch((e) =>
+        console.error('[notion] архивирование после возврата не удалось (дожмётся flushPending):', e?.message ?? e),
+      )
   }
   return result.updated
 }

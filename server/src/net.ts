@@ -89,6 +89,28 @@ export async function assertPublicUrl(raw: string): Promise<ResolvedAddr[]> {
 }
 
 /**
+ * fetch с жёстким таймаутом. Все внешние вызовы (Notion, Telegram-файлы) обязаны
+ * идти через него: зависший запрос без AbortController замораживал синк-цикл
+ * целиком — следующий прогон планируется только после завершения текущего.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal })
+  } catch (e: any) {
+    if (ctrl.signal.aborted) throw new Error(`timeout_${timeoutMs}ms`)
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * Дешёвая синхронная проверка coverUrl при приёме от пользователя (без DNS) —
  * быстрый отказ на очевидно небезопасном. Полную проверку с DNS делает
  * assertPublicUrl уже при загрузке (в т.ч. защита от DNS-rebinding).

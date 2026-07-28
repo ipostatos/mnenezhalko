@@ -280,6 +280,7 @@ export async function softDeleteBook(bookId: string, ownerTg: bigint, hideAfterR
     return { deferred: true as const }
   }
 
+  const wantArchive = Boolean(b.notionId && notionWriteEnabled())
   const updated = await prisma.book.update({
     where: { id: bookId },
     data: {
@@ -288,14 +289,22 @@ export async function softDeleteBook(bookId: string, ownerTg: bigint, hideAfterR
       deletedAt: new Date(),
       deletedByTg: ownerTg,
       hideAfterReturn: false,
+      // строку в Notion надо заархивировать; флаг снимаем только после успеха,
+      // упавшая попытка дожимается flushPending — раньше ошибка глоталась, и
+      // единственной защитой от «воскрешения» был бы следующий ручной заход
+      notionArchivePending: wantArchive,
     },
     include: { owner: true },
   })
   invalidateFacets()
-  if (updated.notionId && notionWriteEnabled()) {
-    await archiveRow(updated.notionId).catch((e) =>
-      console.error('[notion] архивирование книги не удалось:', e?.message ?? e),
-    )
+  if (wantArchive) {
+    await archiveRow(updated.notionId!)
+      .then(() =>
+        prisma.book.update({ where: { id: bookId }, data: { notionArchivePending: false } }),
+      )
+      .catch((e) =>
+        console.error('[notion] архивирование книги не удалось (дожмётся flushPending):', e?.message ?? e),
+      )
   }
   return { card: toCard({ ...updated, owner: updated.owner }) }
 }
@@ -399,6 +408,24 @@ export async function flushPending(limit = 50): Promise<{ ok: number; failed: nu
   for (const r of rows) {
     const { book } = await pushToNotion(r.id)
     book.notionStatus === 'synced' ? ok++ : failed++
+  }
+
+  // недоархивированные удаления: без дожима строка оставалась бы в Notion,
+  // а от «воскрешения» защищал бы только tombstone в синке
+  const archives = await prisma.book.findMany({
+    where: { notionArchivePending: true, notionId: { not: null } },
+    select: { id: true, notionId: true },
+    take: limit,
+  })
+  for (const a of archives) {
+    try {
+      await archiveRow(a.notionId!)
+      await prisma.book.update({ where: { id: a.id }, data: { notionArchivePending: false } })
+      ok++
+    } catch (e: any) {
+      console.error('[notion] повторное архивирование не удалось:', e?.message ?? e)
+      failed++
+    }
   }
   return { ok, failed }
 }
