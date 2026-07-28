@@ -400,19 +400,25 @@ export async function runOverdueReminders(opts: {
   botUsername: string
   now?: Date
   delayMs?: number
-}): Promise<{ loans: number; sent: number; failed: number }> {
+}): Promise<{ loans: number; sent: number; failed: number; reminded: number }> {
   const now = opts.now ?? new Date()
   const loans = await dueLoans(now)
   let sent = 0
   let failed = 0
-  const track = (p: Promise<unknown>) =>
-    p.then(() => {
-      sent++
-    }).catch(() => {
-      failed++
-    })
+  let reminded = 0
 
   for (const loan of loans) {
+    // доставку считаем по каждой выдаче отдельно: remindedAt честно ставится,
+    // только если сообщение реально дошло хотя бы одной из сторон — иначе
+    // Telegram лежал, никто ничего не получил, а повтор блокировался на 7 дней
+    let delivered = 0
+    const track = (p: Promise<unknown>) =>
+      p.then(() => {
+        sent++
+        delivered++
+      }).catch(() => {
+        failed++
+      })
     const days = daysOut(loan.takenAt, now)
     const kb = {
       inline_keyboard: [[{ text: '✅ Книга вернулась', callback_data: `loan:back:${loan.id}` }]],
@@ -441,10 +447,13 @@ export async function runOverdueReminders(opts: {
         { reply_markup: kb, link_preview_options: { is_disabled: true } },
       ),
     )
-    await markReminded(loan.id)
+    if (delivered > 0) {
+      await markReminded(loan.id)
+      reminded++
+    }
     if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs))
   }
-  return { loans: loans.length, sent, failed }
+  return { loans: loans.length, sent, failed, reminded }
 }
 
 /** Сколько дней книга на руках. */

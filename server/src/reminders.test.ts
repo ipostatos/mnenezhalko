@@ -180,3 +180,35 @@ test('10. ошибка отправки одному не срывает рас�
   const notReminded = await prisma.loan.count({ where: { remindedAt: null } })
   assert.equal(notReminded, 0)
 })
+
+test('11. полный сбой Telegram — remindedAt НЕ ставится, повтор не блокируется на 7 дней', async () => {
+  await seedLoan({ title: 'K', ownerTg: 300n, holderTg: null, holderUsername: 'ghost', takenAt: new Date(NOW.getTime() - 40 * DAY), dueAt: new Date(NOW.getTime() - DAY) })
+  const sent: string[] = []
+  const failAll = async () => {
+    throw new Error('telegram down')
+  }
+  const r = await runOverdueReminders({ send: failAll, botUsername: 'testbot', now: NOW })
+  assert.equal(r.loans, 1)
+  assert.equal(r.sent, 0)
+  assert.equal(r.reminded, 0)
+  const loan = await prisma.loan.findFirstOrThrow({ where: { title: 'K' } })
+  assert.equal(loan.remindedAt, null, 'при полном фейле выдача остаётся в очереди')
+  const events = await prisma.loanEvent.count({ where: { loanId: loan.id, kind: 'reminded' } })
+  assert.equal(events, 0, 'ложное событие reminded не пишется')
+  // Telegram ожил — следующий прогон дожимает ту же выдачу без ожидания недели
+  const c = collector()
+  const retry = await runOverdueReminders({ send: c.send, botUsername: 'testbot', now: NOW })
+  assert.equal(retry.loans, 1)
+  assert.equal(retry.reminded, 1)
+  void sent
+})
+
+test('12. частичный успех (читатель недоступен, владелец получил) — remindedAt ставится', async () => {
+  await seedLoan({ title: 'L', ownerTg: 400n, holderTg: 401n, takenAt: new Date(NOW.getTime() - 40 * DAY), dueAt: new Date(NOW.getTime() - DAY) })
+  const c = collector('401') // читатель заблокировал бота
+  const r = await run(c)
+  assert.equal(r.loans, 1)
+  assert.equal(r.reminded, 1)
+  const loan = await prisma.loan.findFirstOrThrow({ where: { title: 'L' } })
+  assert.ok(loan.remindedAt, 'доставка владельцу — достаточное основание')
+})
