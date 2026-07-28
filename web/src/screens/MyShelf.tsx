@@ -24,6 +24,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
+  const [q, setQ] = useState('')
   const guard = useSeqGuard()
 
   // ошибка сбрасывается перед каждой загрузкой и после успеха: раньше один
@@ -60,9 +61,18 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
   }
   if (!books) return <div className="spinner">Загружаю полку…</div>
 
-  const grouped = ORDER.map((s) => ({ state: s, items: books.filter((b) => b.state === s) })).filter(
-    (g) => g.items.length,
-  )
+  // поиск по своей полке: название, автор, тип — группировка статусов сохраняется
+  const needle = q.trim().toLowerCase()
+  const matches = (b: ShelfBook) =>
+    !needle ||
+    b.title.toLowerCase().includes(needle) ||
+    (b.author ?? '').toLowerCase().includes(needle) ||
+    (b.kind === 'game' && 'настолка'.includes(needle)) ||
+    STATE[b.state].label.toLowerCase().includes(needle)
+  const grouped = ORDER.map((s) => ({
+    state: s,
+    items: books.filter((b) => b.state === s && matches(b)),
+  })).filter((g) => g.items.length)
 
   async function del(b: ShelfBook) {
     if (b.state === 'onloan') {
@@ -145,6 +155,20 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
             <div className="c">на проверке</div>
           </div>
         </div>
+      )}
+
+      {books.length > 3 && (
+        <input
+          className="input"
+          placeholder="Поиск по полке: название, автор…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ marginBottom: 'var(--sp-4)' }}
+        />
+      )}
+
+      {books.length > 0 && grouped.length === 0 && (
+        <div className="empty">Ничего не нашлось на полке. Попробуйте другое слово.</div>
       )}
 
       {!books.length && (
