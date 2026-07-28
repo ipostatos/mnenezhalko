@@ -189,13 +189,16 @@ model Event {
   url         String?
   /// откуда встреча: admin | topic (афиша из чата проекта)
   source      String   @default("admin")
-  /// id сообщения-афиши, чтобы не заводить встречу дважды
-  sourceMsgId Int?     @unique
+  /// id сообщения-афиши + порядковый номер встречи в нём: одно сообщение может
+  /// нести несколько встреч, дедуп только по msgId терял все, кроме первой
+  sourceMsgId      Int?
+  sourceEventIndex Int?
   createdAt   DateTime @default(now())
   createdBy   BigInt?
 
   author User? @relation(fields: [createdBy], references: [tgId])
 
+  @@unique([sourceMsgId, sourceEventIndex])
   @@index([city, startsAt])
 }
 

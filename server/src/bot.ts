@@ -53,6 +53,7 @@ import {
 } from './librarian.js'
 import { normHandle } from './notion.js'
 import { lookupIsbnDetailed, looksLikeIsbn } from './isbn.js'
+import { warsawTime } from './time.js'
 
 // при DISABLE_BOT=1 токена может не быть вовсе, но модуль всё равно импортируется
 // (из routes.ts за ником бота) — grammY на пустой строке падает, отсюда заглушка
@@ -854,8 +855,8 @@ async function handleAnnouncement(ctx: any, text: string) {
     console.error('[events] не разобрал афишу:', e?.message ?? e)
     return []
   })
-  for (const e of events) {
-    const created = await saveAnnouncement(e, ctx.message.message_id)
+  for (const [i, e] of events.entries()) {
+    const created = await saveAnnouncement(e, ctx.message.message_id, i)
     if (created) await notifyNewEvent(created)
   }
 }
@@ -1794,7 +1795,9 @@ bot.command('addevent', async (ctx) => {
     return ctx.reply('Формат: /addevent Город | 2026-08-01 18:30 | Название | Место')
   }
   const [city, when, title, place] = parts
-  const startsAt = new Date(when.replace(' ', 'T') + ':00+02:00')
+  // варшавское время с учётом CET/CEST, не захардкоженный +02:00
+  const m = when.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/)
+  const startsAt = m ? warsawTime(m[1], m[2]) : new Date(NaN)
   if (Number.isNaN(startsAt.getTime())) return ctx.reply('Не понял дату. Формат: 2026-08-01 18:30')
   const event = await prisma.event.create({
     data: { city, title, startsAt, place: place || null, createdBy: BigInt(ctx.from!.id) },
