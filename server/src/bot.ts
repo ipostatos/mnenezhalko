@@ -378,6 +378,12 @@ async function handleAi(ctx: any, text: string) {
       link_preview_options: { is_disabled: true },
       reply_markup: mainKeyboard(),
     })
+  } catch (e: any) {
+    // после «typing…» молчать нельзя — человек так и ждал ответа
+    console.error('[ai] подбор упал:', e?.message ?? e)
+    await ctx
+      .reply('Помощник сейчас недоступен — попробуйте через пару минут или поищите через /find.')
+      .catch(() => {})
   } finally {
     aiBusy.delete(tgId)
   }
@@ -541,18 +547,25 @@ bot.command('lend', async (ctx) => {
     { tgId: BigInt(ctx.from!.id), username: ctx.from!.username, firstName: ctx.from!.first_name },
     { allowCreate: false },
   )
-  const book = own
-    ? await prisma.book.findFirst({
-        where: { ownerId: own.id, active: true, title: { contains: title } },
-        select: { id: true },
-      })
-    : null
+  // привязываем карточку только при ОДНОЗНАЧНОМ совпадении названия свободной
+  // книги: прежний contains мог зацепить не ту (или занятую) книгу с полки
+  let bookId: string | null = null
+  if (own) {
+    const candidates = await prisma.book.findMany({
+      where: { ownerId: own.id, active: true, reviewStatus: 'approved', status: 'free' },
+      select: { id: true, title: true },
+      take: 300,
+    })
+    const nt = title.trim().toLowerCase()
+    const exact = candidates.filter((b) => b.title.trim().toLowerCase() === nt)
+    if (exact.length === 1) bookId = exact[0].id
+  }
 
   try {
     const loan = await createLoan({
       ownerTg: BigInt(ctx.from!.id),
       title,
-      bookId: book?.id ?? null,
+      bookId,
       holder,
       days: when ? Number(when) || null : undefined,
       takenAt: takenAt ?? null,
@@ -643,7 +656,13 @@ bot.callbackQuery(/^loan:back:(.+)$/, async (ctx) => {
 // шаг 2 — подтверждено: закрываем выдачу и даём отменить в течение суток
 bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
   const id = ctx.match![1]
-  const loan = await markReturned(id, BigInt(ctx.from.id))
+  let loan
+  try {
+    loan = await markReturned(id, BigInt(ctx.from.id))
+  } catch (e: any) {
+    if (e?.message === 'forbidden') return ctx.answerCallbackQuery({ text: 'Это не ваша выдача' })
+    throw e
+  }
   if (!loan) return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })
   await ctx.answerCallbackQuery({ text: 'Книга дома 🎉' })
   await ctx.editMessageText(`✅ «${esc(loan.title)}» вернулась. Спасибо!`, {
@@ -672,7 +691,14 @@ bot.callbackQuery(/^loan:no:(.+)$/, async (ctx) => {
 // undo возврата
 bot.callbackQuery(/^loan:undo:(.+)$/, async (ctx) => {
   const id = ctx.match![1]
-  const r = await reopenLoan(id, BigInt(ctx.from.id))
+  let r
+  try {
+    r = await reopenLoan(id, BigInt(ctx.from.id))
+  } catch (e: any) {
+    // гонка с параллельной выдачей той же книги (unique activeBookId)
+    if (e?.code === 'P2002') return ctx.answerCallbackQuery({ text: 'Книга уже выдана другому' })
+    throw e
+  }
   if ('error' in r) {
     const msg: Record<string, string> = {
       too_late: 'Отменить уже нельзя — прошло больше суток',
@@ -1362,7 +1388,10 @@ async function handleListImport(ctx: any, raw: string) {
       }
     } else {
       const [title, author] = line.split(/\s[—–-]\s|\s*\|\s*/).map((s) => s.trim())
-      if (!title || title.length < 2) continue
+      if (!title || title.length < 2) {
+        failed++ // строка «Не разобрал: N» в сводке была недостижима
+        continue
+      }
       book = { title, author: author || null, coverUrl: null }
     }
     const res = await putOnShelf({

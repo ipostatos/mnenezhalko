@@ -26,7 +26,7 @@ execSync('npx prisma db push --skip-generate --accept-data-loss --schema prisma/
 const { prisma } = await import('./db.js')
 const { registerRoutes } = await import('./routes.js')
 
-const CITY = 'Тестоград'
+const CITY = 'Radom' // реальный город из CITIES: произвольный теперь отклоняется валидацией
 const N_BOOKS = 40 // заведомо больше SHOWCASE_LIMIT_MAX — проверяем, что отдаётся не всё
 
 before(async () => {

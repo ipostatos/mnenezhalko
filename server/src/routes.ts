@@ -63,6 +63,21 @@ const json = (v: unknown) =>
   JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)))
 
 /**
+ * Числовой query-параметр с дефолтом и границами: `limit=abc` раньше уезжал
+ * NaN'ом в prisma take и ронял ручку 500-й; отрицательные и гигантские
+ * значения зажимаются в допустимый диапазон.
+ */
+function intParam(v: string | undefined, def: number, min: number, max: number): number {
+  if (v === undefined || v === '') return def
+  const n = Number(v)
+  if (!Number.isFinite(n)) return def
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+/** Город из query: принимаем только известные проекту значения. */
+const isKnownCity = (city: string): boolean => (CITIES as readonly string[]).includes(city)
+
+/**
  * `/api/loans` отдавал `book.coverUrl` сырой строкой прямо из базы — обложка
  * шла в обход всего конвейера (без ресайза, без кэша и, что важнее, без
  * SSRF-проверки в `net.ts`). Список выдач (`.loan-cover`, 54×78 CSS) — такой
@@ -210,22 +225,24 @@ export async function registerRoutes(app: FastifyInstance) {
     return json({ user })
   })
 
-  app.get('/api/facets', async (req) => {
+  app.get('/api/facets', async (req, reply) => {
     const { city } = req.query as { city?: string }
+    // facets кэшируется по городу — произвольная строка раздувала бы кэш
+    if (city && !isKnownCity(city)) return reply.code(400).send({ error: 'unknown_city' })
     return facets(city || undefined)
   })
 
   app.get('/api/books', async (req) => {
     const q = req.query as Record<string, string>
     const found = await searchBooks({
-      q: q.q,
-      city: q.city,
-      genre: q.genre,
-      language: q.language,
+      q: q.q?.slice(0, 200),
+      city: q.city && isKnownCity(q.city) ? q.city : undefined,
+      genre: q.genre?.slice(0, 100),
+      language: q.language?.slice(0, 50),
       kind: q.kind === 'game' ? 'game' : q.kind === 'book' ? 'book' : undefined,
       ownerId: q.ownerId,
-      limit: q.limit ? Number(q.limit) : 30,
-      offset: q.offset ? Number(q.offset) : 0,
+      limit: intParam(q.limit, 30, 1, 100),
+      offset: intParam(q.offset, 0, 0, 100_000),
     })
     return { ...found, items: redactCards(found.items, maySeeContacts(req)) }
   })
@@ -238,10 +255,10 @@ export async function registerRoutes(app: FastifyInstance) {
    */
   app.get('/api/showcase', async (req, reply) => {
     const { city, limit: limitRaw } = req.query as { city?: string; limit?: string }
-    const parsed = limitRaw ? Number(limitRaw) : NaN
-    const limit = Number.isFinite(parsed) && parsed > 0
-      ? Math.min(Math.round(parsed), SHOWCASE_LIMIT_MAX)
-      : SHOWCASE_LIMIT_DEFAULT
+    // каждый уникальный city+limit — своя строка кэша и SyncState: произвольный
+    // ?city= с улицы раздувал бы базу RANDOM()-запросами до бесконечности
+    if (city && !isKnownCity(city)) return reply.code(400).send({ error: 'unknown_city' })
+    const limit = intParam(limitRaw, SHOWCASE_LIMIT_DEFAULT, 1, SHOWCASE_LIMIT_MAX)
     reply.header('Cache-Control', 'private, max-age=1800')
     return showcaseFor(city, limit)
   })
@@ -385,7 +402,15 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const { id } = req.params as { id: string }
-    const r = await reopenLoan(id, u.id)
+    let r
+    try {
+      r = await reopenLoan(id, u.id)
+    } catch (e: any) {
+      // гонка с параллельной выдачей: unique(activeBookId) сработал — это
+      // честный конфликт 409, а не 500
+      if (e?.code === 'P2002') return reply.code(409).send({ error: 'book_relent' })
+      throw e
+    }
     if ('error' in r) {
       const code = r.error === 'not_found' ? 404 : r.error === 'forbidden' ? 403 : 409
       return reply.code(code).send({ error: r.error })
@@ -423,9 +448,15 @@ export async function registerRoutes(app: FastifyInstance) {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     const { id } = req.params as { id: string }
-    const loan = await markReturned(id, u.id)
-    if (!loan) return reply.code(404).send({ error: 'not_found' })
-    return json({ loan })
+    try {
+      const loan = await markReturned(id, u.id)
+      if (!loan) return reply.code(404).send({ error: 'not_found' })
+      return json({ loan })
+    } catch (e: any) {
+      // «не ваша выдача» — 403, раньше неотличимо маскировалось под 404
+      if (e?.message === 'forbidden') return reply.code(403).send({ error: 'forbidden' })
+      throw e
+    }
   })
 
   /** Мои книги на полке — из них удобно выбирать, что отдаёшь. */
@@ -567,11 +598,15 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!user.isAdmin) return reply.code(403).send({ error: 'admin_only' })
     const b = req.body as Record<string, string>
     if (!b.city || !b.title || !b.startsAt) return reply.code(400).send({ error: 'bad_request' })
+    if (!isKnownCity(b.city)) return reply.code(400).send({ error: 'unknown_city' })
+    const startsAt = new Date(b.startsAt)
+    // кривая дата раньше уезжала Invalid Date'ом в prisma и роняла ручку 500-й
+    if (Number.isNaN(startsAt.getTime())) return reply.code(400).send({ error: 'bad_date' })
     const ev = await prisma.event.create({
       data: {
         city: b.city,
         title: b.title.slice(0, 200),
-        startsAt: new Date(b.startsAt),
+        startsAt,
         place: b.place?.slice(0, 200) || null,
         description: b.description?.slice(0, 1000) || null,
         url: b.url?.slice(0, 500) || null,
@@ -731,11 +766,11 @@ export async function registerRoutes(app: FastifyInstance) {
             .map((s) => s.trim())
             .filter(Boolean)
 
-    let coverUrl: string | null = b.coverUrl ? String(b.coverUrl) : null
+    let coverUrl: string | null = b.coverUrl ? String(b.coverUrl).slice(0, 1000) : null
     // coverUrl от пользователя нельзя брать на веру — иначе через него можно
-    // заставить сервер сходить внутрь сети (SSRF). Внешний http(s) — только на
-    // публичный хост; свой относительный /api/cover сюда не попадает.
-    if (coverUrl && /^https?:\/\//i.test(coverUrl) && !isSafeCoverUrl(coverUrl)) {
+    // заставить сервер сходить внутрь сети (SSRF). Принимаем ТОЛЬКО http(s) на
+    // публичный хост: раньше произвольный мусор (не-URL) проходил в базу и Notion.
+    if (coverUrl && (!/^https?:\/\//i.test(coverUrl) || !isSafeCoverUrl(coverUrl))) {
       return reply.code(400).send({ error: 'bad_cover_url' })
     }
     if (!coverUrl && b.coverImage) {

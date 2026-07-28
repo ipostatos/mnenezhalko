@@ -193,8 +193,9 @@ export async function markReturned(id: string, byTg: bigint) {
   const result = await prisma.$transaction(async (tx) => {
     const loan = await tx.loan.findUnique({ where: { id } })
     if (!loan) return null
-    // закрыть выдачу может владелец или сам читатель
-    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return null
+    // закрыть выдачу может владелец или сам читатель; «не ваша» — отдельная
+    // ошибка, чтобы API отвечал 403, а не маскировал её под «не найдено»
+    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) throw new Error('forbidden')
 
     const updated = await tx.loan.update({
       where: { id },
