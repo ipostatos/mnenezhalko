@@ -199,6 +199,34 @@ function tooOften(key: string, limit: number, windowMs: number): boolean {
 }
 
 export async function registerRoutes(app: FastifyInstance) {
+  /**
+   * Пустое тело при `content-type: application/json` — это `{}`, а не ошибка.
+   *
+   * Дефолтный парсер Fastify отвечает на такой запрос 400
+   * `FST_ERR_CTP_EMPTY_JSON_BODY`. Само по себе это било бы по удалению
+   * (`DELETE /api/books/:id/review`, `/wait`): тела там нет по определению, и
+   * любой клиент, ставящий заголовок по умолчанию, получал бы 400 на
+   * совершенно корректном запросе. Свой Mini App заголовок при пустом теле не
+   * шлёт и потому не страдал, но ловушка срабатывала на каждой ручной проверке
+   * (дважды за две сессии) — а значит сработает и на стороннем клиенте.
+   *
+   * Кривой JSON остаётся ошибкой: 400 с понятным кодом.
+   */
+  app.addContentTypeParser<string>(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      if (typeof body !== 'string' || body.trim() === '') return done(null, {})
+      try {
+        done(null, JSON.parse(body))
+      } catch {
+        const err = new Error('bad_json') as Error & { statusCode?: number }
+        err.statusCode = 400
+        done(err, undefined)
+      }
+    },
+  )
+
   app.get('/api/health', async () => {
     const [books, librarians, sync] = await Promise.all([
       prisma.book.count({ where: { active: true, reviewStatus: 'approved' } }),

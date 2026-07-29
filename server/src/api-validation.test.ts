@@ -135,3 +135,36 @@ test('возврат чужой выдачи — 403, несуществующе
   const r2 = await app.inject({ method: 'POST', url: '/api/loans/nope/return', headers: stranger, payload: {} })
   assert.equal(r2.statusCode, 404)
 })
+
+test('пустое тело при content-type: application/json — это {}, а не 400', async () => {
+  // дефолтный парсер Fastify отвечал FST_ERR_CTP_EMPTY_JSON_BODY, и удаление
+  // (тела там нет по определению) падало у любого клиента, который ставит
+  // заголовок по умолчанию. Поймано дважды на ручных проверках прода
+  await prisma.user.upsert({ where: { tgId: 555005n }, create: { tgId: 555005n }, update: {} })
+  const headers = {
+    'x-init-data': signInitData({ id: '555005' }),
+    'content-type': 'application/json',
+  }
+  const book = await prisma.book.create({
+    data: { title: 'Книга для пустого тела', kind: 'book', active: true, reviewStatus: 'approved' },
+  })
+
+  const r = await app.inject({
+    method: 'DELETE',
+    url: `/api/books/${book.id}/wait`,
+    headers,
+    payload: '',
+  })
+  assert.equal(r.statusCode, 200)
+  assert.deepEqual(r.json().waiting, { count: 0, mine: null })
+})
+
+test('кривой JSON остаётся ошибкой 400', async () => {
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/me',
+    headers: { 'content-type': 'application/json' },
+    payload: '{не json',
+  })
+  assert.equal(r.statusCode, 400)
+})
