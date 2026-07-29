@@ -122,6 +122,24 @@ export function explainVerdict(v: Exclude<Verdict, { allowed: true }>): string {
 
 /* ── решения модераторов ──────────────────────────────────── */
 
+/**
+ * Как сообщить человеку о решении. Регистрирует бот (единственный, кто умеет
+ * писать в Telegram); API и команды зовут одно и то же, поэтому человек
+ * получает одинаковый текст независимо от того, откуда пришло решение.
+ */
+type NoticeSender = (tgId: bigint, text: string) => void | Promise<void>
+let noticeSender: NoticeSender | null = null
+export const setModerationNoticeSender = (fn: NoticeSender) => {
+  noticeSender = fn
+}
+
+export async function notifyModerated(tgId: bigint, text: string) {
+  if (!noticeSender) return
+  await Promise.resolve(noticeSender(tgId, text)).catch((e: any) =>
+    console.error('[moderation] не удалось сообщить человеку:', e?.message ?? e),
+  )
+}
+
 export type ModerationResult<T extends string> =
   | { ok: true; notice: string; action: string }
   | { ok: false; code: T }
@@ -170,22 +188,37 @@ export async function restrictUser(opts: {
   const user = await prisma.user.findUnique({ where: { tgId: opts.targetTg } })
   if (!user) return { ok: false, code: 'unknown_user' }
 
-  const existing = (await activeRestrictions(opts.targetTg, now)).find(
-    (r) => r.scope === opts.scope,
-  )
-  if (existing) return { ok: false, code: 'already_restricted' }
-
   const expiresAt = opts.days ? new Date(now.getTime() + opts.days * 86_400_000) : null
-  await prisma.userRestriction.create({
-    data: {
-      userTg: opts.targetTg,
-      scope: opts.scope,
-      reason: opts.reason.trim().slice(0, 300),
-      createdByTg: opts.actorTg,
-      createdAt: now,
-      expiresAt,
-    },
+
+  // проверка и запись — одной транзакцией: два админа могут нажать кнопку
+  // одновременно, и раздельные запросы дали бы ДВА ограничения на одно и то же
+  // (поймано тестом на параллельные решения). Частичный уникальный индекс
+  // «одно действующее ограничение на scope» в схеме Prisma не выразить, поэтому
+  // сериализуем здесь
+  const created = await prisma.$transaction(async (tx) => {
+    const existing = await tx.userRestriction.findFirst({
+      where: {
+        userTg: opts.targetTg,
+        scope: opts.scope,
+        liftedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+    })
+    if (existing) return false
+    await tx.userRestriction.create({
+      data: {
+        userTg: opts.targetTg,
+        scope: opts.scope,
+        reason: opts.reason.trim().slice(0, 300),
+        createdByTg: opts.actorTg,
+        createdAt: now,
+        expiresAt,
+      },
+    })
+    return true
   })
+  if (!created) return { ok: false, code: 'already_restricted' }
+
   await logModeration({
     actorTg: opts.actorTg,
     targetUserTg: opts.targetTg,
@@ -259,19 +292,24 @@ export async function banUser(opts: {
   if (opts.actorTg === opts.targetTg) return { ok: false, code: 'self' }
   if (isAdmin(opts.targetTg)) return { ok: false, code: 'admin' }
 
-  const user = await prisma.user.findUnique({ where: { tgId: opts.targetTg } })
-  if (!user) return { ok: false, code: 'unknown_user' }
-  if (user.accountStatus === 'banned') return { ok: false, code: 'already_banned' }
-
-  await prisma.user.update({
-    where: { tgId: opts.targetTg },
-    data: {
-      accountStatus: 'banned',
-      bannedAt: now,
-      bannedByTg: opts.actorTg,
-      banReason: opts.reason.trim().slice(0, 300),
-    },
+  // проверка «уже заблокирован» и сама блокировка — одной транзакцией, иначе
+  // два одновременных нажатия дадут две записи в журнале и два письма человеку
+  const banned = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { tgId: opts.targetTg } })
+    if (!user) return 'unknown_user' as const
+    if (user.accountStatus === 'banned') return 'already_banned' as const
+    await tx.user.update({
+      where: { tgId: opts.targetTg },
+      data: {
+        accountStatus: 'banned',
+        bannedAt: now,
+        bannedByTg: opts.actorTg,
+        banReason: opts.reason.trim().slice(0, 300),
+      },
+    })
+    return 'ok' as const
   })
+  if (banned !== 'ok') return { ok: false, code: banned }
   await logModeration({
     actorTg: opts.actorTg,
     targetUserTg: opts.targetTg,

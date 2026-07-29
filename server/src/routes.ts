@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from './db.js'
-import { env } from './env.js'
+import { env, isAdmin } from './env.js'
 import { upsertUser, verifyInitData, type TgUser } from './auth.js'
 import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
@@ -19,7 +19,20 @@ import {
 import { digest } from './digest.js'
 import { getTaxonomy } from './taxonomy.js'
 import { deleteMyData, exportMyData } from './mydata.js'
-import { checkUserCan, explainVerdict, type Scope } from './moderation.js'
+import {
+  activeRestrictions,
+  banUser,
+  checkUserCan,
+  decideReview,
+  explainVerdict,
+  isScope,
+  moderationQueue,
+  notifyModerated,
+  restrictUser,
+  unbanUser,
+  unrestrictUser,
+  type Scope,
+} from './moderation.js'
 import {
   createLoan,
   decorate,
@@ -283,7 +296,20 @@ export async function registerRoutes(app: FastifyInstance) {
       { tgId: u.id, username: u.username, firstName: u.firstName },
       { allowCreate: false },
     )
-    return json({ user, librarian })
+    // приложение должно объяснять человеку, что ему закрыто и почему; защитой
+    // это не является (её делает сервер), это забота о человеке
+    const limits = await activeRestrictions(u.id)
+    return json({
+      user,
+      librarian,
+      restrictions: limits.map((r) => ({
+        scope: r.scope,
+        reason: r.reason,
+        until: r.expiresAt?.toISOString() ?? null,
+      })),
+      banned: user.accountStatus === 'banned',
+      banReason: user.banReason,
+    })
   })
 
   /**
@@ -327,6 +353,111 @@ export async function registerRoutes(app: FastifyInstance) {
     // незакрытая выдача: сначала надо вернуть книгу, иначе потеряется её след
     if ('error' in r) return reply.code(409).send(r)
     return json(r)
+  })
+
+
+  /* ── модерация участников (только админы) ───────────────── */
+
+  /**
+   * Очередь разбора: отзывы с жалобами и скрытые, книги на проверке,
+   * действующие ограничения, заблокированные и последние решения.
+   * Тот же источник, что у команды `/moderation` в боте — два похожих, но
+   * разных списка рано или поздно разошлись бы.
+   */
+  app.get('/api/admin/moderation', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    return json(await moderationQueue())
+  })
+
+  /** Решение по отзыву: скрыть, вернуть, удалить, отклонить жалобы. */
+  app.post('/api/admin/reviews/:id/decide', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { decision?: string; reason?: string }
+    const decision = b.decision as 'hide' | 'restore' | 'delete' | 'dismiss'
+    if (!['hide', 'restore', 'delete', 'dismiss'].includes(decision)) {
+      return reply.code(400).send({ error: 'bad_decision' })
+    }
+    const before = await prisma.review.findUnique({
+      where: { id },
+      select: { authorTg: true },
+    })
+    const res = await decideReview({
+      actorTg: u.id,
+      reviewId: id,
+      decision,
+      reason: String(b.reason ?? ''),
+    })
+    // повторное нажатие не делает второго решения и честно говорит об этом
+    if (!res.ok) return reply.code(res.code === 'not_found' ? 404 : 409).send({ error: res.code })
+    if (before?.authorTg) void notifyModerated(before.authorTg, res.notice)
+    return json(res)
+  })
+
+  /** Ограничить участнику одно действие. */
+  app.post('/api/admin/users/:tgId/restrict', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const b = (req.body ?? {}) as { scope?: string; reason?: string; days?: number }
+    if (!b.scope || !isScope(b.scope)) return reply.code(400).send({ error: 'bad_scope' })
+    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const res = await restrictUser({
+      actorTg: u.id,
+      targetTg,
+      scope: b.scope,
+      reason: String(b.reason ?? ''),
+      days: b.days ? Number(b.days) : null,
+    })
+    if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
+    void notifyModerated(targetTg, res.notice)
+    return json(res)
+  })
+
+  app.post('/api/admin/users/:tgId/unrestrict', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const b = (req.body ?? {}) as { scope?: string; reason?: string }
+    if (!b.scope || !isScope(b.scope)) return reply.code(400).send({ error: 'bad_scope' })
+    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const res = await unrestrictUser({
+      actorTg: u.id,
+      targetTg,
+      scope: b.scope,
+      reason: String(b.reason ?? ''),
+    })
+    if (!res.ok) return reply.code(409).send({ error: res.code })
+    void notifyModerated(targetTg, res.notice)
+    return json(res)
+  })
+
+  app.post('/api/admin/users/:tgId/ban', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const b = (req.body ?? {}) as { reason?: string }
+    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const res = await banUser({ actorTg: u.id, targetTg, reason: String(b.reason ?? '') })
+    if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
+    void notifyModerated(targetTg, res.notice)
+    return json(res)
+  })
+
+  app.post('/api/admin/users/:tgId/unban', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const b = (req.body ?? {}) as { reason?: string }
+    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const res = await unbanUser({ actorTg: u.id, targetTg, reason: String(b.reason ?? '') })
+    if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
+    void notifyModerated(targetTg, res.notice)
+    return json(res)
   })
 
   app.patch('/api/me', async (req, reply) => {

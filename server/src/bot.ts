@@ -5,7 +5,21 @@ import { searchBooks, toCard, type BookCard } from './search.js'
 import { askAi } from './ai.js'
 import { syncFromNotion, setSyncAlert } from './sync.js'
 import { setBookGoneNotifier } from './mydata.js'
-import { checkUserCan, explainVerdict, type Scope } from './moderation.js'
+import {
+  SCOPE_TITLES,
+  banUser,
+  checkUserCan,
+  decideReview,
+  explainVerdict,
+  isScope,
+  moderationQueue,
+  setModerationNoticeSender,
+  restrictUser,
+  unbanUser,
+  unrestrictUser,
+  type QueueReview,
+  type Scope,
+} from './moderation.js'
 import { plural } from './plural.js'
 import {
   CITIES,
@@ -1987,6 +2001,225 @@ bot.command('queue', async (ctx) => {
     })
     await new Promise((r) => setTimeout(r, 40))
   }
+})
+
+/* ── разбор жалоб и ограничения участников ───────────────── */
+
+/**
+ * Уведомление человеку о решении модератора. Ровно одно на решение:
+ * идемпотентность обеспечивают сами функции модерации (повторное нажатие
+ * возвращает `already_*` и сюда не доходит). Кто пожаловался — не раскрываем.
+ */
+async function tellUser(tgId: bigint, text: string) {
+  await bot.api.sendMessage(String(tgId), text).catch(() => {})
+}
+
+// решения, принятые через API (админский экран), доходят до человека тем же путём
+setModerationNoticeSender(tellUser)
+
+/** Карточка отзыва для разбора: текст, автор, число УНИКАЛЬНЫХ жалоб, прошлые решения. */
+function reviewCard(r: QueueReview) {
+  const lines = [
+    r.status === 'hidden' ? '🙈 <b>Отзыв скрыт автоматически</b>' : '⚠️ <b>Жалобы на отзыв</b>',
+    '',
+    `<b>${esc(r.workKey)}</b>`,
+    `Оценка: ${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}`,
+    r.text ? `\n<i>${esc(r.text)}</i>\n` : '',
+    `Автор: ${esc(r.authorName ?? 'без имени')}`,
+    `Уникальных жалоб: ${r.reports}`,
+    r.history.length
+      ? `\nРанее: ${r.history.map((h) => `${h.action} (${h.reason})`).join('; ')}`
+      : '',
+  ].filter(Boolean)
+  const kb = new InlineKeyboard()
+    .text(
+      r.status === 'hidden' ? '↩️ Вернуть' : '🙈 Скрыть',
+      `rv:${r.status === 'hidden' ? 'restore' : 'hide'}:${r.id}`,
+    )
+    .text('🗑 Удалить', `rv:delete:${r.id}`)
+    .row()
+    .text('✅ Жалобы отклонить', `rv:dismiss:${r.id}`)
+    .row()
+    .text('🔇 Закрыть автору отзывы', `rs:reviews:${r.authorTg}`)
+  return { text: lines.join('\n'), kb }
+}
+
+bot.command('moderation', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const q = await moderationQueue()
+  const head = [
+    '🛡 <b>Разбор</b>',
+    '',
+    `Отзывы на разбор: ${q.reviews.length}`,
+    `Книги на проверке: ${q.pendingBooks}${q.pendingBooks ? ' (/queue)' : ''}`,
+    `Действующих ограничений: ${q.restrictions.length}`,
+    `Заблокированных: ${q.banned.length}`,
+    q.restrictions.length
+      ? '\nОграничения:\n' +
+        q.restrictions
+          .map(
+            (r) =>
+              `• ${r.userTg}: ${SCOPE_TITLES[r.scope as keyof typeof SCOPE_TITLES] ?? r.scope}` +
+              `${r.expiresAt ? ` до ${r.expiresAt.slice(0, 10)}` : ' бессрочно'} (${esc(r.reason)})`,
+          )
+          .join('\n')
+      : '',
+    q.banned.length
+      ? '\nЗаблокированы:\n' +
+        q.banned
+          .map((b) => `• ${b.tgId} ${b.username ? '@' + esc(b.username) : ''}: ${esc(b.reason ?? '')}`)
+          .join('\n')
+      : '',
+    q.recent.length
+      ? '\nПоследние решения:\n' +
+        q.recent
+          .slice(0, 5)
+          .map(
+            (a) =>
+              `• ${a.at.slice(0, 16).replace('T', ' ')} ${a.action} → ${a.targetUserTg ?? a.targetId ?? ''}`,
+          )
+          .join('\n')
+      : '',
+    '',
+    'Ограничить: <code>/restrict tgId область дней причина</code>',
+    'Снять: <code>/unrestrict tgId область причина</code>',
+    'Блокировка: <code>/ban tgId причина</code> · <code>/unban tgId причина</code>',
+    `Области: ${Object.keys(SCOPE_TITLES).join(', ')}`,
+  ].filter(Boolean)
+  await ctx.reply(head.join('\n'), { parse_mode: 'HTML' })
+
+  for (const r of q.reviews.slice(0, 10)) {
+    const card = reviewCard(r)
+    await ctx.reply(card.text, { parse_mode: 'HTML', reply_markup: card.kb })
+    await new Promise((res) => setTimeout(res, 40))
+  }
+})
+
+/** Решение по отзыву кнопкой. Повторный тап отвечает честно, а не делает второе. */
+bot.callbackQuery(/^rv:(hide|restore|delete|dismiss):(.+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const decision = ctx.match![1] as 'hide' | 'restore' | 'delete' | 'dismiss'
+  const reviewId = ctx.match![2]!
+  // автора запоминаем ДО решения: удалённый отзыв уже не расскажет, чей он был
+  const before = await prisma.review.findUnique({
+    where: { id: reviewId },
+    select: { authorTg: true },
+  })
+  const res = await decideReview({
+    actorTg: BigInt(ctx.from.id),
+    reviewId,
+    decision,
+    reason: 'решение модератора из очереди разбора',
+  })
+  if (!res.ok) {
+    const texts: Record<string, string> = {
+      not_found: 'Отзыв уже удалён',
+      already_hidden: 'Уже скрыт',
+      already_visible: 'Уже виден',
+      no_reason: 'Нужна причина',
+    }
+    return ctx.answerCallbackQuery({ text: texts[res.code] ?? res.code })
+  }
+  await ctx.answerCallbackQuery({ text: 'Готово' })
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+  if (before?.authorTg) await tellUser(before.authorTg, res.notice)
+})
+
+/** Быстрая кнопка «закрыть автору отзывы» прямо из карточки разбора. */
+bot.callbackQuery(/^rs:(\w+):(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const scope = ctx.match![1]!
+  if (!isScope(scope)) return ctx.answerCallbackQuery({ text: 'Неизвестная область' })
+  const targetTg = BigInt(ctx.match![2]!)
+  const res = await restrictUser({
+    actorTg: BigInt(ctx.from.id),
+    targetTg,
+    scope,
+    reason: 'жалобы участников на отзывы',
+    days: 30,
+  })
+  if (!res.ok) {
+    const texts: Record<string, string> = {
+      already_restricted: 'Уже ограничен',
+      unknown_user: 'Человек не найден',
+      self: 'Себя нельзя',
+      no_reason: 'Нужна причина',
+    }
+    return ctx.answerCallbackQuery({ text: texts[res.code] ?? res.code })
+  }
+  await ctx.answerCallbackQuery({ text: 'Ограничение поставлено' })
+  await tellUser(targetTg, res.notice)
+})
+
+/** `/restrict tgId область дней причина` (0 дней — бессрочно). */
+bot.command('restrict', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const [id, scope, days, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
+  const reason = rest.join(' ')
+  if (!id || !scope || !isScope(scope) || !reason) {
+    return ctx.reply(
+      `Формат: /restrict tgId область дней причина\nОбласти: ${Object.keys(SCOPE_TITLES).join(', ')}`,
+    )
+  }
+  const res = await restrictUser({
+    actorTg: BigInt(ctx.from!.id),
+    targetTg: BigInt(id),
+    scope,
+    reason,
+    days: Number(days) > 0 ? Number(days) : null,
+  })
+  if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
+  await tellUser(BigInt(id), res.notice)
+  await ctx.reply('Готово, человеку сообщили.')
+})
+
+bot.command('unrestrict', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const [id, scope, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
+  const reason = rest.join(' ')
+  if (!id || !scope || !isScope(scope) || !reason) {
+    return ctx.reply('Формат: /unrestrict tgId область причина')
+  }
+  const res = await unrestrictUser({
+    actorTg: BigInt(ctx.from!.id),
+    targetTg: BigInt(id),
+    scope,
+    reason,
+  })
+  if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
+  await tellUser(BigInt(id), res.notice)
+  await ctx.reply('Ограничение снято, человеку сообщили.')
+})
+
+bot.command('ban', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const [id, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
+  const reason = rest.join(' ')
+  if (!id || !reason) return ctx.reply('Формат: /ban tgId причина')
+  const res = await banUser({ actorTg: BigInt(ctx.from!.id), targetTg: BigInt(id), reason })
+  if (!res.ok) {
+    const texts: Record<string, string> = {
+      admin: 'Админа заблокировать нельзя',
+      self: 'Себя заблокировать нельзя',
+      already_banned: 'Уже заблокирован',
+      unknown_user: 'Человек не найден',
+      no_reason: 'Нужна причина',
+    }
+    return ctx.reply(texts[res.code] ?? res.code)
+  }
+  await tellUser(BigInt(id), res.notice)
+  await ctx.reply('Заблокирован, человеку сообщили. Свои данные он забрать по-прежнему может.')
+})
+
+bot.command('unban', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const [id, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
+  const reason = rest.join(' ')
+  if (!id || !reason) return ctx.reply('Формат: /unban tgId причина')
+  const res = await unbanUser({ actorTg: BigInt(ctx.from!.id), targetTg: BigInt(id), reason })
+  if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
+  await tellUser(BigInt(id), res.notice)
+  await ctx.reply('Доступ восстановлен, человеку сообщили.')
 })
 
 /* ── админские команды ────────────────────────────────────── */
