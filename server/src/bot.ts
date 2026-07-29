@@ -51,6 +51,7 @@ import { saveCoverFromTelegram } from './covers.js'
 import { recognizePhoto, visionEnabled, type Recognized } from './vision.js'
 import {
   approveBook,
+  bookDecisionNotice,
   checkDuplicates,
   type DupCheck,
   findDuplicates,
@@ -1938,12 +1939,12 @@ bot.callbackQuery(/^mod:ok:(.+)$/, async (ctx) => {
     parse_mode: 'HTML',
   })
   if (res.addedByTg) {
+    // текст один на бота и на админский экран (bookDecisionNotice в publish.ts)
     await bot.api
-      .sendMessage(
-        String(res.addedByTg),
-        `✅ Ваша книга «${esc(res.card.title)}» прошла проверку и появилась в библиотеке. Спасибо!`,
-        { parse_mode: 'HTML', reply_markup: mainKeyboard() },
-      )
+      .sendMessage(String(res.addedByTg), bookDecisionNotice('approve', esc(res.card.title)), {
+        parse_mode: 'HTML',
+        reply_markup: mainKeyboard(),
+      })
       .catch(() => {})
   }
 })
@@ -1958,12 +1959,9 @@ bot.callbackQuery(/^mod:no:(.+)$/, async (ctx) => {
   await ctx.editMessageText(`❌ Отклонено: «${esc(res.card.title)}».`, { parse_mode: 'HTML' })
   if (res.addedByTg) {
     await bot.api
-      .sendMessage(
-        String(res.addedByTg),
-        `К сожалению, книга «${esc(res.card.title)}» не прошла проверку. ` +
-          'Если это ошибка — напишите @LizavetaZh.',
-        { parse_mode: 'HTML' },
-      )
+      .sendMessage(String(res.addedByTg), bookDecisionNotice('reject', esc(res.card.title)), {
+        parse_mode: 'HTML',
+      })
       .catch(() => {})
   }
 })
@@ -2052,7 +2050,8 @@ bot.command('moderation', async (ctx) => {
     '🛡 <b>Разбор</b>',
     '',
     `Отзывы на разбор: ${q.reviews.length}`,
-    `Книги на проверке: ${q.pendingBooks}${q.pendingBooks ? ' (/queue)' : ''}`,
+    `Книги на проверке: ${q.pendingBooksCount}${q.pendingBooksCount ? ' (/queue)' : ''}`,
+    q.stuckNotices ? `⚠️ не доставлено уведомлений: ${q.stuckNotices}` : '',
     `Действующих ограничений: ${q.restrictions.length}`,
     `Заблокированных: ${q.banned.length}`,
     q.restrictions.length

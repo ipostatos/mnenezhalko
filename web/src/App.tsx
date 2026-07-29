@@ -15,6 +15,7 @@ import { MyShelf } from './screens/MyShelf'
 import { BadgesScreen } from './screens/Badges'
 import { Guide } from './screens/Guide'
 import { MyData } from './screens/MyData'
+import { Admin } from './screens/Admin'
 import { Digest } from './screens/Digest'
 import { Loans } from './screens/Loans'
 import { About } from './screens/About'
@@ -36,6 +37,7 @@ export type Route =
   | { name: 'badges' }
   | { name: 'guide' }
   | { name: 'mydata' }
+  | { name: 'admin' }
 
 /**
  * Бот открывает Mini App сразу на нужном экране: `?screen=add|loans|digest`,
@@ -47,7 +49,7 @@ function initialStack(): Route[] {
   const screen = params.get('screen')
   const id = params.get('id')
   if (screen === 'book' && id) return [{ name: 'home' }, { name: 'book', id }]
-  const known = ['add', 'loans', 'digest', 'about', 'myshelf', 'badges', 'guide', 'mydata'] as const
+  const known = ['add', 'loans', 'digest', 'about', 'myshelf', 'badges', 'guide', 'mydata', 'admin'] as const
   return known.includes(screen as (typeof known)[number])
     ? [{ name: 'home' }, { name: screen } as Route]
     : [{ name: 'home' }]
@@ -115,6 +117,9 @@ export function App() {
       return <Guide go={go} />
     case 'mydata':
       return <MyData go={go} />
+    // права проверяет сервер: экран без них покажет «только для админов»
+    case 'admin':
+      return <Admin />
     default:
       return <Home go={go} me={me} health={health} loans={loans} />
   }

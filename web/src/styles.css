@@ -1976,3 +1976,74 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   border-color: var(--warn);
   border-left: 3px solid var(--warn);
 }
+
+/* ── разбор для админов ───────────────────────── */
+
+/* счётчик в закладке: сколько ждёт именно там — иначе нужно открыть все четыре */
+.admin-tabs {
+  flex-wrap: wrap;
+}
+
+.admin-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 40%;
+  font-size: var(--fs-sm);
+}
+
+.tab-count {
+  min-width: 20px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.segmented button.active .tab-count {
+  background: color-mix(in srgb, var(--accent-text) 18%, transparent);
+  color: var(--accent-text);
+}
+
+/* поле причины раскрывается в самой карточке: причину читает человек, которому
+   отказали, и набирать её в модальном окне Telegram вслепую неудобно */
+.reason-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+/* текст отзыва — цитатой: видно, где чужие слова, а где наши подписи */
+.review-quote {
+  margin: var(--sp-2) 0;
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.log-row {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+
+.log-row:last-of-type {
+  border-bottom: none;
+}
+
+.log-when {
+  flex: 0 0 auto;
+  color: var(--hint);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  padding-top: 2px;
+}

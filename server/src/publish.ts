@@ -175,6 +175,29 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
 
 export type ReviewResult = { card: BookCard; addedByTg: bigint | null }
 
+/**
+ * Что человек получает о решении по своей книге. Текст один и тот же, откуда
+ * бы решение ни пришло — из кнопки в боте или с админского экрана Mini App:
+ * два похожих письма об одном событии рано или поздно разошлись бы, а человеку
+ * важно, что это одно и то же решение.
+ */
+export function bookDecisionNotice(
+  decision: 'approve' | 'reject',
+  title: string,
+  reason?: string | null,
+): string {
+  if (decision === 'approve') {
+    return `✅ Ваша книга «${title}» прошла проверку и появилась в библиотеке. Спасибо!`
+  }
+  return [
+    `К сожалению, книга «${title}» не прошла проверку.`,
+    reason?.trim() ? `Причина: ${reason.trim()}.` : '',
+    'Книгу можно поправить на «Моей полке» и отправить снова; если это ошибка — напишите @LizavetaZh.',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 /** Зависший approving старше этого срока можно подхватить заново (процесс упал). */
 export const APPROVING_STALE_MS = 10 * 60_000
 

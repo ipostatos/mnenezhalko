@@ -289,3 +289,78 @@ export type DeletionBlocked = {
   error: 'active_loans'
   loans: { title: string; role: string }[]
 }
+
+/* ── разбор для админов (см. server/src/moderation.ts) ─────── */
+
+/** Книга, ждущая проверки: карточка, а не строка списка — решать по ней. */
+export type PendingBook = {
+  id: string
+  title: string
+  author: string | null
+  kind: string
+  coverUrl: string | null
+  ownerName: string | null
+  city: string | null
+  genres: string[]
+  languages: string[]
+  source: string
+  notionStatus: string
+  submittedAt: string
+}
+
+/** Отзыв на разбор: с жалобами или уже скрытый. Кто пожаловался — не отдаём. */
+export type QueueReview = {
+  id: string
+  workKey: string
+  rating: number
+  text: string | null
+  status: string
+  authorTg: string
+  authorName: string | null
+  reports: number
+  reportedAt: string[]
+  hiddenAt: string | null
+  history: { action: string; reason: string; at: string }[]
+}
+
+export type QueueRestriction = {
+  id: string
+  userTg: string
+  name: string | null
+  username: string | null
+  scope: string
+  reason: string
+  createdAt: string
+  expiresAt: string | null
+}
+
+export type QueueBanned = {
+  tgId: string
+  username: string | null
+  firstName: string | null
+  bannedAt: string | null
+  reason: string | null
+}
+
+export type QueueAction = {
+  id: string
+  action: string
+  targetType: string
+  targetId: string | null
+  targetUserTg: string | null
+  targetName: string | null
+  actorTg: string | null
+  reason: string
+  at: string
+}
+
+export type ModerationQueue = {
+  reviews: QueueReview[]
+  pendingBooks: PendingBook[]
+  pendingBooksCount: number
+  /** письма о решениях, которые не удалось доставить: человек не узнал */
+  stuckNotices: number
+  restrictions: QueueRestriction[]
+  banned: QueueBanned[]
+  recent: QueueAction[]
+}

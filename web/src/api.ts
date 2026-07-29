@@ -25,6 +25,7 @@ import type {
   Impact,
   Person,
   DeletionPreview,
+  ModerationQueue,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -161,4 +162,28 @@ export const api = {
   badges: () => req<{ badges: Badge[] }>('GET', '/api/my-badges'),
   /** Кого предложить при вводе ника: библиотекари и свои прошлые читатели. */
   people: (q: string) => req<{ people: Person[] }>('GET', `/api/people${qs({ q })}`),
+
+  /* Разбор для админов. Все ручки закрыты подписью И проверкой прав на сервере:
+     спрятанная в приложении кнопка защитой не считается (см. moderation.ts). */
+  moderationQueue: () => req<ModerationQueue>('GET', '/api/admin/moderation'),
+  decideBook: (id: string, decision: 'approve' | 'reject', reason?: string) =>
+    req<{ ok: true; already?: boolean; card: Book }>(
+      'POST',
+      `/api/admin/books/${id}/decide`,
+      { decision, reason },
+    ),
+  decideReview: (id: string, decision: 'hide' | 'restore' | 'delete' | 'dismiss', reason?: string) =>
+    req<{ ok: true; action: string; notice: string }>(
+      'POST',
+      `/api/admin/reviews/${id}/decide`,
+      { decision, reason },
+    ),
+  restrictUser: (tgId: string, scope: string, reason: string, days?: number | null) =>
+    req<{ ok: true }>('POST', `/api/admin/users/${tgId}/restrict`, { scope, reason, days }),
+  unrestrictUser: (tgId: string, scope: string, reason: string) =>
+    req<{ ok: true }>('POST', `/api/admin/users/${tgId}/unrestrict`, { scope, reason }),
+  banUser: (tgId: string, reason: string) =>
+    req<{ ok: true }>('POST', `/api/admin/users/${tgId}/ban`, { reason }),
+  unbanUser: (tgId: string, reason: string) =>
+    req<{ ok: true }>('POST', `/api/admin/users/${tgId}/unban`, { reason }),
 }

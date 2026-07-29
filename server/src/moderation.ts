@@ -21,6 +21,8 @@
  */
 import { Prisma } from '@prisma/client'
 import { prisma } from './db.js'
+import { CARD_W, proxyCover } from './imgcache.js'
+import { split } from './search.js'
 import { isAdmin } from './env.js'
 
 /** Действия, которые можно закрыть человеку по отдельности. */
@@ -211,20 +213,53 @@ export async function flushNotices(limit = 50): Promise<{ sent: number; failed: 
     if (!noticeSender) break
     try {
       await noticeSender(row.recipientTg, row.payload)
-      await prisma.notificationOutbox.update({
-        where: { id: row.id },
-        data: { sentAt: new Date(), attempts: { increment: 1 } },
-      })
+      await markNotice(row.id, { sentAt: new Date(), attempts: { increment: 1 } })
       sent++
     } catch (e: any) {
       failed++
-      await prisma.notificationOutbox.update({
-        where: { id: row.id },
-        data: { attempts: { increment: 1 }, lastError: String(e?.message ?? e).slice(0, 300) },
+      await markNotice(row.id, {
+        attempts: { increment: 1 },
+        lastError: String(e?.message ?? e).slice(0, 300),
       })
     }
   }
   return { sent, failed }
+}
+
+/**
+ * Отметка о попытке — `updateMany`, а НЕ `update`.
+ *
+ * Письмо может исчезнуть между выборкой и отправкой: человек в этот момент
+ * удалил профиль, и неотправленные письма ему удаляются вместе с остальным
+ * (см. mydata.ts). `update` на пропавшей строке бросает, а зовут отправку через
+ * `void flushNotices()` — необработанное отклонение уронило бы весь процесс из-за
+ * одного письма. Здесь пропажа строки — штатный исход: 0 изменённых строк.
+ */
+async function markNotice(id: string, data: Prisma.NotificationOutboxUpdateInput) {
+  await prisma.notificationOutbox
+    .updateMany({ where: { id }, data })
+    .catch((e: any) => console.error('[moderation] не удалось отметить письмо:', e?.message ?? e))
+}
+
+/**
+ * Записать решение, изменение состояния для которого делает СВОЙ идемпотентный
+ * путь (одобрение книги: `approveBook` в publish.ts — там свой атомарный
+ * переход pending → approving → approved).
+ *
+ * Повторное «одобрить» журнал не засоряет: с `already` такие вызовы не пишутся.
+ * Письмо человеку кладётся в ОДНУ транзакцию с записью в журнал и уходит
+ * джобой — иначе падение процесса сразу после решения оставило бы человека без
+ * ответа, а прямая отправка свои ошибки просто проглатывает.
+ */
+export async function logModerationAction(
+  entry: ModerationEntry & { already?: boolean; notice?: { to: bigint; text: string } | null },
+) {
+  if (entry.already) return null
+  return prisma.$transaction(async (tx) => {
+    const row = await logModeration(tx, entry)
+    if (entry.notice) await queueNotice(tx, entry.notice.to, entry.notice.text)
+    return row
+  })
 }
 
 /**
@@ -469,8 +504,14 @@ export async function moderationQueue(now = new Date()) {
       })
     : []
 
-  const [pendingBooks, restrictions, banned, recent] = await Promise.all([
-    prisma.book.count({ where: { reviewStatus: 'pending' } }),
+  const [pendingBooks, restrictions, banned, recent, stuckNotices] = await Promise.all([
+    // не число, а карточки: админскому экрану нужно, ЧТО именно проверять
+    prisma.book.findMany({
+      where: { reviewStatus: 'pending' },
+      include: { owner: { select: { name: true, city: true } } },
+      orderBy: { submittedAt: 'asc' },
+      take: 50,
+    }),
     prisma.userRestriction.findMany({
       where: { liftedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
       orderBy: { createdAt: 'desc' },
@@ -483,7 +524,34 @@ export async function moderationQueue(now = new Date()) {
       take: 50,
     }),
     prisma.moderationAction.findMany({ orderBy: { createdAt: 'desc' }, take: 20 }),
+    // письма, которые не удалось доставить несколько раз: человек не узнал о решении
+    prisma.notificationOutbox.count({ where: { sentAt: null, attempts: { gte: 3 } } }),
   ])
+
+  // имена и ники к ограничениям и решениям: в списке «990010: оценки и отзывы»
+  // разобраться нельзя, а лишний запрос на человека — нет
+  const peopleIds = [
+    ...new Set([
+      ...restrictions.map((r) => r.userTg),
+      ...recent.map((a) => a.targetUserTg).filter((x): x is bigint => x !== null),
+    ]),
+  ]
+  const people = peopleIds.length
+    ? await prisma.user.findMany({
+        where: { tgId: { in: peopleIds } },
+        select: { tgId: true, username: true, firstName: true },
+      })
+    : []
+  const nameOf = (tgId: bigint | null) => {
+    if (tgId === null) return null
+    const p = people.find((x) => x.tgId === tgId)
+    if (!p) return null
+    return p.firstName ?? (p.username ? `@${p.username}` : null)
+  }
+  const handleOf = (tgId: bigint | null) => {
+    if (tgId === null) return null
+    return people.find((x) => x.tgId === tgId)?.username ?? null
+  }
 
   return {
     reviews: reviews.map(
@@ -504,10 +572,28 @@ export async function moderationQueue(now = new Date()) {
           .map((h) => ({ action: h.action, reason: h.reason, at: h.createdAt.toISOString() })),
       }),
     ),
-    pendingBooks,
+    pendingBooks: pendingBooks.map((b) => ({
+      id: b.id,
+      title: b.title,
+      author: b.author,
+      kind: b.kind,
+      // обложка идёт через тот же конвейер превью, что и каталог
+      coverUrl: proxyCover(b.coverUrl, CARD_W),
+      ownerName: b.owner?.name ?? null,
+      city: b.city ?? b.owner?.city ?? null,
+      genres: split(b.genres),
+      languages: split(b.languages),
+      source: b.source,
+      notionStatus: b.notionStatus,
+      submittedAt: (b.submittedAt ?? b.createdAt).toISOString(),
+    })),
+    pendingBooksCount: pendingBooks.length,
+    stuckNotices,
     restrictions: restrictions.map((r) => ({
       id: r.id,
       userTg: String(r.userTg),
+      name: nameOf(r.userTg),
+      username: handleOf(r.userTg),
       scope: r.scope,
       reason: r.reason,
       createdAt: r.createdAt.toISOString(),
@@ -521,10 +607,13 @@ export async function moderationQueue(now = new Date()) {
       reason: b.banReason,
     })),
     recent: recent.map((a) => ({
+      id: a.id,
       action: a.action,
       targetType: a.targetType,
       targetId: a.targetId,
       targetUserTg: a.targetUserTg ? String(a.targetUserTg) : null,
+      targetName: nameOf(a.targetUserTg),
+      actorTg: a.actorTg ? String(a.actorTg) : null,
       reason: a.reason,
       at: a.createdAt.toISOString(),
     })),

@@ -9,8 +9,11 @@ import { decodeDataUrl, readCover, readCoverVariant, saveCover } from './covers.
 import { recognizePhoto, visionEnabled } from './vision.js'
 import { looksLikeIsbn, lookupIsbnDetailed } from './isbn.js'
 import {
+  approveBook,
+  bookDecisionNotice,
   checkDuplicates,
   putOnShelf,
+  rejectBook,
   editBook,
   softDeleteBook,
   resubmitBook,
@@ -27,6 +30,7 @@ import {
   explainVerdict,
   isScope,
   flushNotices,
+  logModerationAction,
   moderationQueue,
   restrictUser,
   unbanUser,
@@ -465,6 +469,64 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
     void flushNotices()
     return json(res)
+  })
+
+  /**
+   * Решение по книге на проверке. НЕ своя логика одобрения: зовём тот же
+   * идемпотентный путь, что и кнопки в боте (approveBook/rejectBook), иначе
+   * появятся два разных понимания «одобрено».
+   */
+  app.post('/api/admin/books/:id/decide', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { decision?: string; reason?: string }
+    const reason = String(b.reason ?? '').trim()
+
+    if (b.decision === 'approve') {
+      const res = await approveBook(id, u.id)
+      if (res.status === 'not_found') return reply.code(404).send({ error: 'not_found' })
+      // «уже одобряет другой админ» и «уже решено» — штатные случаи, а не ошибка
+      if (res.status === 'in_progress') return reply.code(409).send({ error: 'in_progress' })
+      if (res.status === 'bad_state') return reply.code(409).send({ error: res.reviewStatus })
+      // публикация в общую таблицу упала: книга возвращена в pending, повторим позже
+      if (res.status === 'failed') return reply.code(502).send({ error: 'notion_failed', message: res.error })
+      await logModerationAction({
+        actorTg: u.id,
+        targetType: 'book',
+        targetId: id,
+        action: 'approve',
+        reason: reason || 'одобрено из очереди разбора',
+        already: Boolean(res.already),
+        // повторное «одобрить» не пишет человеку второй раз о том же
+        notice: res.addedByTg
+          ? { to: res.addedByTg, text: bookDecisionNotice('approve', res.card.title) }
+          : null,
+      })
+      void flushNotices()
+      return json({ ok: true, already: Boolean(res.already), card: res.card })
+    }
+
+    if (b.decision === 'reject') {
+      if (!reason) return reply.code(400).send({ error: 'no_reason' })
+      const res = await rejectBook(id, u.id, reason)
+      if (!res) return reply.code(409).send({ error: 'not_found_or_busy' })
+      await logModerationAction({
+        actorTg: u.id,
+        targetType: 'book',
+        targetId: id,
+        action: 'reject',
+        reason,
+        notice: res.addedByTg
+          ? { to: res.addedByTg, text: bookDecisionNotice('reject', res.card.title, reason) }
+          : null,
+      })
+      void flushNotices()
+      return json({ ok: true, card: res.card })
+    }
+
+    return reply.code(400).send({ error: 'bad_decision' })
   })
 
   app.patch('/api/me', async (req, reply) => {
