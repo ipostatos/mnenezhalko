@@ -1361,3 +1361,43 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   margin-bottom: var(--sp-3);
   font-size: var(--fs-sm);
 }
+
+/* ── очередь на занятую книгу (issue #10) ──────────────────
+   плашка стоит над блоком «У кого взять»: человек сначала узнаёт, что книга
+   на руках, и только потом видит контакт владельца */
+.wait-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.wait-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* тёплая точка вместо иконки: карточка книги и так плотная по смыслу */
+.wait-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  flex: 0 0 auto;
+}
+
+.warn-banner.sm {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs);
+}
+
+/* сколько человек ждёт мою книгу — строкой на «Моей полке» */
+.wait-count {
+  color: var(--link);
+  font-size: var(--fs-xs);
+}

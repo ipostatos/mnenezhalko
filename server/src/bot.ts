@@ -26,6 +26,7 @@ import {
   runOverdueReminders,
   summarize,
 } from './loans.js'
+import { leaveWaitlist, runWaitlistNotices } from './waitlist.js'
 import { digest, type DigestPeriod } from './digest.js'
 import { parseAnnouncement, saveAnnouncement } from './announce.js'
 import { saveCoverFromTelegram } from './covers.js'
@@ -683,6 +684,8 @@ bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
       .catch(() => {})
   }
   await askForRating(loan)
+  // книга освободилась — обещание тем, кто её ждал (issue #10)
+  void flushWaitlistNotices().catch(() => {})
 })
 
 /* ── оценка книги после прочтения (issue #18) ─────────────── */
@@ -711,6 +714,31 @@ export async function askForRating(loan: { holderTg: bigint | null; bookId: stri
     )
     .catch(() => {})
 }
+
+/* ── очередь на занятую книгу (issue #10) ─────────────────── */
+
+/**
+ * Разослать тем, кому книга освободилась.
+ *
+ * Зовётся сразу после возврата (из бота и из Mini App) и, кроме того, джобой:
+ * список берётся из базы, поэтому повтор ничего не задваивает, а обещание не
+ * теряется, если ровно в этот момент процесс перезапустили.
+ */
+export async function flushWaitlistNotices(limit = 50) {
+  return runWaitlistNotices({
+    limit,
+    delayMs: 40,
+    send: (chatId, text, opts) => bot.api.sendMessage(chatId, text, opts as never),
+    bookUrl: (bookId) => (webAppUrl() ? `${webAppUrl()}/?screen=book&id=${bookId}` : null),
+  })
+}
+
+bot.callbackQuery(/^wait:stop:(.+)$/, async (ctx) => {
+  const bookId = ctx.match![1]
+  await leaveWaitlist(BigInt(ctx.from.id), bookId)
+  await ctx.answerCallbackQuery({ text: 'Больше не напоминаю' })
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+})
 
 const starsKeyboard = (bookId: string) => {
   const kb = new InlineKeyboard()

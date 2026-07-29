@@ -26,6 +26,7 @@ model User {
   loansGiven  Loan[]       @relation("LoansGiven")
   loansTaken  Loan[]       @relation("LoansTaken")
   reviews     Review[]
+  waitings    Waiting[]
 }
 
 /// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
@@ -101,6 +102,7 @@ model Book {
   owner   Librarian? @relation(fields: [ownerId], references: [id])
   loans   Loan[]
   reviews Review[]
+  waitings Waiting[]
 
   @@index([kind])
   @@index([city])
@@ -215,6 +217,50 @@ model LoanEvent {
   meta   String?
 
   @@index([loanId])
+}
+
+/// Очередь на занятую книгу: «сообщите, когда освободится» (issue #10).
+///
+/// В отличие от оценки, очередь висит на ЭКЗЕМПЛЯРЕ (`bookId`), а не на
+/// произведении: ждут не текст, а конкретную книгу у конкретного человека в
+/// конкретном городе, и уведомление рождается из возврата именно этого
+/// экземпляра. Человеку, который ждёт «хоть какую-нибудь копию», карточка и так
+/// подсказывает, где ещё она есть.
+model Waiting {
+  id     String @id @default(cuid())
+  bookId String
+  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  userTg BigInt
+  user   User   @relation(fields: [userTg], references: [tgId], onDelete: Cascade)
+
+  /// waiting — стоит в очереди;
+  /// ready — книга освободилась, сообщение ещё не доставлено (добивает джоба);
+  /// notified — сообщение ушло, очередь для этого человека закрыта;
+  /// left — ушёл сам («больше не жду») либо запись протухла по сроку.
+  ///
+  /// Отдельный `ready` нужен ровно затем, чтобы обещание пережило падение и
+  /// деплой: возврат книги фиксируется в базе одной транзакцией с постановкой
+  /// в ready, а отправка сообщения — дело ненадёжное и внешнее.
+  status String @default("waiting")
+
+  createdAt  DateTime  @default(now())
+  /// когда книгу освободили и человека выбрали следующим
+  readyAt    DateTime?
+  /// когда сообщение реально доставлено
+  notifiedAt DateTime?
+  /// мёртвая очередь не должна жить вечно: протухшие записи не уведомляются
+  expiresAt  DateTime
+  /// сколько раз не удалось доставить сообщение — чтобы не долбить вечно
+  attempts   Int       @default(0)
+  leftAt     DateTime?
+
+  /// один человек стоит в очереди на книгу один раз: повторное нажатие «ждать»
+  /// правит свою запись, а не плодит вторую. Гарантия на уровне базы.
+  @@unique([bookId, userTg])
+  @@index([status, readyAt])
+  @@index([bookId, status, createdAt])
+  @@index([userTg, status])
 }
 
 /// Городские чаты и каналы проекта

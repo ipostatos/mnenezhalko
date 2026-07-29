@@ -20,6 +20,7 @@ import type {
   Rating,
   Review,
   ReviewsPayload,
+  Waitlist,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -139,4 +140,9 @@ export const api = {
     req<{ rating: Rating; items: Review[] }>('DELETE', `/api/books/${bookId}/review`),
   reportReview: (id: string) =>
     req<{ hidden: boolean; reports: number }>('POST', `/api/reviews/${id}/report`, {}),
+  /** Встать в очередь на занятую книгу: «сообщите, когда освободится». */
+  wait: (bookId: string) =>
+    req<{ waiting: Waitlist }>('POST', `/api/books/${bookId}/wait`, {}),
+  /** Уйти из очереди. */
+  unwait: (bookId: string) => req<{ waiting: Waitlist }>('DELETE', `/api/books/${bookId}/wait`),
 }
