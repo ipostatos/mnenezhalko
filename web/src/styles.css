@@ -1420,12 +1420,38 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   flex-direction: column;
   gap: var(--sp-3);
   margin-bottom: var(--sp-4);
+  /* в свёрнутом виде карточка — одна строка, поэтому дышит меньше */
+  padding: var(--sp-3);
 }
 
+/* вся строка — кнопка: свернуть/развернуть должно попадать пальцем целиком */
 .impact-head {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.impact-head .grow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.impact-head .chev {
+  color: var(--hint);
+  transition: transform 0.18s ease;
+}
+
+.impact-head .chev.up {
+  transform: rotate(90deg);
 }
 
 .impact-emoji {

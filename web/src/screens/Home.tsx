@@ -70,7 +70,7 @@ export function Home({
             icon: 'flower',
             tone: '#c2649a',
             title: 'Книжная Клумба',
-            sub: 'Книжный клуб проекта',
+            sub: 'Книжный клуб проекта — чат в Telegram',
             url: health.clubUrl,
           },
         ] as Tile[])

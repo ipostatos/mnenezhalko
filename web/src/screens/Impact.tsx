@@ -6,8 +6,13 @@ import { haptic } from '../telegram'
 /**
  * «Сколько мы сберегли вместе» на главной (issue #13).
  *
+ * По умолчанию — одна строка: главная страница это хаб плашек, и большой блок
+ * со статистикой отодвигал вниз то, ради чего сюда заходят (просьба user
+ * 29.07.2026 — «много места занимает»). Цифры и методика раскрываются по
+ * нажатию и сворачиваются обратно.
+ *
  * Цифры — оценка, а не бухгалтерия, поэтому рядом стоит «примерно», а формула
- * раскрывается по нажатию: спорную методику честнее показать, чем прятать.
+ * показывается тут же: спорную методику честнее показать, чем прятать.
  * Блок молчит, пока обменов нет: «сберегли 0 злотых» — плохое приветствие.
  */
 export function Impact() {
@@ -29,56 +34,59 @@ export function Impact() {
 
   return (
     <div className="impact card">
-      <div className="impact-head">
-        <span className="impact-emoji" aria-hidden="true">
-          🌳
-        </span>
-        <div className="grow">
-          <div className="t-sm" style={{ fontWeight: 700 }}>
-            Вместе мы сберегли
-          </div>
-          <div className="d muted">
-            {data.exchanges === 1 ? '1 обмен книгой' : `${data.exchanges} обменов книгами`}
-          </div>
-        </div>
-      </div>
-
-      <div className={`impact-nums${data.trees >= 0.1 ? '' : ' two'}`}>
-        <div className="impact-num">
-          <div className="n">≈{data.moneyPln}</div>
-          <div className="c">злотых</div>
-        </div>
-        <div className="impact-num">
-          <div className="n">≈{data.paperKg}</div>
-          <div className="c">кг бумаги</div>
-        </div>
-        {/* деревья показываем, только когда их набралось на заметную долю:
-            «примерно 0.01 дерева» — цифра честная, но выглядит как насмешка */}
-        {data.trees >= 0.1 && (
-          <div className="impact-num">
-            <div className="n">≈{data.trees}</div>
-            <div className="c">{treeWord(data.trees)}</div>
-          </div>
-        )}
-      </div>
-
       <button
-        className="link-btn"
+        className="impact-head"
+        aria-expanded={open}
         onClick={() => {
           haptic('light')
           setOpen((v) => !v)
         }}
       >
-        {open ? 'Свернуть' : 'Как это посчитано'}
+        <span className="impact-emoji" aria-hidden="true">
+          🌳
+        </span>
+        <span className="grow">
+          <span className="t-sm" style={{ fontWeight: 700 }}>
+            Вместе мы сберегли ≈{data.moneyPln} zł
+          </span>
+          <span className="d muted">
+            {data.exchanges === 1 ? '1 обмен книгой' : `${data.exchanges} обменов книгами`}
+            {open ? '' : ' · подробнее'}
+          </span>
+        </span>
+        <span className={`chev${open ? ' up' : ''}`} aria-hidden="true">
+          ›
+        </span>
       </button>
 
       {open && (
-        <p className="impact-note">
-          Каждый обмен — это книга, которую не пришлось покупать новой. Считаем осторожно:{' '}
-          {data.basis.pricePln} злотых за книгу (в магазинах обычно дороже),{' '}
-          {data.basis.paperPerBookKg} кг бумаги в книге и {data.basis.paperPerTreeKg} кг бумаги из
-          одного дерева. Это оценка, а не точный расчёт, поэтому все числа со словом «примерно».
-        </p>
+        <>
+          <div className={`impact-nums${data.trees >= 0.1 ? '' : ' two'}`}>
+            <div className="impact-num">
+              <div className="n">≈{data.moneyPln}</div>
+              <div className="c">злотых</div>
+            </div>
+            <div className="impact-num">
+              <div className="n">≈{data.paperKg}</div>
+              <div className="c">кг бумаги</div>
+            </div>
+            {/* деревья показываем, только когда их набралось на заметную долю:
+                «примерно 0.01 дерева» — цифра честная, но выглядит как насмешка */}
+            {data.trees >= 0.1 && (
+              <div className="impact-num">
+                <div className="n">≈{data.trees}</div>
+                <div className="c">{treeWord(data.trees)}</div>
+              </div>
+            )}
+          </div>
+
+          <p className="impact-note">
+            Каждый обмен — это книга, которую не пришлось покупать новой. Считаем осторожно:{' '}
+            {data.basis.pricePln} злотых за книгу (в магазинах обычно дороже),{' '}
+            {data.basis.paperPerBookKg} кг бумаги в книге и {data.basis.paperPerTreeKg} кг бумаги из
+            одного дерева. Это оценка, а не точный расчёт, поэтому все числа со словом «примерно».
+          </p>
+        </>
       )}
     </div>
   )
