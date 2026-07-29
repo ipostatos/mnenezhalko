@@ -3,6 +3,7 @@ import type { Health, LoanSummary, Me } from '../types'
 import { haptic, openTg } from '../telegram'
 import { MAIN_CHAT, INSTAGRAM } from '../links'
 import { MoodBoard } from './MoodBoard'
+import { Impact } from './Impact'
 import { Icon, type IconName } from './Icon'
 
 type Tile = {
@@ -173,6 +174,8 @@ export function Home({
       )}
 
       <MoodBoard summary={loans} onOpen={() => go({ name: 'loans' })} />
+
+      <Impact />
 
       <div className="section-title">Что можно сделать</div>
       {tiles.map((t) => (

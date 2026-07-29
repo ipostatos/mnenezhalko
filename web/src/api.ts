@@ -21,6 +21,8 @@ import type {
   Review,
   ReviewsPayload,
   Waitlist,
+  Badge,
+  Impact,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -145,4 +147,8 @@ export const api = {
     req<{ waiting: Waitlist }>('POST', `/api/books/${bookId}/wait`, {}),
   /** Уйти из очереди. */
   unwait: (bookId: string) => req<{ waiting: Waitlist }>('DELETE', `/api/books/${bookId}/wait`),
+  /** Сколько проект сберёг вместе: агрегат, без единого человека внутри. */
+  impact: () => req<Impact>('GET', '/api/impact'),
+  /** Свои значки библиотекаря — только про себя (issue #11). */
+  badges: () => req<{ badges: Badge[] }>('GET', '/api/my-badges'),
 }

@@ -237,3 +237,23 @@ export type ShelfResult = {
   notionStatus: string
   notionError: string | null
 }
+
+/** Значок библиотекаря: заработанный или с прогрессом (issue #11). */
+export type Badge = {
+  id: string
+  title: string
+  hint: string
+  emoji: string
+  earned: boolean
+  current: number
+  target: number
+}
+
+/** «Сколько мы сберегли вместе» — оценка по числу обменов (issue #13). */
+export type Impact = {
+  exchanges: number
+  moneyPln: number
+  paperKg: number
+  trees: number
+  basis: { pricePln: number; paperPerBookKg: number; paperPerTreeKg: number }
+}
