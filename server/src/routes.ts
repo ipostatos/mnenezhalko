@@ -61,6 +61,7 @@ import {
 } from './reviews.js'
 import { joinWaitlist, leaveWaitlist, waitCountsFor, waitlistFor } from './waitlist.js'
 import { badgesOf } from './badges.js'
+import { suggestPeople } from './people.js'
 import { impact } from './impact.js'
 import { prewarmCoverage } from './prewarm.js'
 import { createHmac } from 'node:crypto'
@@ -375,6 +376,18 @@ export async function registerRoutes(app: FastifyInstance) {
     // Ждущие друг друга не видят — наружу не уходит ни ников, ни tgId
     const waiting = await waitlistFor(id, u?.id ?? null)
     return json({ ...redactCard(book, maySeeContacts(req)), waiting })
+  })
+
+  /**
+   * Подсказка людей при вводе ника («у кого моя книга»). Только по подписи и с
+   * лимитом: это про своих, а не справочник ников всего проекта.
+   */
+  app.get('/api/people', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (tooOften(`people:${u.id}`, 60, 60_000)) return reply.code(429).send({ error: 'too_many' })
+    const { q } = req.query as { q?: string }
+    return json({ people: await suggestPeople(u.id, String(q ?? '').slice(0, 64)) })
   })
 
   /**

@@ -23,6 +23,7 @@ import type {
   Waitlist,
   Badge,
   Impact,
+  Person,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -151,4 +152,6 @@ export const api = {
   impact: () => req<Impact>('GET', '/api/impact'),
   /** Свои значки библиотекаря — только про себя (issue #11). */
   badges: () => req<{ badges: Badge[] }>('GET', '/api/my-badges'),
+  /** Кого предложить при вводе ника: библиотекари и свои прошлые читатели. */
+  people: (q: string) => req<{ people: Person[] }>('GET', `/api/people${qs({ q })}`),
 }
