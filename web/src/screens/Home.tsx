@@ -27,6 +27,15 @@ export function Home({
   loans: LoanSummary | null
 }) {
   const tiles: Tile[] = [
+    // «О проекте» стоит первой: человек, попавший сюда впервые, сначала должен
+    // понять, куда попал, и только потом идти в каталог (просьба user 29.07.2026)
+    {
+      icon: 'leaf',
+      tone: '#5aa53f',
+      title: 'О проекте',
+      sub: 'Как всё устроено и с чего начать',
+      route: { name: 'about' },
+    },
     {
       icon: 'book',
       tone: '#2f6db0',
@@ -102,13 +111,6 @@ export function Home({
       title: 'Добавить книгу',
       sub: 'Поставить свою книгу на полку',
       route: { name: 'add' },
-    },
-    {
-      icon: 'leaf',
-      tone: '#5aa53f',
-      title: 'О проекте',
-      sub: 'Как всё устроено и с чего начать',
-      route: { name: 'about' },
     },
     {
       icon: 'chat',
