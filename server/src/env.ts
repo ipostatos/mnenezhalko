@@ -76,9 +76,11 @@ export const env = {
 
   mainChatUrl: process.env.MAIN_CHAT_URL || 'https://t.me/+hlRk_HGIDcE4M2Vi',
 
-  /** Книжный клуб «Книжная Клумба МнеНеЖалко» — страница в Notion проекта. */
-  clubUrl:
-    process.env.CLUB_URL || 'https://app.notion.com/p/mnenezhalko/3c5262caa2b64b6aba2ea5f1686ed0d5',
+  /**
+   * Книжный клуб «Книжная Клумба МнеНеЖалко» — чат клуба в Telegram.
+   * Раньше здесь стояла страница в Notion; клуб живёт в чате (user, 29.07.2026).
+   */
+  clubUrl: process.env.CLUB_URL || 'https://t.me/bookclub_mnzh',
 
   /**
    * Модерация книг: при MODERATION_ON=1 книга обычного пользователя уходит на

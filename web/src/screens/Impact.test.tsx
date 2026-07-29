@@ -39,15 +39,28 @@ beforeEach(() => {
 })
 
 describe('сколько сберегли вместе', () => {
-  test('показываем обмены, злотые, бумагу и деревья', async () => {
+  test('на главной свёрнут в одну строку: место под плашки, а не под статистику', async () => {
     vi.spyOn(api, 'impact').mockResolvedValue(impact())
     render(<Impact />)
 
-    expect(await screen.findByText('≈8000')).toBeTruthy()
-    expect(screen.getByText('200 обменов книгами')).toBeTruthy()
+    expect(await screen.findByText('Вместе мы сберегли ≈8000 zł')).toBeTruthy()
+    // цифры и методика спрятаны, пока не попросили
+    expect(screen.queryByText('кг бумаги')).toBeNull()
+    expect(screen.queryByText(/40 злотых за книгу/)).toBeNull()
+  })
+
+  test('по нажатию раскрываются злотые, бумага и деревья, и сворачиваются обратно', async () => {
+    vi.spyOn(api, 'impact').mockResolvedValue(impact())
+    render(<Impact />)
+
+    const head = await screen.findByRole('button', { name: /Вместе мы сберегли/ })
+    fireEvent.click(head)
     expect(screen.getByText('≈60')).toBeTruthy()
-    expect(screen.getByText('≈1')).toBeTruthy()
+    expect(screen.getByText('кг бумаги')).toBeTruthy()
     expect(screen.getByText('дерево')).toBeTruthy()
+
+    fireEvent.click(head)
+    await waitFor(() => expect(screen.queryByText('кг бумаги')).toBeNull())
   })
 
   test('без обменов блок молчит: «сберегли 0 злотых» — плохое приветствие', async () => {
@@ -62,16 +75,16 @@ describe('сколько сберегли вместе', () => {
     )
     render(<Impact />)
 
-    expect(await screen.findByText('≈120')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /Вместе мы сберегли/ }))
     expect(screen.getByText('≈0.9')).toBeTruthy()
     expect(screen.queryByText('≈0.02')).toBeNull()
   })
 
-  test('методику можно раскрыть прямо в блоке', async () => {
+  test('методика видна при раскрытии: спорную оценку честнее показать', async () => {
     vi.spyOn(api, 'impact').mockResolvedValue(impact())
     render(<Impact />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Как это посчитано' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Вместе мы сберегли/ }))
     expect(screen.getByText(/40 злотых за книгу/)).toBeTruthy()
     expect(screen.getByText(/оценка, а не точный расчёт/)).toBeTruthy()
   })
