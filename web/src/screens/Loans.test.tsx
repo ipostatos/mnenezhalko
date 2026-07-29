@@ -112,3 +112,57 @@ describe('подсказка с полки в форме выдачи', () => {
     expect(bookMatches({ title: 'Солярис', author: null }, norm('лем'))).toBe(false)
   })
 })
+
+/**
+ * Просьба user 29.07.2026: «хочется иметь доступ ко всему списку, чтобы любую
+ * книгу можно было выбрать, а не вводить вручную по памяти».
+ */
+describe('выбор книги из всей полки', () => {
+  const shelf = (n: number) =>
+    Array.from({ length: n }, (_, i) => book({ id: `b${i}`, title: `Книга ${i}`, author: null }))
+
+  test('в списке вся полка, а не пять подсказок', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue(shelf(9))
+    const { container } = render(<Loans go={() => {}} />)
+
+    fireEvent.click(await screen.findByText(/Выбрать из своей полки \(9\)/))
+    expect(container.querySelectorAll('.sheet .pick-row').length).toBe(9)
+  })
+
+  test('выбор книги подставляет её в форму и закрывает список', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue(shelf(9))
+    const { container } = render(<Loans go={() => {}} />)
+    fireEvent.click(await screen.findByText(/Выбрать из своей полки/))
+
+    fireEvent.click(container.querySelectorAll('.sheet .pick-row')[3])
+    const input = screen.getByPlaceholderText('Название книги *') as HTMLInputElement
+    expect(input.value).toBe('Книга 3')
+    await waitFor(() => expect(container.querySelector('.sheet')).toBeNull())
+  })
+
+  test('поиск внутри списка ищет и по автору', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue([
+      book(),
+      book({ id: 'b2', title: 'Солярис', author: 'Станислав Лем' }),
+    ])
+    const { container } = render(<Loans go={() => {}} />)
+    fireEvent.click(await screen.findByText(/Выбрать из своей полки/))
+
+    fireEvent.change(screen.getByPlaceholderText('Поиск: название или автор…'), {
+      target: { value: 'лем' },
+    })
+    const rows = container.querySelectorAll('.sheet .pick-row')
+    expect(rows.length).toBe(1)
+    expect(rows[0].textContent).toContain('Солярис')
+  })
+
+  test('книга на руках видна, но выбрать её нельзя', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue([book({ status: 'busy' })])
+    const { container } = render(<Loans go={() => {}} />)
+    fireEvent.click(await screen.findByText(/Выбрать из своей полки/))
+
+    const row = container.querySelector('.sheet .pick-row')!
+    expect(row.tagName).not.toBe('BUTTON')
+    expect(row.textContent).toContain('сначала отметьте возврат')
+  })
+})

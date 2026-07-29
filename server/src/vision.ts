@@ -7,26 +7,19 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { env } from './env.js'
-import { facets } from './search.js'
+import { getTaxonomy, FALLBACK_LANGUAGES } from './taxonomy.js'
 
 const client = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
 
 export const visionEnabled = () => client !== null
 
-/** Языки — весь справочник Language из таблицы All Books. */
-export const LANGUAGES = [
-  'Русский',
-  'Polski',
-  'English',
-  'Українська',
-  'Беларуская',
-  'Deutsch',
-  'Español',
-  'Français',
-  'Italiana',
-  'Łacinka',
-  'Трасянка',
-]
+/**
+ * Языки и жанры модель берёт из справочника Notion (см. taxonomy.ts): раньше
+ * список языков лежал здесь копией и расходился с таблицей, а жанры брались из
+ * фактических значений каталога — вместе с мусором, накопленным свободным вводом
+ * (в поле жанра встречалась даже ссылка на обложку).
+ */
+export const LANGUAGES = FALLBACK_LANGUAGES
 
 const BOOK_FIELDS = {
   kind: { type: 'string', enum: ['book', 'game'] },
@@ -99,7 +92,11 @@ export const isSupportedMedia = (t: string): t is MediaType => MEDIA.includes(t 
  * тестами без похода в сеть: именно здесь чистятся справочники и отсеивается
  * мусор («Название», пустые строки, дубли одной книги в кадре).
  */
-export function parsePhotoAnswer(text: string, genreList: string[]): RecognizedPhoto | null {
+export function parsePhotoAnswer(
+  text: string,
+  genreList: string[],
+  languageList: string[] = FALLBACK_LANGUAGES,
+): RecognizedPhoto | null {
   let raw: any
   try {
     raw = JSON.parse(text)
@@ -107,6 +104,7 @@ export function parsePhotoAnswer(text: string, genreList: string[]): RecognizedP
     return null
   }
   const known = new Set(genreList)
+  const knownLanguages = new Set(languageList)
   const note = typeof raw?.note === 'string' && raw.note.trim() ? raw.note.trim() : null
   const list = Array.isArray(raw?.books) ? raw.books : []
 
@@ -125,7 +123,7 @@ export function parsePhotoAnswer(text: string, genreList: string[]): RecognizedP
       title: title.slice(0, 300),
       author: typeof b?.author === 'string' && b.author.trim() ? b.author.trim().slice(0, 200) : null,
       languages: (Array.isArray(b?.languages) ? b.languages : [])
-        .filter((l: unknown) => typeof l === 'string' && LANGUAGES.includes(l))
+        .filter((l: unknown) => typeof l === 'string' && knownLanguages.has(l))
         .slice(0, 2),
       genres: (Array.isArray(b?.genres) ? b.genres : [])
         .filter((g: unknown) => typeof g === 'string' && known.has(g))
@@ -151,8 +149,7 @@ export async function recognizePhoto(
 ): Promise<RecognizedPhoto | null> {
   if (!client) return null
 
-  const f = await facets()
-  const genreList = f.genres.map((g) => g.value)
+  const { genres: genreList, languages: languageList } = await getTaxonomy()
 
   const res = await client.messages.create({
     model: env.anthropicModel,
@@ -173,7 +170,7 @@ export async function recognizePhoto(
       '— НЕ ДОГАДЫВАЙСЯ: если название нечитаемо или видно только часть слова, пропусти книгу ' +
       'и напиши в note, сколько корешков не разобрал;\n' +
       '— одну и ту же книгу не перечисляй дважды;\n' +
-      '— язык выбирай ТОЛЬКО из списка: ' + LANGUAGES.join(', ') + ';\n' +
+      '— язык выбирай ТОЛЬКО из списка: ' + languageList.join(', ') + ';\n' +
       '— жанры выбирай ТОЛЬКО из списка ниже, дословно, не больше трёх; если ничего не подходит — пустой массив;\n' +
       '— если книг на фото нет вовсе, ставь recognized = false, books = [] и объясни в note, что переснять.\n\n' +
       'Доступные жанры:\n' + genreList.join(', '),
@@ -196,6 +193,6 @@ export async function recognizePhoto(
     .map((b) => b.text)
     .join('')
 
-  return parsePhotoAnswer(text, genreList)
+  return parsePhotoAnswer(text, genreList, languageList)
 }
 

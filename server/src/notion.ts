@@ -106,7 +106,16 @@ export function coverUrl(raw: string | null, blockId: string): string | null {
   return raw.startsWith('http') ? raw : null
 }
 
-export type Schema = { byName: Record<string, string>; typeById: Record<string, string> }
+export type Schema = {
+  byName: Record<string, string>
+  typeById: Record<string, string>
+  /**
+   * Варианты select/multi_select по имени свойства. Это и есть справочник
+   * проекта: жанры и языки заводятся в Notion, а приложение только выбирает
+   * из готового списка (см. taxonomy.ts).
+   */
+  optionsByName: Record<string, string[]>
+}
 
 async function queryRaw(
   collection: string,
@@ -132,11 +141,17 @@ function schemaOf(res: Rec): Schema {
   const coll = unwrap(Object.values(res.recordMap?.collection || {})[0])
   const byName: Record<string, string> = {}
   const typeById: Record<string, string> = {}
+  const optionsByName: Record<string, string[]> = {}
   for (const [pid, s] of Object.entries<any>(coll.schema || {})) {
     byName[s.name] = pid
     typeById[pid] = s.type
+    if (Array.isArray(s.options)) {
+      optionsByName[s.name] = s.options
+        .map((o: any) => String(o?.value ?? '').trim())
+        .filter(Boolean)
+    }
   }
-  return { byName, typeById }
+  return { byName, typeById, optionsByName }
 }
 
 /** Схема коллекции: id свойств по имени и их типы. Нужна и для записи. */

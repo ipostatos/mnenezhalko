@@ -8,7 +8,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "sync": "tsx src/sync-cli.ts",
-    "test": "node --import tsx --test src/scheduler.test.ts src/announce.test.ts src/moderation.test.ts src/prewarm.test.ts src/reminders.test.ts src/security.test.ts src/covers.test.ts src/imgcache-housekeep.test.ts src/imgcache-metrics.test.ts src/showcase-budget.test.ts src/loan-concurrency.test.ts src/loan-claim.test.ts src/sync.test.ts src/ssrf.test.ts src/privacy.test.ts src/addbook.test.ts src/isbn-route.test.ts src/photo-route.test.ts src/api-validation.test.ts src/lifecycle.test.ts src/notion-fetch.test.ts src/cover-links.test.ts src/reviews.test.ts src/waitlist.test.ts src/badges-impact.test.ts src/digest.test.ts src/people.test.ts",
+    "test": "node --import tsx --test src/scheduler.test.ts src/announce.test.ts src/moderation.test.ts src/prewarm.test.ts src/reminders.test.ts src/security.test.ts src/covers.test.ts src/imgcache-housekeep.test.ts src/imgcache-metrics.test.ts src/showcase-budget.test.ts src/loan-concurrency.test.ts src/loan-claim.test.ts src/sync.test.ts src/ssrf.test.ts src/privacy.test.ts src/addbook.test.ts src/isbn-route.test.ts src/photo-route.test.ts src/api-validation.test.ts src/lifecycle.test.ts src/notion-fetch.test.ts src/cover-links.test.ts src/reviews.test.ts src/waitlist.test.ts src/badges-impact.test.ts src/digest.test.ts src/people.test.ts src/taxonomy.test.ts",
     "notion:check": "tsx src/notion-check.ts",
     "import": "tsx src/import-topic.ts",
     "db:generate": "prisma generate",

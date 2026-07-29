@@ -6,7 +6,7 @@ import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
 import { CITIES } from './seed.js'
 import { decodeDataUrl, readCover, readCoverVariant, saveCover } from './covers.js'
-import { recognizePhoto, visionEnabled, LANGUAGES } from './vision.js'
+import { recognizePhoto, visionEnabled } from './vision.js'
 import { looksLikeIsbn, lookupIsbnDetailed } from './isbn.js'
 import {
   checkDuplicates,
@@ -17,6 +17,7 @@ import {
   shelfState,
 } from './publish.js'
 import { digest } from './digest.js'
+import { getTaxonomy } from './taxonomy.js'
 import {
   createLoan,
   decorate,
@@ -280,7 +281,10 @@ export async function registerRoutes(app: FastifyInstance) {
     const { city } = req.query as { city?: string }
     // facets кэшируется по городу — произвольная строка раздувала бы кэш
     if (city && !isKnownCity(city)) return reply.code(400).send({ error: 'unknown_city' })
-    return facets(city || undefined)
+    // рядом со «сколько чего есть» отдаём и справочник проекта: формы жанра и
+    // языка выбирают ТОЛЬКО из него, свободного ввода там больше нет
+    const [f, taxonomy] = await Promise.all([facets(city || undefined), getTaxonomy()])
+    return { ...f, genreOptions: taxonomy.genres, languageOptions: taxonomy.languages }
   })
 
   app.get('/api/books', async (req) => {
@@ -908,7 +912,9 @@ export async function registerRoutes(app: FastifyInstance) {
         })
       : { own: null, others: { count: 0, city: null, byCity: [], unknownCity: 0, where: '' } }
 
-    return json({ cover: saved.url, recognized, dup, extraBooks, languages: LANGUAGES })
+    // список языков — из справочника Notion, а не из копии в коде
+    const { languages } = await getTaxonomy()
+    return json({ cover: saved.url, recognized, dup, extraBooks, languages })
   })
 
   /** Своя обложка; с ?w= — превью нужной ширины через тот же sharp-конвейер. */

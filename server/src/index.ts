@@ -7,6 +7,7 @@ import { webhookCallback } from 'grammy'
 import { env, botDisabled } from './env.js'
 import { prisma } from './db.js'
 import { registerRoutes, warmShowcaseOnBoot } from './routes.js'
+import { warmTaxonomyOnBoot } from './taxonomy.js'
 import {
   bot,
   checkNotionToken,
@@ -116,6 +117,9 @@ app.log.info(`Mini App: ${env.publicUrl || `http://localhost:${env.port}`}`)
 
 // после деплоя карусель должна быть тёплой к приходу первого человека
 warmShowcaseOnBoot()
+
+// на чистой машине справочник жанров/языков подтягиваем сразу, не дожидаясь синка
+warmTaxonomyOnBoot()
 
 if (botDisabled) {
   app.log.warn('DISABLE_BOT=1 — бот не запущен, работает только API и Mini App')

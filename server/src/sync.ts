@@ -13,17 +13,21 @@ import { flushTelegramUpdates } from './librarian.js'
 import { invalidateFacets } from './search.js'
 import { runJobOnce } from './scheduler.js'
 import { coverPrewarmJob } from './prewarm.js'
+import { refreshTaxonomy } from './taxonomy.js'
 
 /** Источники Notion — инъекция для тестов циркуит-брейкера, без реальной сети. */
 export type SyncDeps = {
   fetchBooks: () => Promise<NotionBook[]>
   fetchGames: () => Promise<NotionBook[]>
   fetchLibrarians: () => Promise<NotionLibrarian[]>
+  /** справочник жанров/языков из схемы той же таблицы книг */
+  refreshTaxonomy: () => Promise<unknown>
 }
 const defaultDeps: SyncDeps = {
   fetchBooks: realFetchBooks,
   fetchGames: realFetchGames,
   fetchLibrarians: realFetchLibrarians,
+  refreshTaxonomy,
 }
 
 export type SyncReport = {
@@ -308,6 +312,15 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
   // после синка могли появиться новые обложки — продолжаем прогрев, не дожидаясь
   // очередного тика планировщика (повторный запуск поверх идущего он пропустит сам)
   if (trusted) void runJobOnce(coverPrewarmJob)
+
+  // справочник жанров/языков живёт в схеме той же таблицы: админ завёл новый
+  // жанр в Notion — он появляется в приложении после ближайшего синка. Сбой тут
+  // не должен ронять прогон: справочник останется прежним (см. taxonomy.ts)
+  if (booksOk) {
+    await deps.refreshTaxonomy().catch((e: any) =>
+      log(`[sync] справочник жанров не обновился: ${e?.message ?? e}`),
+    )
+  }
 
   const report: SyncReport = {
     librarians: librarians.length,

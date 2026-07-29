@@ -5,6 +5,7 @@ import type { Book, Loan, LoanSummary, HistoryLoan, Person } from '../types'
 import { haptic, openTg, showAlert, showConfirm, onAppShow } from '../telegram'
 import { warsawDay } from '../dates'
 import { MoodBoard } from './MoodBoard'
+import { ShelfPicker } from './ShelfPicker'
 
 const UNDO_ERRORS: Record<string, string> = {
   too_late: 'Отменить уже нельзя — прошло больше суток.',
@@ -63,6 +64,8 @@ export function Loans({ go }: { go: (r: Route) => void }) {
   // подсказка людей: ники бывают длинные, набирать их вручную с телефона больно
   const [people, setPeople] = useState<Person[]>([])
   const [holderPicked, setHolderPicked] = useState(false)
+  /** открыт полный список полки: вспоминать название по памяти не нужно */
+  const [picker, setPicker] = useState(false)
 
   const load = () =>
     api
@@ -205,11 +208,23 @@ export function Loans({ go }: { go: (r: Route) => void }) {
               </button>
             ))}
             {matched.length > suggestions.length && (
-              <div className="muted">
-                и ещё {matched.length - suggestions.length} на полке — впишите название точнее
-              </div>
+              <div className="muted">и ещё {matched.length - suggestions.length} на полке</div>
             )}
           </div>
+        )}
+        {/* весь список полки: раньше сверх пяти подсказок оставалось только
+            «впишите название точнее», то есть вспоминать книгу по памяти
+            (просьба user 29.07.2026) */}
+        {myBooks.length > 0 && (
+          <button
+            className="link-row"
+            onClick={() => {
+              haptic()
+              setPicker(true)
+            }}
+          >
+            📚 Выбрать из своей полки ({myBooks.length})
+          </button>
         )}
         {busyMatch.length > 0 && !bookId && (
           <div className="note" style={{ marginBottom: 0 }}>
@@ -409,6 +424,18 @@ export function Loans({ go }: { go: (r: Route) => void }) {
               <div className="foot">Закрытых выдач пока нет.</div>
             ))}
         </>
+      )}
+
+      {picker && (
+        <ShelfPicker
+          books={myBooks}
+          onClose={() => setPicker(false)}
+          onPick={(b) => {
+            setTitle(b.title)
+            setBookId(b.id)
+            setPicker(false)
+          }}
+        />
       )}
 
       {!loading && given.length === 0 && taken.length === 0 && history.length === 0 && (

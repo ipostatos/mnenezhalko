@@ -63,9 +63,11 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
                 {g}
               </span>
             ))}
+            {/* язык стоял такой же плашкой сразу за жанрами и читался как ещё
+                один жанр (жалоба user 29.07.2026) — отделяем цветом и подписью */}
             {book.languages.map((l) => (
-              <span key={l} className="chip sm" style={{ cursor: 'default' }}>
-                {l}
+              <span key={l} className="chip sm lang" style={{ cursor: 'default' }}>
+                язык: {l}
               </span>
             ))}
           </div>

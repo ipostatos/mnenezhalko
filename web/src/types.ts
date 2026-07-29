@@ -80,6 +80,13 @@ export type Facets = {
   genres: { value: string; count: number }[]
   languages: { value: string; count: number }[]
   cities: { value: string; count: number }[]
+  /**
+   * Справочник проекта из Notion: из него (и только из него) выбираются жанр и
+   * язык в формах. Отличается от `genres`/`languages` выше — те показывают, что
+   * фактически стоит у книг каталога, вместе со старыми значениями.
+   */
+  genreOptions?: string[]
+  languageOptions?: string[]
 }
 
 export type CityGroup = {

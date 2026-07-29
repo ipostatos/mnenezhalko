@@ -406,6 +406,27 @@ h1 {
   pointer-events: none;
 }
 
+/* «ещё 118 →» в справочнике жанров: кнопка, но не вариант выбора */
+.chip.ghost {
+  background: transparent;
+  border-style: dashed;
+  color: var(--hint);
+}
+
+/* выбрано максимум — остальные варианты гаснут, а не молча не нажимаются */
+.chip.off {
+  opacity: 0.45;
+}
+
+/* язык на карточке книги: раньше он стоял такой же плашкой сразу за жанрами и
+   читался как ещё один жанр (жалоба user 29.07.2026) */
+.chip.lang {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
 /* ── формы ───────────────────────────────────── */
 
 .input {
@@ -423,6 +444,12 @@ h1 {
      её не видно вообще, и непонятно, попал ли пальцем в поле (жалоба user
      29.07.2026). То же самое для выделения текста */
   caret-color: var(--link);
+}
+
+/* поле поиска внутри блока выбора (жанры) — вспомогательное, не главный ввод */
+.input.sm {
+  padding: 9px 12px;
+  font-size: var(--fs-sm);
 }
 
 .input::selection {
@@ -707,6 +734,88 @@ textarea.input {
   padding: var(--sp-1) 0;
   color: var(--link);
   font-size: var(--fs-sm);
+}
+
+/* ── шторка выбора книги с полки (форма выдачи) ───────────── */
+
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(58, 42, 34, 0.4);
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  max-height: 85vh;
+  background: var(--bg);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  padding: var(--sp-4) var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 32px rgba(58, 42, 34, 0.18);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.sheet-head .t {
+  flex: 1;
+  font-size: var(--fs-h2);
+  font-weight: 800;
+}
+
+.sheet-close {
+  background: none;
+  border: none;
+  font-size: var(--fs-body);
+  color: var(--hint);
+  font-family: inherit;
+  padding: var(--sp-2);
+  cursor: pointer;
+}
+
+/* сам список прокручивается, а поиск и подпись остаются на месте */
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: var(--sp-3);
+}
+
+.sheet-foot {
+  padding-top: var(--sp-2);
+  text-align: center;
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  cursor: pointer;
+}
+
+/* книга на руках: видна, но выбрать нельзя — выдача такой упрётся в book_busy */
+.pick-row.disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* ── барахолка ────────────────────────────────────────────── */
@@ -1085,6 +1194,44 @@ textarea.input {
   font-size: var(--fs-sm);
   color: var(--hint);
   line-height: 1.4;
+}
+
+/* город полки — одной строкой вверху экрана вместо повтора в каждой книге */
+.shelf-city {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  text-align: left;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 10px var(--sp-3);
+  margin-bottom: var(--sp-4);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.shelf-city svg {
+  width: 18px;
+  height: 18px;
+  color: var(--link);
+  flex: none;
+}
+
+.shelf-city .chev {
+  color: var(--hint);
+}
+
+/* «жанр не указан» — это кнопка, ведущая в правку, а не просто пометка */
+.tag.warn-tag {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
 }
 
 .shelf-actions {

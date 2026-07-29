@@ -84,6 +84,8 @@ function deps(books: any[] = [], games: any[] = [], librarians: any[] = []) {
     fetchBooks: async () => books,
     fetchGames: async () => games,
     fetchLibrarians: async () => librarians,
+    // справочник жанров живёт в Notion — в тестах в сеть не ходим
+    refreshTaxonomy: async () => ({}),
   }
 }
 
@@ -337,6 +339,7 @@ test('второй синк не стартует, пока идёт первы�
     },
     fetchGames: async () => [],
     fetchLibrarians: async () => [],
+    refreshTaxonomy: async () => ({}),
   }
   const first = syncFromNotion(silentLog, slow)
   await assert.rejects(() => syncFromNotion(silentLog, deps()), /уже идёт/)

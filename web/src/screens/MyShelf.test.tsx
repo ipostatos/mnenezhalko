@@ -41,6 +41,61 @@ beforeEach(() => {
   } as any)
 })
 
+describe('город и жанры на «Моей полке» (просьба user 29.07.2026)', () => {
+  test('город стоит один раз вверху, а не в каждой книге', async () => {
+    const { container } = render(<MyShelf go={() => {}} city="Warszawa" />)
+    await screen.findByText('На полке раз')
+
+    // одна строка «Ваш город», и ни одной подписи с городом на карточках
+    expect(container.querySelectorAll('.shelf-city').length).toBe(1)
+    expect(screen.getByText('Warszawa')).toBeTruthy()
+    for (const meta of container.querySelectorAll('.shelf-meta')) {
+      expect(meta.textContent).not.toContain('Warszawa')
+    }
+  })
+
+  test('город книги показывается, только если он ОТЛИЧАЕТСЯ от вашего', async () => {
+    vi.spyOn(api, 'myShelf').mockResolvedValue({
+      books: [
+        shelfBook({ title: 'Дома', state: 'active' }),
+        shelfBook({ title: 'У родителей', state: 'active', city: 'Kraków' }),
+      ],
+    } as any)
+    const { container } = render(<MyShelf go={() => {}} city="Warszawa" />)
+    await screen.findByText('У родителей')
+
+    const metas = [...container.querySelectorAll('.shelf-meta')].map((m) => m.textContent)
+    expect(metas).toEqual(['Kraków'])
+  })
+
+  test('жанры видны на карточке — не заходя в каждую книгу', async () => {
+    vi.spyOn(api, 'myShelf').mockResolvedValue({
+      books: [shelfBook({ title: 'С жанром', state: 'active', genres: ['Фентези', 'Классика'] })],
+    } as any)
+    render(<MyShelf go={() => {}} city="Warszawa" />)
+    await screen.findByText('С жанром')
+
+    expect(screen.getByText('Фентези')).toBeTruthy()
+    expect(screen.getByText('Классика')).toBeTruthy()
+  })
+
+  test('книги без жанра пересчитаны сверху и показываются фильтром', async () => {
+    vi.spyOn(api, 'myShelf').mockResolvedValue({
+      books: [
+        shelfBook({ title: 'С жанром', state: 'active', genres: ['Классика'] }),
+        shelfBook({ title: 'Без жанра', state: 'active' }),
+      ],
+    } as any)
+    render(<MyShelf go={() => {}} city="Warszawa" />)
+    await screen.findByText('Без жанра')
+    expect(screen.getByText(/У 1 книги не указан жанр/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Показать эти книги' }))
+    await waitFor(() => expect(screen.queryByText('С жанром')).toBeNull())
+    expect(screen.getByText('Без жанра')).toBeTruthy()
+  })
+})
+
 describe('счётчики на «Моей полке»', () => {
   test('счётчики — настоящие кнопки, а не блоки, которые притворяются', async () => {
     const { container } = render(<MyShelf go={() => {}} />)

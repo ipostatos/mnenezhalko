@@ -59,7 +59,8 @@ const OWNER_SELECT = {
   },
 } as const
 
-const split = (s: string | null | undefined) =>
+/** «Жанр, Жанр» из базы → массив. Хранение строкой — наследство Notion. */
+export const split = (s: string | null | undefined) =>
   (s || '')
     .split(',')
     .map((x) => x.trim())

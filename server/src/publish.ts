@@ -11,7 +11,7 @@
 import type { Librarian } from '@prisma/client'
 import { prisma, buildSearch, norm } from './db.js'
 import { env, isAdmin } from './env.js'
-import { toCard, searchBooks, invalidateFacets, type BookCard } from './search.js'
+import { toCard, searchBooks, invalidateFacets, split, type BookCard } from './search.js'
 import {
   archiveRow,
   createBook,
@@ -21,6 +21,7 @@ import {
   updateBook,
 } from './notion-write.js'
 import { linkLibrarian } from './librarian.js'
+import { sanitizeGenres, sanitizeLanguages } from './taxonomy.js'
 
 export type ShelfDraft = {
   tgId: bigint
@@ -128,12 +129,16 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
   // карточка у нас — всегда, чтобы полка/поиск видели её сразу
   const city = d.city ?? librarian.city ?? null
   const district = d.district ?? librarian.district ?? null
+  // жанр и язык — только из справочника Notion: своё значение, уехав в общую
+  // таблицу, навсегда добавило бы туда новый вариант (см. taxonomy.ts)
+  const genres = await sanitizeGenres(d.genres ?? [])
+  const languages = await sanitizeLanguages(d.languages ?? [])
   const data = {
     kind: d.kind,
     title: d.title.trim().slice(0, 300),
     author: d.author?.trim().slice(0, 200) || null,
-    genres: (d.genres ?? []).join(', ').slice(0, 300),
-    languages: (d.languages ?? []).join(', ').slice(0, 200),
+    genres: genres.join(', ').slice(0, 300),
+    languages: languages.join(', ').slice(0, 200),
     city,
     district,
     coverUrl: d.coverUrl?.slice(0, 1000) || null,
@@ -325,8 +330,19 @@ export async function editBook(bookId: string, ownerTg: bigint, f: ShelfEdit) {
   const data: Record<string, unknown> = {}
   if (f.title !== undefined) data.title = f.title.trim().slice(0, 300)
   if (f.author !== undefined) data.author = f.author?.trim().slice(0, 200) || null
-  if (f.genres !== undefined) data.genres = f.genres.join(', ').slice(0, 300)
-  if (f.languages !== undefined) data.languages = f.languages.join(', ').slice(0, 200)
+  // правка тоже держится справочника, но не стирает то, что уже стоит у книги:
+  // у трёх десятков старых значений («Художка», «Нонфик») своя история, и правка
+  // названия не должна молча выкидывать жанры
+  let genres: string[] | undefined
+  let languages: string[] | undefined
+  if (f.genres !== undefined) {
+    genres = await sanitizeGenres(f.genres, split(b.genres))
+    data.genres = genres.join(', ').slice(0, 300)
+  }
+  if (f.languages !== undefined) {
+    languages = await sanitizeLanguages(f.languages, split(b.languages))
+    data.languages = languages.join(', ').slice(0, 200)
+  }
   if (f.city !== undefined) data.city = f.city?.trim() || null
   if (f.district !== undefined) data.district = f.district?.trim() || null
 
@@ -340,8 +356,9 @@ export async function editBook(bookId: string, ownerTg: bigint, f: ShelfEdit) {
     await updateBook(updated.notionId, updated.kind === 'game' ? 'game' : 'book', {
       title: f.title !== undefined ? updated.title : undefined,
       author: f.author !== undefined ? updated.author : undefined,
-      genres: f.genres,
-      languages: f.languages,
+      // в Notion уезжает ПРОВЕРЕННЫЙ список, а не то, что прислал клиент
+      genres,
+      languages,
       cityDistrict:
         f.city !== undefined || f.district !== undefined
           ? cityDistrictOf(updated.city, updated.district)

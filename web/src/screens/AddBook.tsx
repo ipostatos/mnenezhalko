@@ -1,17 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
 import type { DupCheck, Facets } from '../types'
 import { haptic, showAlert, showConfirm } from '../telegram'
-
-/** Русское склонение по числу. */
-const plural = (n: number, forms: [string, string, string]) => {
-  const m10 = n % 10
-  const m100 = n % 100
-  if (m10 === 1 && m100 !== 11) return forms[0]
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1]
-  return forms[2]
-}
+import { plural } from '../plural'
+import { TagPicker } from './TagPicker'
 
 const CITIES = [
   'Warszawa',
@@ -25,7 +18,12 @@ const CITIES = [
   'Radom',
 ]
 
-const LANGS = ['Русский', 'Polski', 'English', 'Українська', 'Беларуская']
+/**
+ * Пока справочник с сервера не пришёл, показываем самые частые языки проекта —
+ * иначе форма на секунду выглядит сломанной. Полный список (и жанры) приходит
+ * из Notion в /api/facets, см. server/src/taxonomy.ts.
+ */
+const LANGS_FALLBACK = ['Русский', 'Polski', 'English', 'Українська', 'Беларуская']
 
 /**
  * Сжимает снимок до 1280px по длинной стороне — этого хватает, чтобы прочитать
@@ -69,8 +67,18 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
     api.facets().then(setFacets).catch(() => {})
   }, [])
 
-  const toggle = (arr: string[], set: (v: string[]) => void, value: string) =>
-    set(arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value])
+  /**
+   * Порядок жанров: сначала самые ходовые в каталоге, следом весь справочник
+   * Notion. Так частый жанр остаётся в один тап, а редкий всё-таки доступен —
+   * раньше в форме было только 18 самых частых, и остальное было не выбрать.
+   */
+  const genreOptions = useMemo(() => {
+    const all = facets?.genreOptions ?? []
+    if (!all.length) return (facets?.genres ?? []).map((g) => g.value)
+    const known = new Set(all)
+    const popular = (facets?.genres ?? []).map((g) => g.value).filter((v) => known.has(v))
+    return [...new Set([...popular, ...all])]
+  }, [facets])
 
   async function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -362,29 +370,28 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
       {kind === 'book' && (
         <>
           <div className="section-title">Язык</div>
-          <div className="chips" style={{ marginBottom: 'var(--sp-4)' }}>
-            {LANGS.map((l) => (
-              <button
-                key={l}
-                className={`chip sm ${langs.includes(l) ? 'active' : ''}`}
-                onClick={() => toggle(langs, setLangs, l)}
-              >
-                {l}
-              </button>
-            ))}
+          <div style={{ marginBottom: 'var(--sp-4)' }}>
+            <TagPicker
+              options={facets?.languageOptions ?? LANGS_FALLBACK}
+              value={langs}
+              onChange={setLangs}
+              max={3}
+              searchPlaceholder="Найти язык…"
+            />
           </div>
 
           <div className="section-title">Жанры</div>
-          <div className="chips" style={{ marginBottom: 'var(--sp-5)' }}>
-            {(facets?.genres ?? []).slice(0, 18).map((g) => (
-              <button
-                key={g.value}
-                className={`chip sm ${genres.includes(g.value) ? 'active' : ''}`}
-                onClick={() => toggle(genres, setGenres, g.value)}
-              >
-                {g.value}
-              </button>
-            ))}
+          <div style={{ marginBottom: 'var(--sp-5)' }}>
+            {/* сверху — то, что чаще всего стоит у книг проекта, дальше весь
+                справочник Notion; своего жанра здесь завести нельзя */}
+            <TagPicker
+              options={genreOptions}
+              value={genres}
+              onChange={setGenres}
+              max={5}
+              searchPlaceholder="Найти жанр…"
+              emptyHint="Выберите хотя бы один жанр — по ним книгу ищут в каталоге."
+            />
           </div>
         </>
       )}

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
-import type { ShelfBook, ShelfState } from '../types'
+import type { Facets, ShelfBook, ShelfState } from '../types'
 import { haptic, showAlert, showConfirm, onAppShow } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
 import { Icon } from './Icon'
 import { Badges } from './Badges'
+import { plural } from '../plural'
+import { TagPicker } from './TagPicker'
 
 /* Тона состояний берём из фирменной палитры (см. :root в styles.css), а не
    произвольные яркие — иначе бейджи выбиваются из нежного крем-персика. */
@@ -29,7 +31,16 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
   // выбранный счётчик работает фильтром: плитки и раньше выглядели нажимаемыми,
   // но были обычными блоками — нажатие ничего не делало
   const [only, setOnly] = useState<ShelfState | null>(null)
+  // «показать только книги без жанра»: после добавления пачкой жанры проставились
+  // не везде, и найти такие книги можно было только перебором вручную
+  const [noGenre, setNoGenre] = useState(false)
   const guard = useSeqGuard()
+
+  /** Город книги, если он ОТЛИЧАЕТСЯ от вашего: одинаковый — лишний шум. */
+  const otherCity = (b: ShelfBook) => {
+    if (!b.city || b.city === city) return null
+    return b.district ? `${b.city} / ${b.district}` : b.city
+  }
 
   // ошибка сбрасывается перед каждой загрузкой и после успеха: раньше один
   // моргнувший запрос оставлял баннер ошибки до полного перезапуска Mini App
@@ -73,10 +84,12 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
     (b.author ?? '').toLowerCase().includes(needle) ||
     (b.kind === 'game' && 'настолка'.includes(needle)) ||
     STATE[b.state].label.toLowerCase().includes(needle)
+  const missingGenre = (b: ShelfBook) =>
+    b.kind === 'book' && !b.genres.length && b.state !== 'deleted'
   const grouped = ORDER.filter((s) => !only || s === only)
     .map((s) => ({
       state: s,
-      items: books.filter((b) => b.state === s && matches(b)),
+      items: books.filter((b) => b.state === s && matches(b) && (!noGenre || missingGenre(b))),
     }))
     .filter((g) => g.items.length)
 
@@ -146,6 +159,28 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
       <h1>Моя полка</h1>
       <div className="sub">Ваши книги, их состояние и правки — в одном месте</div>
 
+      {/* город стоит здесь один раз — сразу видно, верно ли он выбран. В каждой
+          книге он повторялся без пользы (просьба user 29.07.2026) */}
+      <button
+        className="shelf-city"
+        onClick={() => {
+          haptic()
+          go({ name: 'cities' })
+        }}
+      >
+        <Icon name="pin" />
+        <span className="grow">
+          {city ? (
+            <>
+              Ваш город: <b>{city}</b>
+            </>
+          ) : (
+            'Город не выбран — книги встанут на полку без города'
+          )}
+        </span>
+        <span className="chev">›</span>
+      </button>
+
       {books.length > 0 && (
         <div className="stat-tiles">
           {(['active', 'onloan', 'pending'] as ShelfState[]).map((s) => (
@@ -164,6 +199,25 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
               <div className="c">{STATE[s].label.toLowerCase()}</div>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* книги без жанра не находятся по жанру в каталоге; после добавления
+          пачкой их обычно несколько, а заметить их можно было только вручную */}
+      {books.some(missingGenre) && (
+        <div className="note">
+          У {books.filter(missingGenre).length}{' '}
+          {plural(books.filter(missingGenre).length, ['книги', 'книг', 'книг'])} не указан жанр — по
+          жанру их не найдут в каталоге.
+          <button
+            className="link-row"
+            onClick={() => {
+              haptic()
+              setNoGenre((v) => !v)
+            }}
+          >
+            {noGenre ? 'Показать все книги' : 'Показать эти книги'}
+          </button>
         </div>
       )}
 
@@ -224,20 +278,37 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
                 </div>
                 <div className="grow">
                   <div className="shelf-title">{b.title}</div>
-                  {(b.author || b.city) && (
+                  {/* город из карточки убран: он один и тот же у всей полки и
+                      стоит строкой наверху экрана. Здесь показываем его, только
+                      если у книги он ДРУГОЙ — вот это как раз важно заметить */}
+                  {(b.author || otherCity(b)) && (
                     <div className="shelf-meta">
-                      {[b.author, b.city && (b.district ? `${b.city} / ${b.district}` : b.city)]
-                        .filter(Boolean)
-                        .join(' · ')}
+                      {[b.author, otherCity(b)].filter(Boolean).join(' · ')}
                     </div>
                   )}
                   {/* состояние читается по цветной полосе слева и заголовку группы —
                       бейдж на самой карточке был бы третьим повтором того же */}
-                  {b.kind === 'game' && (
-                    <div className="market-meta">
-                      <span className="tag">настолка</span>
-                    </div>
-                  )}
+                  <div className="market-meta">
+                    {b.kind === 'game' && <span className="tag">настолка</span>}
+                    {/* жанры на виду: после добавления пачкой они проставились не
+                        везде, и раньше это было видно, только зайдя в каждую книгу */}
+                    {b.genres.map((g) => (
+                      <span key={g} className="tag">
+                        {g}
+                      </span>
+                    ))}
+                    {b.kind === 'book' && !b.genres.length && b.state !== 'deleted' && (
+                      <button
+                        className="tag warn-tag"
+                        onClick={() => {
+                          haptic()
+                          setEditing(b.id)
+                        }}
+                      >
+                        жанр не указан — добавить
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -334,16 +405,16 @@ function EditForm({
 }) {
   const [title, setTitle] = useState(book.title)
   const [author, setAuthor] = useState(book.author ?? '')
-  const [genres, setGenres] = useState(book.genres.join(', '))
-  const [langs, setLangs] = useState(book.languages.join(', '))
+  const [genres, setGenres] = useState<string[]>(book.genres)
+  const [langs, setLangs] = useState<string[]>(book.languages)
   const [place, setPlace] = useState(book.city ?? city ?? '')
+  const [facets, setFacets] = useState<Facets | null>(null)
   const [saving, setSaving] = useState(false)
 
-  const list = (s: string) =>
-    s
-      .split(',')
-      .map((x) => x.trim())
-      .filter(Boolean)
+  // справочник жанров и языков проекта: правим выбором из списка, не текстом
+  useEffect(() => {
+    api.facets().then(setFacets).catch(() => {})
+  }, [])
 
   async function save() {
     if (title.trim().length < 2) return showAlert('Название слишком короткое.')
@@ -352,8 +423,8 @@ function EditForm({
       await api.editBook(book.id, {
         title: title.trim(),
         author: author.trim() || null,
-        genres: list(genres),
-        languages: list(langs),
+        genres,
+        languages: langs,
         city: place.trim() || null,
       })
       haptic('success')
@@ -388,22 +459,27 @@ function EditForm({
         <label>Автор</label>
         <input className="input" value={author} onChange={(e) => setAuthor(e.target.value)} />
       </div>
+      {/* жанр и язык выбираются из справочника проекта: свободный ввод разводил
+          в общей таблице синонимы и опечатки, а админам их потом разбирать */}
       <div className="field">
         <label>Жанры</label>
-        <input
-          className="input"
-          placeholder="через запятую"
+        <TagPicker
+          options={facets?.genreOptions ?? []}
           value={genres}
-          onChange={(e) => setGenres(e.target.value)}
+          onChange={setGenres}
+          max={5}
+          searchPlaceholder="Найти жанр…"
+          emptyHint="Жанр не указан — по нему книгу ищут в каталоге, выберите хотя бы один."
         />
       </div>
       <div className="field">
         <label>Языки</label>
-        <input
-          className="input"
-          placeholder="через запятую"
+        <TagPicker
+          options={facets?.languageOptions ?? []}
           value={langs}
-          onChange={(e) => setLangs(e.target.value)}
+          onChange={setLangs}
+          max={3}
+          searchPlaceholder="Найти язык…"
         />
       </div>
       <div className="field">

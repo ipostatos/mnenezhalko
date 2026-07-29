@@ -7,6 +7,7 @@ import { openTg } from '../telegram'
 import { MAIN_CHAT } from '../links'
 import { BookRow } from './BookRow'
 import { CoverCarousel, type CarouselBook } from './CoverCarousel'
+import { plural } from '../plural'
 
 /** Размер страницы каталога: дальше — «Показать ещё», а не потолок в 40 книг. */
 const PAGE = 40
@@ -26,6 +27,14 @@ type SavedState = {
   scrollY: number
 }
 let saved: SavedState | null = null
+
+/** Что именно посчитано в цифре наверху: город человека или весь проект. */
+export function countLabel(total: number, kind: string, city?: string): string {
+  const what = kind === 'game' ? plural(total, ['игра', 'игры', 'игр']) : plural(total, ['книга', 'книги', 'книг'])
+  return city
+    ? `${total} ${what} на полках вашего города (${city})`
+    : `${total} ${what} на полках во всех городах проекта`
+}
 
 export function Library({
   go,
@@ -198,9 +207,10 @@ export function Library({
   return (
     <>
       <h1>Библиотека</h1>
-      <div className="sub">
-        {loading ? 'Ищу…' : `${total} ${kind === 'game' ? 'игр' : 'книг'} на полках библиотекарей`}
-      </div>
+      {/* цифру обязательно подписываем целиком: при включённом фильтре города
+          она считает только его полки, а подпись говорила «у библиотекарей» —
+          было непонятно, что за число (жалоба user 29.07.2026) */}
+      <div className="sub">{loading ? 'Ищу…' : countLabel(total, kind, onlyMyCity ? city : undefined)}</div>
 
       {carouselBooks.length > 0 ? (
         <CoverCarousel
