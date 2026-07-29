@@ -59,7 +59,16 @@ function signInitData(user: { id: string; username?: string; first_name?: string
 const asUser = (tg: bigint) => ({ 'x-init-data': signInitData({ id: String(tg) }) })
 
 const app = Fastify()
-const EMPTY = { booksOnShelf: 0, given: 0, returned: 0, read: 0, reviews: 0 }
+const EMPTY = {
+  booksOnShelf: 0,
+  given: 0,
+  returned: 0,
+  read: 0,
+  reviews: 0,
+  readers: 0,
+  onTime: 0,
+  topRated: 0,
+}
 const byId = (list: { id: string; earned: boolean }[]) =>
   new Map(list.map((b) => [b.id, b.earned]))
 
@@ -120,7 +129,7 @@ test('прогресс не перескакивает цель: «12 из 10» 
 })
 
 test('значки детерминированы: те же числа — тот же ответ', () => {
-  const stats = { booksOnShelf: 11, given: 3, returned: 2, read: 1, reviews: 4 }
+  const stats = { ...EMPTY, booksOnShelf: 11, given: 3, returned: 2, read: 1, reviews: 4 }
   assert.deepEqual(badgesFor(stats), badgesFor(stats))
 })
 
@@ -152,7 +161,16 @@ test('значки считаются из реальных данных пол�
   })
 
   const stats = await statsFor(OWNER)
-  assert.deepEqual(stats, { booksOnShelf: 10, given: 1, returned: 1, read: 0, reviews: 0 })
+  assert.deepEqual(stats, {
+    booksOnShelf: 10,
+    given: 1,
+    returned: 1,
+    read: 0,
+    reviews: 0,
+    readers: 1,
+    onTime: 0,
+    topRated: 0,
+  })
 
   const { badges } = await badgesOf(OWNER)
   const map = byId(badges)
@@ -179,6 +197,121 @@ test('прочитанные чужие книги и оценки считаю�
   const owner = byId((await badgesOf(OWNER)).badges)
   assert.equal(owner.get('reader-3'), false)
   assert.equal(owner.get('first-review'), false)
+})
+
+test('«книжный друг» считает людей, а не выдачи', async () => {
+  // десять книг одному человеку — это не то же самое, что по книге десятерым
+  for (let i = 0; i < 4; i++) {
+    await prisma.loan.create({
+      data: { title: `Книга ${i}`, ownerTg: OWNER, holderTg: READER, status: 'returned' },
+    })
+  }
+  assert.equal((await statsFor(OWNER)).readers, 1)
+  assert.equal(byId((await badgesOf(OWNER)).badges).get('friend-3'), false)
+
+  await prisma.user.create({ data: { tgId: 910003n } })
+  await prisma.loan.create({ data: { title: 'Ещё', ownerTg: OWNER, holderTg: 910003n } })
+  // третий читатель — пока только по нику: id появится, когда он зайдёт в бота
+  await prisma.loan.create({ data: { title: 'И ещё', ownerTg: OWNER, holderUsername: 'anna' } })
+
+  assert.equal((await statsFor(OWNER)).readers, 3)
+  assert.equal(byId((await badgesOf(OWNER)).badges).get('friend-3'), true)
+})
+
+test('«хранитель полки»: считаются только книги, вернувшиеся в срок', async () => {
+  const due = new Date('2026-07-20T12:00:00Z')
+  // две вовремя
+  for (const back of ['2026-07-19T10:00:00Z', '2026-07-20T11:00:00Z']) {
+    await prisma.loan.create({
+      data: {
+        title: 'Вовремя',
+        ownerTg: OWNER,
+        holderTg: READER,
+        status: 'returned',
+        dueAt: due,
+        returnedAt: new Date(back),
+      },
+    })
+  }
+  // одна с опозданием — она не должна попасть в счёт
+  await prisma.loan.create({
+    data: {
+      title: 'С опозданием',
+      ownerTg: OWNER,
+      holderTg: READER,
+      status: 'returned',
+      dueAt: due,
+      returnedAt: new Date('2026-07-25T10:00:00Z'),
+    },
+  })
+  // и одна вообще без срока: её нельзя назвать ни срочной, ни просроченной
+  await prisma.loan.create({
+    data: { title: 'Без срока', ownerTg: OWNER, holderTg: READER, status: 'returned' },
+  })
+
+  assert.equal((await statsFor(OWNER)).onTime, 2)
+  assert.equal(byId((await badgesOf(OWNER)).badges).get('keeper'), false)
+
+  await prisma.loan.create({
+    data: {
+      title: 'Третья вовремя',
+      ownerTg: OWNER,
+      holderTg: READER,
+      status: 'returned',
+      dueAt: due,
+      returnedAt: new Date('2026-07-18T10:00:00Z'),
+    },
+  })
+  assert.equal(byId((await badgesOf(OWNER)).badges).get('keeper'), true)
+})
+
+test('«редкая находка»: чужая пятёрка книге с полки, своя не считается', async () => {
+  const librarian = await prisma.librarian.create({ data: { name: 'Владелец', tgId: OWNER } })
+  await prisma.book.create({
+    data: {
+      title: 'Дюна',
+      author: 'Герберт',
+      kind: 'book',
+      active: true,
+      reviewStatus: 'approved',
+      ownerId: librarian.id,
+    },
+  })
+  const workKey = 'дюна|герберт'
+
+  // сам себе пятёрку поставить можно, но значка это не даёт
+  await prisma.review.create({ data: { workKey, authorTg: OWNER, rating: 5 } })
+  assert.equal((await statsFor(OWNER)).topRated, 0)
+
+  await prisma.review.create({ data: { workKey, authorTg: READER, rating: 5 } })
+  assert.equal((await statsFor(OWNER)).topRated, 1)
+  assert.equal(byId((await badgesOf(OWNER)).badges).get('rare-find'), true)
+})
+
+test('скрытый по жалобам отзыв значка не даёт', async () => {
+  const librarian = await prisma.librarian.create({ data: { name: 'Владелец', tgId: OWNER } })
+  await prisma.book.create({
+    data: {
+      title: 'Дюна',
+      author: 'Герберт',
+      kind: 'book',
+      active: true,
+      reviewStatus: 'approved',
+      ownerId: librarian.id,
+    },
+  })
+  await prisma.review.create({
+    data: { workKey: 'дюна|герберт', authorTg: READER, rating: 5, status: 'hidden' },
+  })
+  assert.equal((await statsFor(OWNER)).topRated, 0)
+})
+
+test('у каждого значка есть своя картинка', async () => {
+  const { readdirSync } = await import('node:fs')
+  const files = new Set(readdirSync('../web/public/ach'))
+  for (const b of badgesFor(EMPTY)) {
+    assert.ok(files.has(`${b.id}.webp`), `нет картинки для значка ${b.id}`)
+  }
 })
 
 test('значки — только про себя: без подписи 401, чужие не отдаются', async () => {

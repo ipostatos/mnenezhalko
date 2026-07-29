@@ -10,7 +10,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { Impact, treeWord } from './Impact'
-import { Badges } from './Badges'
+import { Badges, BadgesScreen } from './Badges'
 import { api } from '../api'
 import type { Badge, Impact as ImpactData } from '../types'
 
@@ -102,7 +102,7 @@ describe('сколько сберегли вместе', () => {
 })
 
 describe('значки библиотекаря', () => {
-  test('заработанные показаны, незаработанные бледные и с прогрессом', async () => {
+  test('лента: заработанные, ближайшая цель бледной, у каждого своя картинка', async () => {
     vi.spyOn(api, 'badges').mockResolvedValue({
       badges: [
         badge(),
@@ -111,10 +111,52 @@ describe('значки библиотекаря', () => {
     })
     const { container } = render(<Badges />)
 
-    expect(await screen.findByText('Первая книга')).toBeTruthy()
+    expect(await screen.findByAltText('Первая книга')).toBeTruthy()
     expect(screen.getByText('1 из 2')).toBeTruthy()
     expect(screen.getByText('7 из 10')).toBeTruthy()
+    // у полученного значка не задание, а отметка «сделано»
+    expect(screen.getByText('Получено')).toBeTruthy()
     expect(container.querySelectorAll('.badge.locked').length).toBe(1)
+    // название написано на самой картинке, поэтому проверяем её адрес
+    expect(container.querySelector('img.badge-img')?.getAttribute('src')).toBe(
+      '/ach/first-book.webp',
+    )
+  })
+
+  test('на «Моей полке» показываем не весь список, а достигнутое и ближайшую цель', async () => {
+    vi.spyOn(api, 'badges').mockResolvedValue({
+      badges: [
+        badge(),
+        badge({ id: 'shelf-10', earned: false, current: 7, target: 10 }),
+        badge({ id: 'shelf-25', earned: false, current: 1, target: 25 }),
+        badge({ id: 'reader-3', earned: false, current: 0, target: 3 }),
+      ],
+    })
+    const { container } = render(<Badges />)
+
+    await waitFor(() => expect(container.querySelectorAll('.badge').length).toBe(2))
+    expect(screen.getByText('7 из 10')).toBeTruthy()
+  })
+
+  test('отдельный экран показывает все значки и объясняет приватность', async () => {
+    vi.spyOn(api, 'badges').mockResolvedValue({
+      badges: [badge(), badge({ id: 'shelf-10', earned: false, current: 7, target: 10 })],
+    })
+    const { container } = render(<BadgesScreen />)
+
+    expect(await screen.findByText('Мои достижения')).toBeTruthy()
+    expect(screen.getByText('Получено 1 из 2. Остальные ждут своего часа.')).toBeTruthy()
+    await waitFor(() => expect(container.querySelectorAll('.badge-grid .badge').length).toBe(2))
+    expect(screen.getByText(/общего рейтинга библиотекарей в проекте нет/)).toBeTruthy()
+  })
+
+  test('картинка не загрузилась — вместо неё запасной символ, карточка цела', async () => {
+    vi.spyOn(api, 'badges').mockResolvedValue({ badges: [badge()] })
+    const { container } = render(<Badges />)
+
+    const img = (await screen.findByAltText('Первая книга')) as HTMLImageElement
+    fireEvent.error(img)
+    await waitFor(() => expect(container.querySelector('.badge-emoji')?.textContent).toBe('📗'))
   })
 
   test('новичку витрину серых кружков не показываем', async () => {
