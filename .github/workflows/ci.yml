@@ -55,3 +55,35 @@ jobs:
 
       - name: Уязвимости в зависимостях прода
         run: npm audit --omit=dev --audit-level=high
+
+  # Сквозной путь человека: добавил книгу → выдал → очередь → вернул → оценил.
+  # Отдельной джобой: качает браузер и поднимает настоящий сервер, поэтому идёт
+  # дольше основной проверки и не должен задерживать её результат.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma generate
+        working-directory: server
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: Сквозные проверки (Playwright)
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

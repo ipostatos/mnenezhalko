@@ -14,6 +14,10 @@
     "start": "npm run start -w server",
     "db:generate": "npm run db:generate -w server",
     "db:migrate": "npm run db:migrate -w server",
-    "sync": "npm run sync -w server"
+    "sync": "npm run sync -w server",
+    "test:e2e": "npm run build -w web && playwright test --config e2e/playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0"
   }
 }

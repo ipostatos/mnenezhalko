@@ -11,3 +11,6 @@ web/dist/
 # исходные референсы дизайна от заказчика — в приложение уходят копии в web/public/il/
 ui/
 shadow-*.db
+# отчёты и следы сквозных проверок
+test-results/
+playwright-report/
