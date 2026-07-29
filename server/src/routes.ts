@@ -582,7 +582,8 @@ export async function registerRoutes(app: FastifyInstance) {
       { allowCreate: false },
     )
     if (!librarian) return json([])
-    // для выдачи предлагаем только реальные книги на полке (одобренные, свободные)
+    // одобренные книги на полке, включая выданные: занятые нужны Mini App, чтобы
+    // объяснить, почему книги нет в подсказке («уже на руках»), — фильтрует их клиент
     const books = await prisma.book.findMany({
       where: { ownerId: librarian.id, active: true, reviewStatus: 'approved' },
       orderBy: { title: 'asc' },
