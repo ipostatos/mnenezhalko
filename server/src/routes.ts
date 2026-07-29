@@ -18,6 +18,7 @@ import {
 } from './publish.js'
 import { digest } from './digest.js'
 import { getTaxonomy } from './taxonomy.js'
+import { deleteMyData, exportMyData } from './mydata.js'
 import {
   createLoan,
   decorate,
@@ -263,6 +264,49 @@ export async function registerRoutes(app: FastifyInstance) {
       { allowCreate: false },
     )
     return json({ user, librarian })
+  })
+
+  /**
+   * Забрать свои данные одним файлом. Отдаём как вложение: человек должен
+   * получить файл, а не стену текста в вебвью Telegram.
+   */
+  app.get('/api/me/export', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    // выгрузка тяжелее обычной ручки и нужна раз в жизни, а не постоянно
+    if (tooOften(`export:${u.id}`, 5, 3600_000)) {
+      return reply.code(429).send({ error: 'too_many' })
+    }
+    const data = await exportMyData(u.id)
+    const day = new Date().toISOString().slice(0, 10)
+    return reply
+      .header('Content-Type', 'application/json; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="mnenezhalko-${day}.json"`)
+      .send(JSON.stringify(data, null, 2))
+  })
+
+  /** Что именно исчезнет при удалении — до того, как человек нажмёт кнопку. */
+  app.get('/api/me/delete-preview', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const r = await deleteMyData(u.id, { dryRun: true })
+    if ('error' in r) return reply.code(409).send(r)
+    return json(r)
+  })
+
+  /**
+   * Удалить свои данные. Необратимо, поэтому требуем осознанного подтверждения
+   * в теле запроса: случайный POST (или чужой скрипт) ничего не сотрёт.
+   */
+  app.post('/api/me/delete-request', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const b = (req.body ?? {}) as { confirm?: string }
+    if (b.confirm !== 'УДАЛИТЬ') return reply.code(400).send({ error: 'confirm_required' })
+    const r = await deleteMyData(u.id)
+    // незакрытая выдача: сначала надо вернуть книгу, иначе потеряется её след
+    if ('error' in r) return reply.code(409).send(r)
+    return json(r)
   })
 
   app.patch('/api/me', async (req, reply) => {

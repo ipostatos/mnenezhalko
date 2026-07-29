@@ -1923,3 +1923,56 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   align-self: flex-start;
   width: auto;
 }
+
+/* ── «Ваши данные»: список и сроки хранения ───────────────── */
+
+.data-list {
+  margin: 0 0 var(--sp-4);
+  padding-left: 1.1em;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.data-list li {
+  margin-bottom: var(--sp-2);
+}
+
+/* таблица сроков: на 360px две колонки в строку не помещаются, поэтому
+   вторая уходит под первую и выделяется цветом */
+.retention {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.retention-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+
+.retention-row:last-child {
+  border-bottom: none;
+}
+
+.retention-row .w {
+  flex: 1 1 60%;
+}
+
+.retention-row .h {
+  color: var(--link);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* карточка необратимого действия — чтобы её нельзя было принять за обычную */
+.warn-card {
+  border-color: var(--warn);
+  border-left: 3px solid var(--warn);
+}

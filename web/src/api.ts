@@ -24,6 +24,7 @@ import type {
   Badge,
   Impact,
   Person,
+  DeletionPreview,
 } from './types'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -96,6 +97,12 @@ export const api = {
   loanReturn: (id: string) => req<{ loan: Loan }>('POST', `/api/loans/${id}/return`, {}),
   myBooks: () => req<Book[]>('GET', '/api/my-books'),
   myShelf: () => req<{ books: ShelfBook[] }>('GET', '/api/my-shelf'),
+
+  /* «Мои данные»: выгрузка и удаление (см. server/src/mydata.ts) */
+  exportMyData: () => req<Record<string, unknown>>('GET', '/api/me/export'),
+  deletePreview: () => req<DeletionPreview>('GET', '/api/me/delete-preview'),
+  deleteMyData: () => req<DeletionPreview>('POST', '/api/me/delete-request', { confirm: 'УДАЛИТЬ' }),
+
   editBook: (
     id: string,
     data: {

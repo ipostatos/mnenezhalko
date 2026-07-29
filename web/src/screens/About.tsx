@@ -249,6 +249,25 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
+      {/* право забрать и удалить свои данные должно быть в приложении, а не в
+          обещании: экран сразу с рабочими кнопками */}
+      <button
+        className="row-card tile"
+        style={{ ['--tone' as any]: '#5a9d6b' }}
+        onClick={() => {
+          haptic()
+          go({ name: 'mydata' })
+        }}
+      >
+        <div className="ic-tile">
+          <Icon name="shield" />
+        </div>
+        <div className="grow">
+          <div className="t">Ваши данные</div>
+          <div className="d">Что мы храним, сколько, и как это забрать или удалить</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
       <button className="row-card tile" style={{ ['--tone' as any]: '#d99a2b' }} onClick={() => openTg(CURATOR)}>
         <div className="ic-tile">
           <Icon name="crown" />

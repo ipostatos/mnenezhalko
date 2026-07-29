@@ -273,3 +273,17 @@ export type Person = {
   telegram: string
   source: 'history' | 'librarian'
 }
+
+/**
+ * Что исчезнет при удалении данных (или уже исчезло). Ключи по-русски: их
+ * показывают человеку как есть, см. server/src/mydata.ts.
+ */
+export type DeletionPreview = {
+  summary: Record<string, number>
+}
+
+/** Отказ удалить данные: сначала надо закрыть выдачи. */
+export type DeletionBlocked = {
+  error: 'active_loans'
+  loans: { title: string; role: string }[]
+}

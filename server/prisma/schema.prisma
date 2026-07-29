@@ -9,16 +9,16 @@ datasource db {
 
 /// Пользователь бота (Telegram)
 model User {
-  tgId      BigInt   @id
-  username  String?
-  firstName String?
-  lang      String   @default("ru")
-  city      String?
-  isAdmin   Boolean  @default(false)
+  tgId        BigInt   @id
+  username    String?
+  firstName   String?
+  lang        String   @default("ru")
+  city        String?
+  isAdmin     Boolean  @default(false)
   /// присылать ли анонсы новых встреч
-  eventAlerts Boolean @default(true)
-  createdAt DateTime @default(now())
-  seenAt    DateTime @default(now())
+  eventAlerts Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  seenAt      DateTime @default(now())
 
   librarian   Librarian?
   marketItems MarketItem[]
@@ -31,23 +31,23 @@ model User {
 
 /// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
 model Librarian {
-  id        String   @id @default(cuid())
-  notionId  String?  @unique
-  name      String
-  telegram  String? // @handle без ссылки
+  id                  String    @id @default(cuid())
+  notionId            String?   @unique
+  name                String
+  telegram            String? // @handle без ссылки
   /// нормализованный ник для матчинга: lower-case, без @/ссылки (см. normHandle)
-  telegramNorm String?
-  instagram String?
-  city      String?
-  district  String?
-  tgId      BigInt?  @unique
+  telegramNorm        String?
+  instagram           String?
+  city                String?
+  district            String?
+  tgId                BigInt?   @unique
   /// куда объединён дубль; непусто — запись архивная, книги перенесены на главную
-  mergedIntoId String?
+  mergedIntoId        String?
   /// когда последний раз сверяли Telegram-контакт с этой записью
-  lastTelegramSyncAt DateTime?
+  lastTelegramSyncAt  DateTime?
   /// локальный telegram изменился, но ещё не отправлен в Notion (дожать flushTelegramUpdates)
-  telegramSyncPending Boolean @default(false)
-  createdAt DateTime @default(now())
+  telegramSyncPending Boolean   @default(false)
+  createdAt           DateTime  @default(now())
 
   user  User?  @relation(fields: [tgId], references: [tgId])
   books Book[]
@@ -58,50 +58,50 @@ model Librarian {
 
 /// Книга или настольная игра в библиотеке проекта
 model Book {
-  id        String    @id @default(cuid())
-  notionId  String?   @unique
-  kind      String    @default("book") // book | game
-  title     String
-  author    String?
-  genres    String    @default("") // через запятую
-  languages String    @default("") // через запятую
-  city      String?
-  district  String?
-  coverUrl  String?
-  status    String    @default("free") // free | busy
-  addedAt   DateTime?
-  source    String    @default("notion") // notion | bot
+  id                   String    @id @default(cuid())
+  notionId             String?   @unique
+  kind                 String    @default("book") // book | game
+  title                String
+  author               String?
+  genres               String    @default("") // через запятую
+  languages            String    @default("") // через запятую
+  city                 String?
+  district             String?
+  coverUrl             String?
+  status               String    @default("free") // free | busy
+  addedAt              DateTime?
+  source               String    @default("notion") // notion | bot
   /// путь карточки в общую таблицу: local | pending | synced | failed
-  notionStatus String @default("local")
-  notionError  String?
+  notionStatus         String    @default("local")
+  notionError          String?
   /// состояние модерации: pending | approving | approved | rejected | deleted.
   /// approving — переходное: один админ уже жмёт «одобрить» (см. approveBook).
   /// Дефолт approved — книги из Notion и режим без модерации попадают в каталог сразу.
-  reviewStatus    String    @default("approved")
-  reviewedByTg    BigInt?
-  reviewedAt      DateTime?
+  reviewStatus         String    @default("approved")
+  reviewedByTg         BigInt?
+  reviewedAt           DateTime?
   /// когда и кто начал одобрение — для восстановления зависшего approving
-  approvalStartedAt   DateTime?
-  approvalStartedByTg BigInt?
-  approvalAttempt     Int       @default(0)
-  rejectionReason String?
-  submittedAt     DateTime?
-  deletedAt       DateTime?
-  deletedByTg     BigInt?
+  approvalStartedAt    DateTime?
+  approvalStartedByTg  BigInt?
+  approvalAttempt      Int       @default(0)
+  rejectionReason      String?
+  submittedAt          DateTime?
+  deletedAt            DateTime?
+  deletedByTg          BigInt?
   /// книга на руках, владелец попросил скрыть её после возврата
-  hideAfterReturn Boolean @default(false)
+  hideAfterReturn      Boolean   @default(false)
   /// строку в Notion не удалось заархивировать при удалении — дожать (flushPending)
-  notionArchivePending Boolean @default(false)
-  addedByTg BigInt?
-  search    String    @default("") // нормализованная строка для поиска
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  notionArchivePending Boolean   @default(false)
+  addedByTg            BigInt?
+  search               String    @default("") // нормализованная строка для поиска
+  active               Boolean   @default(true)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  ownerId String?
-  owner   Librarian? @relation(fields: [ownerId], references: [id])
-  loans   Loan[]
-  reviews Review[]
+  ownerId  String?
+  owner    Librarian? @relation(fields: [ownerId], references: [id])
+  loans    Loan[]
+  reviews  Review[]
   waitings Waiting[]
 
   @@index([kind])
@@ -181,15 +181,18 @@ model WorkRating {
 
 /// «У кого моя книга сейчас»: выдача книги из рук в руки
 model Loan {
-  id    String @id @default(cuid())
+  id     String  @id @default(cuid())
   /// название как ввёл владелец — книги может не быть в библиотеке
-  title String
+  title  String
   /// карточка книги, если выдавали со своей полки
   bookId String?
   book   Book?   @relation(fields: [bookId], references: [id])
 
-  ownerTg BigInt
-  owner   User   @relation("LoansGiven", fields: [ownerTg], references: [tgId])
+  /// Владелец. NULL бывает у ЗАКРЫТОЙ выдачи, чей владелец удалил свои данные:
+  /// строка остаётся историей обмена, но человека в ней уже не опознать
+  /// (см. server/src/mydata.ts). У активной выдачи владелец есть всегда.
+  ownerTg BigInt?
+  owner   User?   @relation("LoansGiven", fields: [ownerTg], references: [tgId])
 
   /// у кого книга: ник обязателен, id появляется, когда человек откроет бота
   holderUsername String?
@@ -297,21 +300,21 @@ model CityGroup {
 
 /// Ближайшие встречи по городам
 model Event {
-  id          String   @id @default(cuid())
-  city        String
-  title       String
-  startsAt    DateTime
-  place       String?
-  description String?
-  url         String?
+  id               String   @id @default(cuid())
+  city             String
+  title            String
+  startsAt         DateTime
+  place            String?
+  description      String?
+  url              String?
   /// откуда встреча: admin | topic (афиша из чата проекта)
-  source      String   @default("admin")
+  source           String   @default("admin")
   /// id сообщения-афиши + порядковый номер встречи в нём: одно сообщение может
   /// нести несколько встреч, дедуп только по msgId терял все, кроме первой
   sourceMsgId      Int?
   sourceEventIndex Int?
-  createdAt   DateTime @default(now())
-  createdBy   BigInt?
+  createdAt        DateTime @default(now())
+  createdBy        BigInt?
 
   author User? @relation(fields: [createdBy], references: [tgId])
 
@@ -321,23 +324,23 @@ model Event {
 
 /// Барахолка по городам
 model MarketItem {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   city        String
-  kind        String   @default("give") // give | sell | search
+  kind        String    @default("give") // give | sell | search
   title       String
   description String?
   price       String?
   photo       String? // telegram file_id
-  status      String   @default("active") // active | closed
+  status      String    @default("active") // active | closed
   /// когда объявление протухает и закрывается автоматически (см. expireMarketItems);
   /// null у старых строк — для них срок считается от bumpedAt
   expiresAt   DateTime?
   /// откуда объявление: bot | topic (барахолка в чате проекта)
-  source      String   @default("bot")
+  source      String    @default("bot")
   /// id сообщения в теме барахолки — чтобы не заводить дважды
-  sourceMsgId Int?     @unique
-  createdAt   DateTime @default(now())
-  bumpedAt    DateTime @default(now())
+  sourceMsgId Int?      @unique
+  createdAt   DateTime  @default(now())
+  bumpedAt    DateTime  @default(now())
 
   authorTg       BigInt
   authorUsername String?
@@ -351,4 +354,22 @@ model SyncState {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+/// Журнал исполненных удалений данных.
+///
+/// Нужен ровно для одного случая: восстановили старую резервную копию — в ней
+/// снова лежат данные человека, который просил их удалить. Журнал позволяет
+/// применить удаления повторно, не полагаясь на память администратора.
+///
+/// Самого Telegram id тут НЕТ: хранится только хэш (см. mydata.ts::tgHash).
+/// По хэшу можно проверить «этого ли человека удаляли», но не узнать, кого.
+model DeletionRequest {
+  id          String    @id @default(cuid())
+  /// sha256(секрет вебхука + tgId) — сверять можно, восстановить id нельзя
+  tgHash      String    @unique
+  requestedAt DateTime  @default(now())
+  completedAt DateTime?
+  /// что именно унесли: сводка числами, без содержимого
+  summary     String?
 }

@@ -10,6 +10,7 @@
     "sync": "tsx src/sync-cli.ts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "notion:check": "tsx src/notion-check.ts",
+    "privacy:reapply": "tsx src/privacy-reapply.ts",
     "import": "tsx src/import-topic.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
