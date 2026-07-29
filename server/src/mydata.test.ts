@@ -29,8 +29,15 @@ execSync('npx prisma db push --skip-generate --accept-data-loss --schema prisma/
 
 const { prisma } = await import('./db.js')
 const { registerRoutes } = await import('./routes.js')
-const { ERASED_NAME, deleteMyData, exportMyData, openLoansOf, reapplyDeletions, tgHash } =
-  await import('./mydata.js')
+const {
+  ERASED_NAME,
+  deleteMyData,
+  exportMyData,
+  openLoansOf,
+  reapplyDeletions,
+  setBookGoneNotifier,
+  tgHash,
+} = await import('./mydata.js')
 
 const ME = 970001n
 const FRIEND = 970002n
@@ -65,6 +72,7 @@ beforeEach(async () => {
   await prisma.librarian.deleteMany()
   await prisma.marketItem.deleteMany()
   await prisma.deletionRequest.deleteMany()
+  await prisma.waiting.deleteMany()
   await prisma.user.deleteMany()
   for (const [tgId, username] of [
     [ME, 'me'],
@@ -256,6 +264,62 @@ test('жалобы удалившегося исчезают, но чужой о
 
   assert.equal(await prisma.reviewReport.count(), 0)
   assert.equal(await prisma.review.count({ where: { id: review.id } }), 1)
+})
+
+test('очереди чужих людей на ваши книги закрываются, и им сообщают', async () => {
+  const { book } = await seedShelf(ME)
+  await prisma.waiting.create({
+    data: {
+      bookId: book.id,
+      userTg: FRIEND,
+      status: 'waiting',
+      expiresAt: new Date(Date.now() + 86400_000),
+    },
+  })
+  const notices: { userTg: bigint; title: string }[] = []
+  setBookGoneNotifier((list) => {
+    notices.push(...list)
+  })
+
+  const r = await deleteMyData(ME)
+  assert.ok(!('error' in r))
+  assert.equal(r.summary.чужих_ожиданий_закрыто, 1)
+  // человеку сказали, и сказали про КОНКРЕТНУЮ книгу
+  assert.deepEqual(notices, [{ userTg: FRIEND, title: book.title }])
+  // а сама запись очереди закрыта, чтобы книга никого больше не ждала
+  const waiting = await prisma.waiting.findFirstOrThrow({ where: { userTg: FRIEND } })
+  assert.equal(waiting.status, 'left')
+  setBookGoneNotifier(() => {})
+})
+
+test('предпросмотр объясняет последствия словами, а не только числами', async () => {
+  await seedShelf(ME)
+  const r = await deleteMyData(ME, { dryRun: true })
+  assert.ok(!('error' in r))
+  assert.ok(
+    r.effects.some((e) => e.includes('снимется с полки') || e.includes('снимутся')),
+    'про книги в каталоге сказано прямо',
+  )
+  assert.ok(r.effects.some((e) => e.includes('Профиль')))
+})
+
+test('удалённая книга не остаётся «свободной» в каталоге', async () => {
+  const { book } = await seedShelf(ME)
+  await prisma.book.update({ where: { id: book.id }, data: { status: 'busy' } })
+  await deleteMyData(ME)
+  const after = await prisma.book.findUniqueOrThrow({ where: { id: book.id } })
+  assert.equal(after.active, false)
+  assert.equal(after.reviewStatus, 'deleted')
+  assert.equal(after.status, 'free', 'зависший busy не должен пережить владельца')
+})
+
+test('отпечаток в журнале — HMAC с отдельным секретом, а не хэш от id', async () => {
+  const crypto = await import('node:crypto')
+  const naive = crypto.createHash('sha256').update(String(ME)).digest('hex')
+  assert.notEqual(tgHash(ME), naive, 'простой sha256 от Telegram id перебирается')
+  // тот же id — тот же отпечаток, иначе повторное применение не сработает
+  assert.equal(tgHash(ME), tgHash(ME))
+  assert.notEqual(tgHash(ME), tgHash(FRIEND))
 })
 
 test('ручка удаления требует осознанного подтверждения', async () => {

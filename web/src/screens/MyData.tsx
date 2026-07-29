@@ -18,7 +18,7 @@ export function MyData({ go }: { go: (r: Route) => void }) {
   const t = PRIVACY[lang]
 
   const [busy, setBusy] = useState<'export' | 'preview' | 'delete' | null>(null)
-  const [preview, setPreview] = useState<Record<string, number> | null>(null)
+  const [preview, setPreview] = useState<{ summary: Record<string, number>; effects: string[] } | null>(null)
   const [blocked, setBlocked] = useState<{ title: string; role: string }[] | null>(null)
   const [done, setDone] = useState(false)
 
@@ -61,7 +61,7 @@ export function MyData({ go }: { go: (r: Route) => void }) {
     setBlocked(null)
     try {
       const r = await api.deletePreview()
-      setPreview(r.summary)
+      setPreview({ summary: r.summary, effects: r.effects ?? [] })
     } catch (e: any) {
       if (e?.message === 'active_loans') {
         // 409 приходит с телом, но req() отдаёт только код ошибки — показываем
@@ -197,13 +197,22 @@ export function MyData({ go }: { go: (r: Route) => void }) {
           <div className="t-sm" style={{ fontWeight: 700, marginBottom: 'var(--sp-2)' }}>
             Что исчезнет
           </div>
-          <div className="retention">
-            {Object.entries(preview).map(([k, v]) => (
-              <div className="retention-row" key={k}>
-                <span className="w">{k.replace(/_/g, ' ')}</span>
-                <span className="h">{v}</span>
-              </div>
+          {/* сначала словами: «7 книг» человек прочтёт как «7 книг удалят», а
+              книги остаются у него дома и просто уходят из каталога */}
+          <ul className="data-list" style={{ marginBottom: 'var(--sp-3)' }}>
+            {preview.effects.map((e) => (
+              <li key={e}>{e}</li>
             ))}
+          </ul>
+          <div className="retention">
+            {Object.entries(preview.summary)
+              .filter(([, v]) => v > 0)
+              .map(([k, v]) => (
+                <div className="retention-row" key={k}>
+                  <span className="w">{k.replace(/_/g, ' ')}</span>
+                  <span className="h">{v}</span>
+                </div>
+              ))}
           </div>
           <div className="d muted" style={{ margin: 'var(--sp-3) 0' }}>
             Отменить это будет нельзя.

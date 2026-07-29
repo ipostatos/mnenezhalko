@@ -280,6 +280,8 @@ export type Person = {
  */
 export type DeletionPreview = {
   summary: Record<string, number>
+  /** последствия человеческим языком: числа сами по себе вводят в заблуждение */
+  effects: string[]
 }
 
 /** Отказ удалить данные: сначала надо закрыть выдачи. */

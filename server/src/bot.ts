@@ -4,6 +4,8 @@ import { prisma } from './db.js'
 import { searchBooks, toCard, type BookCard } from './search.js'
 import { askAi } from './ai.js'
 import { syncFromNotion, setSyncAlert } from './sync.js'
+import { setBookGoneNotifier } from './mydata.js'
+import { plural } from './plural.js'
 import {
   CITIES,
   EVENTS_TOPIC_ID,
@@ -114,15 +116,6 @@ const mainKeyboard = () => {
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
-/** Русское склонение по числу: plural(n, ['экземпляр','экземпляра','экземпляров']). */
-const plural = (n: number, forms: [string, string, string]) => {
-  const m10 = n % 10
-  const m100 = n % 100
-  if (m10 === 1 && m100 !== 11) return forms[0]
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1]
-  return forms[2]
-}
 
 /** Карточка книги для чата: название, автор, город и контакт владельца. */
 function bookLine(b: BookCard & { why?: string }): string {
@@ -1824,6 +1817,33 @@ function moderationCard(b: BookCard, owner: { name: string; telegram: string | n
 setSyncAlert((msg) => {
   for (const id of env.adminIds) {
     bot.api.sendMessage(String(id), msg, { link_preview_options: { is_disabled: true } }).catch(() => {})
+  }
+})
+
+/**
+ * Владелец удалил свои данные, его книги ушли с полки. Тем, кто ждал такую
+ * книгу, отправляем нейтральное сообщение: человек ждёт обещанного письма, и
+ * молчание выглядело бы как поломка. Почему книги не стало — не их дело.
+ */
+setBookGoneNotifier(async (notices) => {
+  for (const n of notices) {
+    await bot.api
+      .sendMessage(
+        String(n.userTg),
+        [
+          `📕 Книга «${esc(n.title)}» больше недоступна в библиотеке.`,
+          '',
+          'Вы её ждали, поэтому предупреждаем. Возможно, такая же есть у кого-то ещё:',
+        ].join('\n'),
+        {
+          parse_mode: 'HTML',
+          // ведём в библиотеку, а не в никуда: возможно, такая книга есть у другого
+          reply_markup: webAppUrl()
+            ? new InlineKeyboard().webApp('📚 Поискать в библиотеке', webAppUrl())
+            : undefined,
+        },
+      )
+      .catch(() => {})
   }
 })
 

@@ -42,4 +42,22 @@ cp "$DIR/.env" "$DEST/env-$STAMP.bak"
 chmod 600 "$DEST/env-$STAMP.bak"
 find "$DEST" -name 'env-*.bak' -mtime +"$KEEP_DAYS" -delete
 
-echo "$(date -Iseconds) ok: база $(du -h "$OUT.gz" | cut -f1), обложки $(du -h "$COVERS" | cut -f1)"
+# ЖУРНАЛ УДАЛЕНИЙ — отдельным файлом и НАКОПИТЕЛЬНО.
+#
+# Он лежит и внутри базы, но именно в копии базы он бесполезен: восстанавливают
+# СТАРУЮ копию, а в ней нет записей о тех, кто просил удалить данные позже.
+# Отдельный файл переживает такое восстановление, и после него можно прогнать
+# `npm run privacy:reapply -w server`. Внутри только отпечатки (HMAC), поэтому
+# файл не раскрывает, кого именно удаляли.
+JOURNAL="$DEST/deletion-journal.csv"
+sqlite3 -csv "$DIR/data/mnenezhalko.db" \
+  "SELECT tgHash, requestedAt, completedAt FROM DeletionRequest;" > "$JOURNAL.new" 2>/dev/null || true
+if [ -s "$JOURNAL.new" ] || [ ! -f "$JOURNAL" ]; then
+  # добавляем к накопленному и схлопываем повторы: журнал только растёт
+  { [ -f "$JOURNAL" ] && cat "$JOURNAL"; cat "$JOURNAL.new"; } 2>/dev/null | sort -u > "$JOURNAL.merged"
+  mv "$JOURNAL.merged" "$JOURNAL"
+fi
+rm -f "$JOURNAL.new"
+chmod 600 "$JOURNAL" 2>/dev/null || true
+
+echo "$(date -Iseconds) ok: база $(du -h "$OUT.gz" | cut -f1), обложки $(du -h "$COVERS" | cut -f1), журнал удалений $(wc -l < "$JOURNAL" 2>/dev/null || echo 0) записей"

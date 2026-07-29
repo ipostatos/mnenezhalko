@@ -26,17 +26,36 @@ import { env } from './env.js'
 import { COVERS_DIR } from './covers.js'
 import { archiveRow, notionWriteEnabled, updateOwnerTelegram } from './notion-write.js'
 import { invalidateFacets } from './search.js'
+import { plural } from './plural.js'
+import { closeWaitlist } from './waitlist.js'
 
 /** Имя вместо настоящего у анонимизированных записей. */
 export const ERASED_NAME = 'Удалённый участник'
 
 /**
- * Хэш Telegram id для журнала удалений: сверить «этого ли человека удаляли»
- * можно, восстановить id из хэша — нет. Соль общая для установки (секрет
- * вебхука выводится из токена бота и не покидает сервер).
+ * Кому-то обещали сообщить, когда книга освободится, а книга ушла вместе с
+ * владельцем. Молчать нельзя: человек ждёт письма, которое уже не придёт.
+ * Текст нейтральный — почему книги не стало, никого не касается.
+ */
+export type BookGoneNotice = { userTg: bigint; title: string }
+type BookGoneNotifier = (notices: BookGoneNotice[]) => void | Promise<void>
+let bookGoneNotifier: BookGoneNotifier | null = null
+export const setBookGoneNotifier = (fn: BookGoneNotifier) => {
+  bookGoneNotifier = fn
+}
+
+/**
+ * Отпечаток Telegram id для журнала удалений: сверить «этого ли человека
+ * удаляли» можно, восстановить id — нет.
+ *
+ * Именно HMAC с отдельным секретом, а не sha256 от id. Telegram id — короткое
+ * предсказуемое число: перебрать все правдоподобные значения и сопоставить
+ * обычные хэши можно за секунды, и «в журнале только хэш» не значило бы ничего.
+ * Ключ (`PRIVACY_DELETION_PEPPER`) живёт в окружении сервера — не в базе, не в
+ * репозитории и не выводится из токена бота на проде.
  */
 export const tgHash = (tgId: bigint) =>
-  crypto.createHash('sha256').update(`${env.webhookSecret}:${tgId}`).digest('hex')
+  crypto.createHmac('sha256', env.deletionPepper).update(String(tgId)).digest('hex')
 
 /* ── выгрузка ─────────────────────────────────────────────── */
 
@@ -158,9 +177,13 @@ export type DeletionResult = {
     отзывов_удалено: number
     жалоб_удалено: number
     очередей_удалено: number
+    /** чужие ожидания ВАШИХ книг: людям сообщаем, что книги больше нет */
+    чужих_ожиданий_закрыто: number
     объявлений_удалено: number
     фотографий_удалено: number
   }
+  /** что произойдёт, человеческим языком — показывается до нажатия кнопки */
+  effects: string[]
 }
 
 /** Незакрытые выдачи человека — с любой стороны. */
@@ -209,16 +232,44 @@ export async function deleteMyData(
     .filter((u): u is string => Boolean(u && u.includes('/api/cover/')))
     .map((u) => u.split('/api/cover/')[1]!.split('?')[0]!)
 
+  // люди, которые ждут ВАШИ книги: их обещание умрёт вместе с полкой, и они
+  // должны об этом узнать, а не ждать письма, которое уже не придёт
+  const bookIds = books.map((b) => b.id)
+  const strangersWaiting = bookIds.length
+    ? await prisma.waiting.findMany({
+        where: { bookId: { in: bookIds }, status: { in: ['waiting', 'ready'] }, userTg: { not: tgId } },
+        include: { book: { select: { title: true } } },
+      })
+    : []
+
   const summary: DeletionResult['summary'] = {
     книг_скрыто: books.length,
     выдач_анонимизировано: loanCount,
     отзывов_удалено: reviews.length,
     жалоб_удалено: reportCount,
     очередей_удалено: waitingCount,
+    чужих_ожиданий_закрыто: strangersWaiting.length,
     объявлений_удалено: marketCount,
     фотографий_удалено: ownPhotos.length,
   }
-  if (opts.dryRun) return { summary }
+
+  // словами, а не только числами: «7 книг» человек прочтёт как «7 удалили», а
+  // на самом деле книги остаются у него дома и просто уходят из каталога
+  const effects = [
+    books.length
+      ? `Ваши ${books.length} ${plural(books.length, ['книга снимется', 'книги снимутся', 'книг снимутся'])} с полки и перестанут показываться в каталоге. Сами книги, конечно, остаются у вас.`
+      : '',
+    strangersWaiting.length
+      ? `${strangersWaiting.length} ${plural(strangersWaiting.length, ['человек, который ждал', 'человека, которые ждали', 'человек, которые ждали'])} ваши книги, получит сообщение, что книга больше недоступна.`
+      : '',
+    reviews.length ? 'Ваши оценки и отзывы будут удалены.' : '',
+    loanCount
+      ? 'Записи о прошлых обменах останутся в истории проекта, но узнать в них вас будет нельзя.'
+      : '',
+    'Профиль, ник, имя и город удаляются полностью.',
+  ].filter(Boolean)
+
+  if (opts.dryRun) return { summary, effects }
 
   const workKeys = [...new Set(reviews.map((r) => r.workKey))]
 
@@ -239,7 +290,9 @@ export async function deleteMyData(
       await tx.workRating.update({ where: { workKey }, data: { count: rows.length, sum } })
     }
 
-    // 2. книги уходят с полки: человек покидает проект, его книги брать не у кого
+    // 2. книги уходят с полки: человек покидает проект, его книги брать не у кого.
+    //    Книга без владельца не должна ни висеть в каталоге, ни числиться
+    //    свободной, ни собирать новых людей в очередь
     if (librarian) {
       await tx.book.updateMany({
         where: { ownerId: librarian.id },
@@ -247,10 +300,14 @@ export async function deleteMyData(
           active: false,
           reviewStatus: 'deleted',
           deletedAt: new Date(),
+          status: 'free',
           coverUrl: null,
           notionArchivePending: true,
         },
       })
+      // очереди на эти книги закрываем здесь же: обещание «сообщим, когда
+      // освободится» больше некому исполнять
+      for (const bookId of bookIds) await closeWaitlist(tx, bookId)
     }
 
     // 3. история обмена остаётся, человек в ней исчезает
@@ -336,7 +393,17 @@ export async function deleteMyData(
     }
   }
 
-  return { summary }
+  // ждавшим ваши книги — нейтральное сообщение. После транзакции: рассылка
+  // ненадёжна и внешняя, а удаление уже состоялось
+  if (strangersWaiting.length && bookGoneNotifier) {
+    await Promise.resolve(
+      bookGoneNotifier(
+        strangersWaiting.map((w) => ({ userTg: w.userTg, title: w.book.title })),
+      ),
+    ).catch((e: any) => console.error('[mydata] не удалось сообщить ждавшим:', e?.message ?? e))
+  }
+
+  return { summary, effects }
 }
 
 /**
