@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
-import type { Book, Loan, LoanSummary, HistoryLoan } from '../types'
+import type { Book, Loan, LoanSummary, HistoryLoan, Person } from '../types'
 import { haptic, openTg, showAlert, showConfirm, onAppShow } from '../telegram'
 import { warsawDay } from '../dates'
 import { MoodBoard } from './MoodBoard'
@@ -40,6 +40,9 @@ export function Loans({ go }: { go: (r: Route) => void }) {
   const [takenAt, setTakenAt] = useState(() => warsawDay())
   const [saving, setSaving] = useState(false)
   const [invite, setInvite] = useState<string | null>(null)
+  // подсказка людей: ники бывают длинные, набирать их вручную с телефона больно
+  const [people, setPeople] = useState<Person[]>([])
+  const [holderPicked, setHolderPicked] = useState(false)
 
   const load = () =>
     api
@@ -58,6 +61,29 @@ export function Loans({ go }: { go: (r: Route) => void }) {
     api.myBooks().then(setMyBooks).catch(() => {})
     return onAppShow(load)
   }, [])
+
+  /**
+   * Подсказки к нику. Ждём паузу в наборе, чтобы не дёргать сервер на каждую
+   * букву, и молчим, когда человека уже выбрали из списка.
+   */
+  useEffect(() => {
+    const needle = holder.trim().replace(/^@/, '')
+    if (holderPicked || needle.length < 1) {
+      setPeople([])
+      return
+    }
+    let alive = true
+    const timer = setTimeout(() => {
+      api
+        .people(needle)
+        .then((r) => alive && setPeople(r.people))
+        .catch(() => alive && setPeople([]))
+    }, 250)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [holder, holderPicked])
 
   async function lend() {
     setSaving(true)
@@ -153,8 +179,30 @@ export function Loans({ go }: { go: (r: Route) => void }) {
           autoCapitalize="off"
           autoCorrect="off"
           value={holder}
-          onChange={(e) => setHolder(e.target.value)}
+          onChange={(e) => {
+            setHolder(e.target.value)
+            setHolderPicked(false)
+          }}
         />
+        {people.length > 0 && (
+          <div className="note" style={{ marginBottom: 0 }}>
+            Кому отдали:
+            {people.map((p) => (
+              <button
+                key={p.telegram}
+                className="link-row"
+                onClick={() => {
+                  haptic('light')
+                  setHolder(`@${p.telegram}`)
+                  setHolderPicked(true)
+                  setPeople([])
+                }}
+              >
+                {p.name === `@${p.telegram}` ? p.name : `${p.name} · @${p.telegram}`}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="section-title">Когда отдали</div>

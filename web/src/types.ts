@@ -257,3 +257,10 @@ export type Impact = {
   trees: number
   basis: { pricePln: number; paperPerBookKg: number; paperPerTreeKg: number }
 }
+
+/** Подсказка человека при вводе ника: только имя и ник, без tgId. */
+export type Person = {
+  name: string
+  telegram: string
+  source: 'history' | 'librarian'
+}
