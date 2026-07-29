@@ -5,6 +5,7 @@ import type { ShelfBook, ShelfState } from '../types'
 import { haptic, showAlert, showConfirm, onAppShow } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
 import { Icon } from './Icon'
+import { Badges } from './Badges'
 
 /* Тона состояний берём из фирменной палитры (см. :root в styles.css), а не
    произвольные яркие — иначе бейджи выбиваются из нежного крем-персика. */
@@ -156,6 +157,8 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
           </div>
         </div>
       )}
+
+      {books.length > 0 && <Badges />}
 
       {books.length > 3 && (
         <input

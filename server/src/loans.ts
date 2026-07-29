@@ -27,6 +27,7 @@ import { normHandle } from './notion.js'
 import { archiveRow, notionWriteEnabled } from './notion-write.js'
 import { invalidateFacets } from './search.js'
 import { closeWaitlist, demoteUnsentReady, promoteNextWaiting } from './waitlist.js'
+import { invalidateImpact } from './impact.js'
 
 /** Срок по умолчанию — месяц: столько обычно и держат книгу. */
 const DEFAULT_DAYS = 30
@@ -165,6 +166,9 @@ export async function createLoan(d: LoanDraft) {
   })
 
   await logLoanEvent(loan.id, 'created', d.ownerTg)
+  // «сколько мы сберегли вместе» считается по числу обменов — новый обмен
+  // должен появиться на главной сразу, а не через пять минут кэша
+  invalidateImpact()
   // сырой токен существует только здесь, в памяти, — в базе только его хэш
   return { ...loan, claimToken }
 }

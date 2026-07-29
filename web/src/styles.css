@@ -1401,3 +1401,111 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   color: var(--link);
   font-size: var(--fs-xs);
 }
+
+/* ── сколько сберегли вместе (issue #13) ───────────────────
+   блок стоит под дашбордом выдач: сначала свои книги, потом общий итог */
+.impact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.impact-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.impact-emoji {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.impact-nums {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-2);
+}
+
+/* деревьев ещё не набралось — две колонки вместо трёх, без пустого места */
+.impact-nums.two {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.impact-num {
+  text-align: center;
+  padding: var(--sp-3) var(--sp-2);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+
+.impact-num .n {
+  font-weight: 700;
+  font-size: var(--fs-md);
+  color: var(--accent-text);
+}
+
+.impact-num .c {
+  font-size: var(--fs-xs);
+  color: var(--hint);
+}
+
+.impact-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--hint);
+}
+
+/* ── значки библиотекаря (issue #11) ───────────────────────
+   горизонтальная лента: заработанные цветные, остальные бледные с прогрессом */
+.badges {
+  margin-bottom: var(--sp-4);
+}
+
+.badge-row {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  padding-bottom: var(--sp-2);
+  scrollbar-width: none;
+}
+.badge-row::-webkit-scrollbar {
+  display: none;
+}
+
+.badge {
+  flex: 0 0 auto;
+  width: 104px;
+  padding: var(--sp-3) var(--sp-2);
+  border-radius: var(--r-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.badge.locked {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.badge-emoji {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.badge-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.badge-hint {
+  font-size: 11px;
+  color: var(--hint);
+  line-height: 1.3;
+}

@@ -60,6 +60,8 @@ import {
   workKeyOf,
 } from './reviews.js'
 import { joinWaitlist, leaveWaitlist, waitCountsFor, waitlistFor } from './waitlist.js'
+import { badgesOf } from './badges.js'
+import { impact } from './impact.js'
 import { prewarmCoverage } from './prewarm.js'
 import { createHmac } from 'node:crypto'
 import sharp from 'sharp'
@@ -373,6 +375,22 @@ export async function registerRoutes(app: FastifyInstance) {
     // Ждущие друг друга не видят — наружу не уходит ни ников, ни tgId
     const waiting = await waitlistFor(id, u?.id ?? null)
     return json({ ...redactCard(book, maySeeContacts(req)), waiting })
+  })
+
+  /**
+   * Сколько проект сберёг вместе (issue #13). Агрегат, поэтому публичен: в нём
+   * нет ни одного человека, только число обменов и оценки по нему.
+   */
+  app.get('/api/impact', async () => json(await impact()))
+
+  /**
+   * Значки библиотекаря (issue #11). Только про себя и только по подписи:
+   * публичный рейтинг превратил бы обмен книгами в соревнование.
+   */
+  app.get('/api/my-badges', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    return json(await badgesOf(u.id))
   })
 
   /**
