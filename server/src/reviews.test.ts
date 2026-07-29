@@ -69,6 +69,7 @@ before(async () => {
 })
 
 beforeEach(async () => {
+  await prisma.reviewReport.deleteMany()
   await prisma.review.deleteMany()
   await prisma.workRating.deleteMany()
   await prisma.loanEvent.deleteMany()
@@ -285,6 +286,74 @@ test('жалобы: три штуки прячут отзыв и убирают 
   assert.deepEqual(await ratingFor(workKeyOf(book)), { avg: 5, count: 1 })
   const visible = await listReviews(workKeyOf(book))
   assert.equal(visible.length, 1)
+})
+
+test('один человек тремя нажатиями чужой отзыв НЕ прячет', async () => {
+  // до аудита 30.07.2026 жалоба была просто счётчиком: три нажатия одного и того
+  // же человека убирали любой отзыв из каталога
+  const book = await seedBook()
+  const { review } = await upsertReview({ authorTg: READER, book, rating: 1, text: 'кому-то не понравился' })
+
+  assert.deepEqual(await reportReview(review.id, OWNER), { hidden: false, reports: 1 })
+  for (let i = 0; i < 5; i++) {
+    assert.deepEqual(await reportReview(review.id, OWNER), {
+      error: 'already_reported',
+      hidden: false,
+    })
+  }
+  assert.equal((await listReviews(workKeyOf(book))).length, 1, 'отзыв остался виден')
+  assert.equal(await prisma.reviewReport.count({ where: { reviewId: review.id } }), 1)
+  assert.equal((await prisma.review.findUniqueOrThrow({ where: { id: review.id } })).reports, 1)
+})
+
+test('жалоба на уже скрытый отзыв учитывается, но ничего не ломает', async () => {
+  const book = await seedBook()
+  const { review } = await upsertReview({ authorTg: READER, book, rating: 1, text: 'спам' })
+  await reportReview(review.id, OWNER)
+  await reportReview(review.id, READER2)
+  await reportReview(review.id, STRANGER)
+
+  const r = await reportReview(review.id, 950009n)
+  assert.deepEqual(r, { hidden: true, reports: 4 })
+  assert.equal((await listReviews(workKeyOf(book))).length, 0)
+})
+
+test('правка отзыва снимает и сами жалобы, а не только счётчик', async () => {
+  // иначе оставшиеся строки прячут переписанный отзыв с ПЕРВОЙ новой жалобы
+  const book = await seedBook()
+  const { review } = await upsertReview({ authorTg: READER, book, rating: 1, text: 'первый' })
+  await reportReview(review.id, OWNER)
+  await reportReview(review.id, READER2)
+  await reportReview(review.id, STRANGER)
+
+  await upsertReview({ authorTg: READER, book, rating: 4, text: 'переписал' })
+  assert.equal(await prisma.reviewReport.count({ where: { reviewId: review.id } }), 0)
+  assert.deepEqual(await reportReview(review.id, OWNER), { hidden: false, reports: 1 })
+  assert.equal((await listReviews(workKeyOf(book))).length, 1)
+})
+
+test('ручка жалобы: повтор отбивается 409, чужой первый раз проходит', async () => {
+  const book = await seedBook()
+  const { review } = await upsertReview({ authorTg: READER, book, rating: 2, text: 'текст' })
+
+  const first = await app.inject({
+    method: 'POST',
+    url: `/api/reviews/${review.id}/report`,
+    headers: asUser(OWNER),
+  })
+  assert.equal(first.statusCode, 200)
+  assert.equal(first.json().reports, 1)
+
+  const again = await app.inject({
+    method: 'POST',
+    url: `/api/reviews/${review.id}/report`,
+    headers: asUser(OWNER),
+  })
+  assert.equal(again.statusCode, 409)
+  assert.equal(again.json().error, 'already_reported')
+
+  const anon = await app.inject({ method: 'POST', url: `/api/reviews/${review.id}/report` })
+  assert.equal(anon.statusCode, 401, 'жалоба только по подписи Telegram')
 })
 
 test('на свой отзыв пожаловаться нельзя', async () => {

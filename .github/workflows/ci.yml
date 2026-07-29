@@ -25,9 +25,25 @@ jobs:
       - run: npx prisma generate
         working-directory: server
 
-      - name: Типы сервера
-        run: npx tsc -p server/tsconfig.json --noEmit
+      - name: Сборка сервера (ровно та же команда, что в деплое)
+        run: npm run build -w server
 
+      # цепочка миграций проверяется отдельно от схемы: тесты поднимают базу
+      # через `db push`, то есть по ИТОГОВОЙ схеме, и не заметили бы, что
+      # migrate deploy на живой базе падает или расходится со схемой
+      - name: Миграции с нуля и совпадение со схемой
+        run: |
+          rm -f /tmp/ci-migrate.db
+          DATABASE_URL="file:/tmp/ci-migrate.db" npx prisma migrate deploy
+          DATABASE_URL="file:/tmp/ci-migrate.db" npx prisma migrate diff \
+            --from-url "file:/tmp/ci-migrate.db" \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code
+        working-directory: server
+
+      # список тестов раньше был перечислен в package.json руками: новый файл
+      # мог лежать в репозитории и ни разу не запуститься, а CI оставался зелёным.
+      # Теперь команда сама находит все src/**/*.test.ts
       - name: Тесты сервера (планировщик, синк, модерация, прогрев, безопасность…)
         run: npm run test -w server
 

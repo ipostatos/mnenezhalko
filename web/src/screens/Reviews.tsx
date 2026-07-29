@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Rating, Review, ReviewsPayload } from '../types'
-import { haptic } from '../telegram'
+import { haptic, showAlert } from '../telegram'
 import { plural } from '../plural'
 
 /**
@@ -80,11 +80,18 @@ export function Reviews({ bookId }: { bookId: string }) {
 
   async function report(id: string) {
     haptic()
+    const hide = () => setData({ ...data!, items: data!.items.filter((r) => r.id !== id) })
     try {
       await api.reportReview(id)
-      setData({ ...data!, items: data!.items.filter((r) => r.id !== id) })
-    } catch {
-      /* жалоба не прошла — экран не ломаем, человек попробует ещё раз */
+      hide()
+    } catch (e: any) {
+      // повторная жалоба того же человека теперь честно отбивается сервером;
+      // для нажавшего это не ошибка — его жалоба уже учтена, отзыв убираем
+      if (e?.message === 'already_reported') return hide()
+      if (e?.message === 'too_many') {
+        return showAlert('Слишком много жалоб подряд. Попробуйте позже.')
+      }
+      /* остальное молча: экран из-за жалобы ломаться не должен */
     }
   }
 

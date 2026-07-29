@@ -140,11 +140,31 @@ model Review {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  reportRows ReviewReport[]
+
   /// один отзыв на человека на произведение: повторная оценка обновляет свою,
   /// а не плодит вторую. Гарантия на уровне базы, а не только в коде.
   @@unique([workKey, authorTg])
   @@index([workKey, status])
   @@index([authorTg])
+}
+
+/// Жалоба на отзыв: строка на человека, а не счётчик.
+///
+/// Раньше жалоба просто увеличивала `Review.reports`, и один человек тремя
+/// нажатиями прятал ЛЮБОЙ чужой отзыв (найдено внешним аудитом 30.07.2026 —
+/// в комментарии было обещано «повторная жалоба того же человека не считается»,
+/// а в базе этого не было ничем обеспечено). Уникальность здесь и есть та
+/// гарантия: повторная жалоба падает на ограничении, а не удваивает счётчик.
+model ReviewReport {
+  id         String   @id @default(cuid())
+  reviewId   String
+  review     Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reporterTg BigInt
+  createdAt  DateTime @default(now())
+
+  @@unique([reviewId, reporterTg])
+  @@index([reviewId])
 }
 
 /// Агрегат оценок по произведению: средняя считается как sum/count.

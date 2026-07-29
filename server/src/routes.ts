@@ -762,10 +762,16 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/reviews/:id/report', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    // жалоба дешёвая для нажимающего и дорогая для автора отзыва — ограничиваем
+    if (tooOften(`report:${u.id}`, 20, 3600_000)) {
+      return reply.code(429).send({ error: 'too_many' })
+    }
     const { id } = req.params as { id: string }
     const r = await reportReview(id, u.id)
-    if ('error' in r) {
-      return reply.code(r.error === 'own_review' ? 400 : 404).send({ error: r.error })
+    if ('error' in r && r.error) {
+      // 409 у повторной жалобы: для человека это не ошибка, его голос уже учтён
+      const code = r.error === 'own_review' ? 400 : r.error === 'already_reported' ? 409 : 404
+      return reply.code(code).send({ error: r.error })
     }
     return json(r)
   })

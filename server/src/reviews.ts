@@ -145,6 +145,10 @@ export async function upsertReview(opts: {
         hiddenByTg: null,
       },
     })
+    // вместе со счётчиком снимаем и сами жалобы: счётчик теперь производная от
+    // них, и оставленные строки скрыли бы переписанный отзыв с первой же новой
+    // жалобы (у создания отзыва строк нет, лишний вызов ничего не стоит)
+    await tx.reviewReport.deleteMany({ where: { reviewId: review.id } })
     const agg = await recountWork(tx, workKey)
     return { review, rating: toAverage(agg) }
   })
@@ -166,18 +170,31 @@ export async function deleteReview(authorTg: bigint, workKey: string) {
 
 /**
  * Пожаловаться на чужой отзыв. Постмодерация: до решения администратора текст
- * прячется сам, набрав REPORTS_TO_HIDE жалоб. На свой отзыв жаловаться нельзя,
- * повторная жалоба того же человека не считается.
+ * прячется сам, набрав REPORTS_TO_HIDE жалоб от РАЗНЫХ людей.
+ *
+ * «От разных» — не формальность: пока жалоба была просто счётчиком, один
+ * человек тремя нажатиями прятал любой чужой отзыв (внешний аудит 30.07.2026).
+ * Теперь каждая жалоба это строка ReviewReport с уникальностью на пару
+ * (отзыв, жалобщик), и счётчик `reports` пересчитывается из этих строк, то есть
+ * не может разъехаться с ними даже при гонке.
  */
 export async function reportReview(id: string, byTg: bigint) {
   return prisma.$transaction(async (tx) => {
     const review = await tx.review.findUnique({ where: { id } })
     if (!review) return { error: 'not_found' as const }
     if (review.authorTg === byTg) return { error: 'own_review' as const }
-    if (review.status !== 'visible') return { hidden: true, reports: review.reports }
 
-    const reports = review.reports + 1
-    const hide = reports >= REPORTS_TO_HIDE
+    const already = await tx.reviewReport.findUnique({
+      where: { reviewId_reporterTg: { reviewId: id, reporterTg: byTg } },
+    })
+    if (already) {
+      return { error: 'already_reported' as const, hidden: review.status !== 'visible' }
+    }
+    await tx.reviewReport.create({ data: { reviewId: id, reporterTg: byTg } })
+
+    // счётчик — производная от строк жалоб, а не самостоятельное число
+    const reports = await tx.reviewReport.count({ where: { reviewId: id } })
+    const hide = review.status === 'visible' && reports >= REPORTS_TO_HIDE
     await tx.review.update({
       where: { id },
       data: {
@@ -186,7 +203,7 @@ export async function reportReview(id: string, byTg: bigint) {
       },
     })
     if (hide) await recountWork(tx, review.workKey)
-    return { hidden: hide, reports }
+    return { hidden: hide || review.status !== 'visible', reports }
   })
 }
 
