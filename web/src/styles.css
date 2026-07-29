@@ -504,15 +504,26 @@ h1 {
   border-radius: var(--r-md);
   padding: var(--sp-3);
   text-align: center;
-  /* счётчики — кнопки, ведущие в разделы */
   font-family: inherit;
   color: inherit;
+}
+
+/* Нажимается — значит выглядит нажимаемым, и наоборот. Раньше palec-pointer и
+   отклик на нажатие стояли у ВСЕХ счётчиков, а кнопками они были только на
+   главной: в «О проекте» и на «Моей полке» человек жал в пустоту. */
+.stat-tiles button.s {
   cursor: pointer;
   transition: transform 0.12s;
 }
 
-.stat-tiles .s:active {
+.stat-tiles button.s:active {
   transform: scale(0.97);
+}
+
+/* выбранный счётчик-фильтр на «Моей полке» */
+.stat-tiles button.s.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .stat-tiles .s .n {

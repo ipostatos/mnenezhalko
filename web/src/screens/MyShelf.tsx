@@ -26,6 +26,9 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
   const [busy, setBusy] = useState<string | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  // выбранный счётчик работает фильтром: плитки и раньше выглядели нажимаемыми,
+  // но были обычными блоками — нажатие ничего не делало
+  const [only, setOnly] = useState<ShelfState | null>(null)
   const guard = useSeqGuard()
 
   // ошибка сбрасывается перед каждой загрузкой и после успеха: раньше один
@@ -70,10 +73,12 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
     (b.author ?? '').toLowerCase().includes(needle) ||
     (b.kind === 'game' && 'настолка'.includes(needle)) ||
     STATE[b.state].label.toLowerCase().includes(needle)
-  const grouped = ORDER.map((s) => ({
-    state: s,
-    items: books.filter((b) => b.state === s && matches(b)),
-  })).filter((g) => g.items.length)
+  const grouped = ORDER.filter((s) => !only || s === only)
+    .map((s) => ({
+      state: s,
+      items: books.filter((b) => b.state === s && matches(b)),
+    }))
+    .filter((g) => g.items.length)
 
   async function del(b: ShelfBook) {
     if (b.state === 'onloan') {
@@ -143,18 +148,22 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
 
       {books.length > 0 && (
         <div className="stat-tiles">
-          <div className="s">
-            <div className="n">{count('active')}</div>
-            <div className="c">на полке</div>
-          </div>
-          <div className="s">
-            <div className="n">{count('onloan')}</div>
-            <div className="c">на руках</div>
-          </div>
-          <div className="s">
-            <div className="n">{count('pending')}</div>
-            <div className="c">на проверке</div>
-          </div>
+          {(['active', 'onloan', 'pending'] as ShelfState[]).map((s) => (
+            <button
+              key={s}
+              className={`s${only === s ? ' on' : ''}`}
+              aria-pressed={only === s}
+              aria-label={`${STATE[s].label}: ${count(s)}${only === s ? ', фильтр включён' : ''}`}
+              onClick={() => {
+                haptic()
+                // повторное нажатие снимает фильтр — иначе из него не выйти
+                setOnly((cur) => (cur === s ? null : s))
+              }}
+            >
+              <div className="n">{count(s)}</div>
+              <div className="c">{STATE[s].label.toLowerCase()}</div>
+            </button>
+          ))}
         </div>
       )}
 
@@ -171,7 +180,16 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
       )}
 
       {books.length > 0 && grouped.length === 0 && (
-        <div className="empty">Ничего не нашлось на полке. Попробуйте другое слово.</div>
+        <div className="empty">
+          {only
+            ? `Книг в состоянии «${STATE[only].label.toLowerCase()}» нет.`
+            : 'Ничего не нашлось на полке. Попробуйте другое слово.'}
+          {only && (
+            <button className="link-btn" onClick={() => setOnly(null)} style={{ display: 'block', margin: '8px auto 0' }}>
+              Показать все книги
+            </button>
+          )}
+        </div>
       )}
 
       {!books.length && (
