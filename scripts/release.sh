@@ -20,7 +20,10 @@ HOST="${DEPLOY_HOST:-root@46.224.220.94}"
 DIR="${DEPLOY_DIR:-/opt/mnenezhalko}"
 PORT="${DEPLOY_PORT:-4310}"
 USER_NAME="${DEPLOY_USER:-mnenezhalko}"
-KEEP="${KEEP_RELEASES:-3}"
+# Сколько релизов держать. Два: текущий и предыдущий (цель откатa) — больше на
+# этой машине не влезает. Зависимости релиза около 350 МБ (178 из них Prisma),
+# а на диске свободно чуть больше трёх гигабайт, и 21 ГБ там держит соседний проект.
+KEEP="${KEEP_RELEASES:-2}"
 MODE="${1:-}"
 
 SHA="$(git -C "$ROOT" rev-parse HEAD)"
@@ -60,15 +63,25 @@ fi
 echo "→ архив $(du -h "$ARCHIVE" | cut -f1), везу на сервер"
 scp -q "$ARCHIVE" "$HOST:/tmp/release-$SHORT.tar.gz"
 
+# Куда распаковывать. ⚠️ Если каталог этого sha УЖЕ является текущим релизом
+# (повторная выкладка того же коммита), очищать его нельзя: это работающий прод.
+# В таком случае готовим отдельный каталог с отметкой времени.
+CURRENT_REAL="$(ssh "$HOST" "readlink -f $DIR/current 2>/dev/null || true")"
+REL="$SHA"
+if [ "$CURRENT_REAL" = "$DIR/releases/$SHA" ]; then
+  REL="$SHA-$(date +%H%M%S)"
+  echo "→ этот коммит уже в проде; готовлю отдельный каталог releases/$REL"
+fi
+
 echo "→ готовлю релиз рядом с работающим"
 ssh "$HOST" "bash -s" <<EOSH
 set -euo pipefail
 DIR="$DIR"
-SHA="$SHA"
+REL="$REL"
 USER_NAME="$USER_NAME"
-NEW="\$DIR/releases/\$SHA"
+NEW="\$DIR/releases/\$REL"
 
-# повторная выкладка того же sha — начинаем с чистого каталога
+# каталог этого релиза точно не текущий (проверено выше) — можно начинать с чистого
 rm -rf "\$NEW"
 mkdir -p "\$NEW"
 tar -xzf "/tmp/release-$SHORT.tar.gz" -C "\$NEW"
@@ -83,7 +96,9 @@ cd "\$NEW"
 # ⚠️ --omit=dev: на проде не должно быть ни vite, ни tsc, ни браузеров Playwright.
 # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD — вторая страховка на случай, если инструмент
 # разработки когда-нибудь окажется в production-зависимостях
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund >/dev/null
+# -w server: ставим зависимости ТОЛЬКО сервера. Mini App уже собран в web/dist,
+# и react с иконками (около 45 МБ) на сервере не нужны ни секунды
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund -w server   --include-workspace-root >/dev/null
 # нативный клиент Prisma генерируется здесь: движок зависит от системы,
 # а не от машины, где собирали
 (cd server && npx prisma generate >/dev/null)
@@ -92,7 +107,7 @@ echo "  зависимости: \$(du -sh node_modules | cut -f1)"
 EOSH
 
 echo "→ миграции базы (на живой базе, до переключения)"
-ssh "$HOST" "cd $DIR/releases/$SHA && bash scripts/db-migrate.sh"
+ssh "$HOST" "cd $DIR/releases/$REL && bash scripts/db-migrate.sh"
 
 echo "→ переключаю current одной операцией"
 PREV="$(ssh "$HOST" "readlink -f $DIR/current || true")"
@@ -100,11 +115,11 @@ echo "  предыдущий релиз: ${PREV:-нет}"
 ssh "$HOST" "bash -s" <<EOSH
 set -euo pipefail
 DIR="$DIR"
-SHA="$SHA"
+REL="$REL"
 USER_NAME="$USER_NAME"
 chown -R "\$USER_NAME:\$USER_NAME" "\$DIR/shared/data"
 # rename(2) — либо старая ссылка, либо новая, промежуточного состояния не бывает
-ln -sfn "\$DIR/releases/\$SHA" "\$DIR/current.tmp"
+ln -sfn "\$DIR/releases/\$REL" "\$DIR/current.tmp"
 mv -Tf "\$DIR/current.tmp" "\$DIR/current"
 systemctl restart mnenezhalko
 EOSH
@@ -164,4 +179,4 @@ df -h "\$DIR" | tail -1
 EOSH
 
 echo
-echo "✅ релиз $SHORT в проде (current → releases/$SHA)"
+echo "✅ релиз $SHORT в проде (current → releases/$REL)"

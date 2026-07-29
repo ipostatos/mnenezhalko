@@ -11,10 +11,14 @@
 #
 # Ставится в cron на VPS:
 #   crontab -e
-#   34 3 * * * /opt/mnenezhalko/scripts/backup.sh >> /var/log/mnenezhalko-backup.log 2>&1
+#   34 3 * * * /opt/mnenezhalko/current/scripts/backup.sh >> /var/log/mnenezhalko-backup.log 2>&1
+# (через current — код лежит в releases/<sha>, а не в корне каталога проекта)
 set -eu
 
-DIR=/opt/mnenezhalko/server
+# Данные и секреты живут ОТДЕЛЬНО от кода и переживают релизы (см. release.sh):
+# /opt/mnenezhalko/shared/{data,.env}. Раньше здесь стоял путь внутри кода
+# (server/data), и после перехода на релизы по sha бэкап смотрел бы в никуда.
+SHARED=${SHARED_DIR:-/opt/mnenezhalko/shared}
 DEST=/opt/backups/mnenezhalko
 KEEP_DAYS=14
 
@@ -26,19 +30,19 @@ OUT="$DEST/mnenezhalko-$STAMP.db"
 
 # у sqlite3 нет зависимостей и он уже есть в системе; .backup даёт
 # консистентный снимок, даже если бот в этот момент пишет
-sqlite3 "$DIR/data/mnenezhalko.db" ".backup '$OUT'"
+sqlite3 "$SHARED/data/mnenezhalko.db" ".backup '$OUT'"
 gzip -f "$OUT"
 chmod 600 "$OUT.gz"
 find "$DEST" -name 'mnenezhalko-*.db.gz' -mtime +"$KEEP_DAYS" -delete
 
 # обложки: инкремента не делаем, их немного и архив жмётся до мегабайтов
 COVERS="$DEST/covers-$STAMP.tar.gz"
-tar -czf "$COVERS" -C "$DIR/data" covers
+tar -czf "$COVERS" -C "$SHARED/data" covers
 chmod 600 "$COVERS"
 find "$DEST" -name 'covers-*.tar.gz' -mtime +"$KEEP_DAYS" -delete
 
 # .env отдельно: без BOT_TOKEN и NOTION_TOKEN_V2 база сама по себе бесполезна
-cp "$DIR/.env" "$DEST/env-$STAMP.bak"
+cp "$SHARED/.env" "$DEST/env-$STAMP.bak"
 chmod 600 "$DEST/env-$STAMP.bak"
 find "$DEST" -name 'env-*.bak' -mtime +"$KEEP_DAYS" -delete
 
@@ -50,7 +54,7 @@ find "$DEST" -name 'env-*.bak' -mtime +"$KEEP_DAYS" -delete
 # `npm run privacy:reapply -w server`. Внутри только отпечатки (HMAC), поэтому
 # файл не раскрывает, кого именно удаляли.
 JOURNAL="$DEST/deletion-journal.csv"
-sqlite3 -csv "$DIR/data/mnenezhalko.db" \
+sqlite3 -csv "$SHARED/data/mnenezhalko.db" \
   "SELECT tgHash, requestedAt, completedAt FROM DeletionRequest;" > "$JOURNAL.new" 2>/dev/null || true
 if [ -s "$JOURNAL.new" ] || [ ! -f "$JOURNAL" ]; then
   # добавляем к накопленному и схлопываем повторы: журнал только растёт
