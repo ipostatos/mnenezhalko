@@ -26,6 +26,7 @@ import { prisma } from './db.js'
 import { normHandle } from './notion.js'
 import { archiveRow, notionWriteEnabled } from './notion-write.js'
 import { invalidateFacets } from './search.js'
+import { closeWaitlist, demoteUnsentReady, promoteNextWaiting } from './waitlist.js'
 
 /** Срок по умолчанию — месяц: столько обычно и держат книгу. */
 const DEFAULT_DAYS = 30
@@ -190,7 +191,11 @@ export async function markReturned(id: string, byTg: bigint) {
   // Возврат и разблокировка книги — одна транзакция: иначе при обрыве процесса
   // между двумя отдельными операциями выдача уже 'returned', а книга навсегда
   // остаётся 'busy' без единой активной выдачи — осиротевшее состояние.
+  const now = new Date()
   const result = await prisma.$transaction(async (tx) => {
+    // кого позвали из очереди — узнаёт вызывающий, чтобы сразу разослать
+    // сообщение, не дожидаясь джобы-добойщика
+    let promotedWaiting: { id: string; userTg: bigint } | null = null
     const loan = await tx.loan.findUnique({ where: { id } })
     if (!loan) return null
     // закрыть выдачу может владелец или сам читатель; «не ваша» — отдельная
@@ -229,12 +234,19 @@ export async function markReturned(id: string, byTg: bigint) {
             },
           })
           if (wantArchive) archiveNotionId = book.notionId
+          // книга уходит с полки: ждать больше нечего, очередь закрываем молча
+          await closeWaitlist(tx, updated.bookId, now)
         } else {
           await tx.book.update({ where: { id: updated.bookId }, data: { status: 'free' } })
+          // «сообщите, когда освободится» (issue #10): следующий в очереди
+          // выбирается ЗДЕСЬ, в одной транзакции с освобождением книги, и ждёт
+          // отправки в состоянии ready — так обещание переживает падение
+          // процесса и деплой, а не живёт в памяти обработчика
+          promotedWaiting = await promoteNextWaiting(tx, updated.bookId, now)
         }
       }
     }
-    return { updated, archiveNotionId }
+    return { updated, archiveNotionId, promotedWaiting }
   })
   if (!result) return null
 
@@ -359,6 +371,9 @@ export async function reopenLoan(id: string, byTg: bigint) {
       if (relent) return { error: 'book_relent' as const }
       const book = await tx.book.findUnique({ where: { id: loan.bookId } })
       if (book?.active) await tx.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
+      // книга снова на руках: того, кому обещание ещё не ушло, возвращаем в
+      // очередь. Кому сообщение уже доставлено — не трогаем (см. waitlist.ts)
+      await demoteUnsentReady(tx, loan.bookId)
     }
     const updated = await tx.loan.update({
       where: { id },

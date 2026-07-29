@@ -7,7 +7,13 @@ import { webhookCallback } from 'grammy'
 import { env, botDisabled } from './env.js'
 import { prisma } from './db.js'
 import { registerRoutes, warmShowcaseOnBoot } from './routes.js'
-import { bot, checkNotionToken, remindOverdueLoans, setupBotCommands } from './bot.js'
+import {
+  bot,
+  checkNotionToken,
+  flushWaitlistNotices,
+  remindOverdueLoans,
+  setupBotCommands,
+} from './bot.js'
 import { startSyncLoop } from './sync.js'
 import { seedCityGroups } from './seed.js'
 import { housekeepImgCache } from './imgcache.js'
@@ -15,6 +21,7 @@ import { startJobLoop } from './scheduler.js'
 import { coverPrewarmJob } from './prewarm.js'
 import { housekeepCovers } from './covers.js'
 import { expireMarketItems } from './market.js'
+import { escalateStale, expireWaitings } from './waitlist.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
@@ -217,6 +224,27 @@ if (!botDisabled) {
     run: async () => {
       const r = await remindOverdueLoans()
       return `выдач ${r.loans}, доставлено ${r.sent}, помечено ${r.reminded}, ошибок ${r.failed}`
+    },
+    log: (m) => app.log.info(m),
+    logError: (m) => app.log.error(m),
+  })
+
+  /**
+   * Очередь на книгу (issue #10). Джоба делает три вещи, которые нельзя
+   * доверить моменту возврата:
+   *  — добивает недоставленные обещания (процесс мог упасть ровно между
+   *    транзакцией возврата и отправкой сообщения);
+   *  — гасит протухшие записи, чтобы очередь не жила вечно;
+   *  — передаёт очередь дальше, если позванный за сутки так и не пришёл.
+   */
+  startJobLoop({
+    name: 'waitlist',
+    periodMs: 3600_000,
+    run: async () => {
+      const sent = await flushWaitlistNotices()
+      const expired = await expireWaitings()
+      const esc = await escalateStale()
+      return `доставлено ${sent.sent}/${sent.pending}, ошибок ${sent.failed}, протухло ${expired}, передано дальше ${esc.moved}`
     },
     log: (m) => app.log.info(m),
     logError: (m) => app.log.error(m),

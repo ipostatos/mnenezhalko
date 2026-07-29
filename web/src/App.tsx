@@ -31,9 +31,16 @@ export type Route =
   | { name: 'shelf'; id: string }
   | { name: 'myshelf' }
 
-/** Бот открывает Mini App сразу на нужном экране: `?screen=add|loans|digest`. */
+/**
+ * Бот открывает Mini App сразу на нужном экране: `?screen=add|loans|digest`,
+ * а `?screen=book&id=<id>` — прямо на карточке книги (так ведёт письмо
+ * «книга освободилась», issue #10).
+ */
 function initialStack(): Route[] {
-  const screen = new URLSearchParams(window.location.search).get('screen')
+  const params = new URLSearchParams(window.location.search)
+  const screen = params.get('screen')
+  const id = params.get('id')
+  if (screen === 'book' && id) return [{ name: 'home' }, { name: 'book', id }]
   const known = ['add', 'loans', 'digest', 'about', 'myshelf'] as const
   return known.includes(screen as (typeof known)[number])
     ? [{ name: 'home' }, { name: screen } as Route]

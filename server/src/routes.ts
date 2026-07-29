@@ -28,7 +28,13 @@ import {
   canUndoLoan,
   summarize,
 } from './loans.js'
-import { askForRating, botUsername, createDonateLink, isDonateAmount } from './bot.js'
+import {
+  askForRating,
+  botUsername,
+  createDonateLink,
+  flushWaitlistNotices,
+  isDonateAmount,
+} from './bot.js'
 import { linkLibrarian } from './librarian.js'
 import { notionWriteEnabled } from './notion-write.js'
 import {
@@ -53,6 +59,7 @@ import {
   validateReview,
   workKeyOf,
 } from './reviews.js'
+import { joinWaitlist, leaveWaitlist, waitCountsFor, waitlistFor } from './waitlist.js'
 import { prewarmCoverage } from './prewarm.js'
 import { createHmac } from 'node:crypto'
 import sharp from 'sharp'
@@ -333,7 +340,37 @@ export async function registerRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string }
     const book = await bookById(id)
     if (!book) return reply.code(404).send({ error: 'not_found' })
-    return redactCard(book, maySeeContacts(req))
+    const u = who(req)
+    // очередь на занятую книгу (issue #10): число ждущих и СВОЁ место в ней.
+    // Ждущие друг друга не видят — наружу не уходит ни ников, ни tgId
+    const waiting = await waitlistFor(id, u?.id ?? null)
+    return json({ ...redactCard(book, maySeeContacts(req)), waiting })
+  })
+
+  /**
+   * Встать в очередь на занятую книгу: «сообщите, когда освободится».
+   *
+   * Только по подписи Telegram: обещание адресное, и отправлять его мы будем
+   * в личку. Отказы говорят человеческим языком, что не так (см. waitlist.ts).
+   */
+  app.post('/api/books/:id/wait', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    await upsertUser(u)
+    const { id } = req.params as { id: string }
+    if (tooOften(`wait:${u.id}`, 30, 60_000)) return reply.code(429).send({ error: 'too_many' })
+    const r = await joinWaitlist(u.id, id)
+    if (!r.ok) return reply.code(r.error === 'book_unavailable' ? 404 : 409).send({ error: r.error })
+    return json({ waiting: { count: r.count, mine: { position: r.position, status: 'waiting' } } })
+  })
+
+  /** Уйти из очереди. Повторный вызов не ошибка: результат тот же. */
+  app.delete('/api/books/:id/wait', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    const { id } = req.params as { id: string }
+    await leaveWaitlist(u.id, id)
+    return json({ waiting: await waitlistFor(id, u.id) })
   })
 
   app.get('/api/librarians/:id', async (req, reply) => {
@@ -467,6 +504,8 @@ export async function registerRoutes(app: FastifyInstance) {
       // читателю прилетает предложение оценить книгу — независимо от того,
       // закрыли выдачу кнопкой в боте или здесь, в Mini App
       void askForRating(loan)
+      // и тем же путём уходит обещание «сообщим, когда освободится»
+      void flushWaitlistNotices().catch(() => {})
       return json({ loan })
     } catch (e: any) {
       // «не ваша выдача» — 403, раньше неотличимо маскировалось под 404
@@ -513,7 +552,15 @@ export async function registerRoutes(app: FastifyInstance) {
     // «Моя полка» рисует обложку и в списке (.cover, 44×62 CSS), и на экране правки
     // (.edit-cover, 128×180 CSS) — берём один размер CARD_W на оба, чтобы список
     // и правка тянули один и тот же файл из кэша, без второй загрузки
-    return json({ books: rows.map((b) => ({ ...toCard(b, { w: CARD_W }), state: shelfState(b) })) })
+    // владельцу показываем, сколько человек ждёт его книгу — но не кто именно
+    const waits = await waitCountsFor(rows.map((b) => b.id))
+    return json({
+      books: rows.map((b) => ({
+        ...toCard(b, { w: CARD_W }),
+        state: shelfState(b),
+        waitCount: waits.get(b.id) ?? 0,
+      })),
+    })
   })
 
   /** Редактировать свою книгу. */

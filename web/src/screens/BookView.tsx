@@ -5,6 +5,7 @@ import type { Book } from '../types'
 import { haptic, openTg } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
 import { Reviews, Stars } from './Reviews'
+import { WaitBlock } from './WaitBlock'
 
 export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
   const [book, setBook] = useState<Book | null>(null)
@@ -68,6 +69,8 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
           </div>
         </div>
       </div>
+
+      <WaitBlock book={book} />
 
       <div className="section-title">У кого взять</div>
       {owner ? (

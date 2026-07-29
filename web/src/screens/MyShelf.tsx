@@ -227,6 +227,13 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
               {b.state === 'onloan' && (
                 <div className="shelf-note">Книга у читателя — см. «У кого моя книга».</div>
               )}
+              {/* очередь видна владельцу числом: кто именно ждёт — не его дело
+                  и не наше (см. server/src/waitlist.ts) */}
+              {!!b.waitCount && (
+                <div className="shelf-note wait-count">
+                  {b.waitCount === 1 ? 'Эту книгу ждёт 1 человек' : `Эту книгу ждут: ${b.waitCount}`}
+                </div>
+              )}
               {b.state === 'syncerror' && (
                 <div className="shelf-note">Не ушла в общую таблицу — админы это видят.</div>
               )}

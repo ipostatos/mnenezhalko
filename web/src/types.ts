@@ -28,6 +28,8 @@ export type Book = {
   why?: string
   /** оценка произведения; null — книгу ещё никто не оценил */
   rating?: Rating | null
+  /** очередь на занятую книгу; приходит только в карточке одной книги */
+  waiting?: Waitlist
 }
 
 /** Средняя оценка книги и сколько людей её поставили. */
@@ -56,7 +58,20 @@ export type ReviewsPayload = {
 
 /** Книга на моей полке с вычисленным состоянием. */
 export type ShelfState = 'active' | 'pending' | 'rejected' | 'onloan' | 'deleted' | 'syncerror'
-export type ShelfBook = Book & { state: ShelfState }
+export type ShelfBook = Book & {
+  state: ShelfState
+  /** сколько человек ждёт эту книгу — владельцу видно только число (issue #10) */
+  waitCount?: number
+}
+
+/**
+ * Очередь на занятую книгу: сколько всего ждут и где в ней я.
+ * Соседей по очереди не видно — ни имён, ни ников (см. server/src/waitlist.ts).
+ */
+export type Waitlist = {
+  count: number
+  mine: { position: number; status: string; readyAt?: string | null } | null
+}
 
 export type Facets = {
   total: number
