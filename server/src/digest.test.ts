@@ -132,6 +132,24 @@ test('фильтр по городу сужает и список, и счётч
   assert.deepEqual(d.items.map((i) => i.title), ['Краковская'])
 })
 
+test('первое наполнение базы не превращает весь каталог в новинки', async () => {
+  // регрессия, пойманная прод-смоуком 29 июля: база на сервере создана 22 июля,
+  // поэтому `createdAt` у всех 3249 книг попал в месячное окно, и «новинки за
+  // месяц» показали весь каталог вместо восьмидесяти книг
+  for (let i = 0; i < 5; i++) {
+    await book({
+      title: `Старая из каталога ${i}`,
+      addedAt: hoursAgo(24 * 200), // вписана в таблицу давным-давно
+      createdAt: hoursAgo(3), // а у нас появилась при первом наполнении базы
+    })
+  }
+  await book({ title: 'Правда свежая', addedAt: hoursAgo(4), createdAt: hoursAgo(3) })
+
+  const month = await digest('month', undefined, 20, NOW)
+  assert.deepEqual(month.items.map((i) => i.title), ['Правда свежая'])
+  assert.equal(month.total, 1)
+})
+
 test('книга без даты в таблице проекта считается по нашей', async () => {
   await book({ title: 'Без даты', addedAt: null, createdAt: hoursAgo(5) })
   assert.equal((await digest('day', undefined, 20, NOW)).total, 1)
