@@ -27,6 +27,7 @@ KEEP="${KEEP_RELEASES:-2}"
 MODE="${1:-}"
 
 SHA="$(git -C "$ROOT" rev-parse HEAD)"
+VERSION="$(node -p "require('$ROOT/package.json').version" 2>/dev/null || echo unknown)"
 SHORT="${SHA:0:7}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -92,6 +93,10 @@ rm -rf "\$NEW/server/data" "\$NEW/server/.env"
 ln -sfn "\$DIR/shared/data" "\$NEW/server/data"
 ln -sfn "\$DIR/shared/.env" "\$NEW/server/.env"
 
+# Чем именно работает процесс: sha попадает в /api/health, и проверка живости
+# отличает новый процесс от пережившего рестарт старого
+printf 'RELEASE_SHA=%s\nRELEASE_VERSION=%s\n' "\$REL" "$VERSION" > "\$NEW/server/.release-env"
+
 cd "\$NEW"
 # ⚠️ --omit=dev: на проде не должно быть ни vite, ни tsc, ни браузеров Playwright.
 # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD — вторая страховка на случай, если инструмент
@@ -104,6 +109,24 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --omit=dev --no-audit --no-fund -w ser
 (cd server && npx prisma generate >/dev/null)
 
 echo "  зависимости: \$(du -sh node_modules | cut -f1)"
+EOSH
+
+# Снимок базы ПЕРЕД миграциями.
+#
+# Откат симлинка возвращает КОД, но не базу: миграции уже применены к живой базе.
+# Для добавляющих изменений это нормально (прежний код просто не знает о новых
+# колонках), поэтому основное правило беты такое: миграции обязаны быть обратно
+# совместимыми, а разрушающие (удаление и перестройка) делаются отдельным
+# согласованным релизом. Снимок — страховка на случай, когда правило нарушено.
+echo "→ снимок базы перед миграциями"
+ssh "$HOST" "bash -s" <<EOSH
+set -euo pipefail
+SNAP="$DIR/shared/data/predeploy-$SHORT.db"
+sqlite3 "$DIR/shared/data/mnenezhalko.db" ".backup '\$SNAP'"
+chown "$USER_NAME:$USER_NAME" "\$SNAP"
+echo "  \$(du -h "\$SNAP" | cut -f1) → \$SNAP"
+# держим только два последних снимка: диск тесный
+ls -1t "$DIR/shared/data"/predeploy-*.db 2>/dev/null | tail -n +3 | xargs -r rm -f
 EOSH
 
 echo "→ миграции базы (на живой базе, до переключения)"
@@ -124,15 +147,24 @@ mv -Tf "\$DIR/current.tmp" "\$DIR/current"
 systemctl restart mnenezhalko
 EOSH
 
-echo "→ проверка живости"
+# Проверяем не «кто-то ответил», а «ответил ИМЕННО новый релиз»: если systemd
+# по какой-то причине не перезапустил процесс, старый ответил бы бодрым ok и
+# выкладка сочла бы новый успешным.
+echo "→ проверка живости и что отвечает именно новый релиз"
 ok=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 2
-  if ssh "$HOST" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/api/health >/dev/null 2>&1"; then
-    ok=1
-    break
-  fi
-  echo "  попытка $i…"
+  got="$(ssh "$HOST" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/api/health 2>/dev/null" || true)"
+  case "$got" in
+    *'"ok":true'*)
+      if printf '%s' "$got" | grep -q "\"sha\":\"$REL\""; then
+        ok=1
+        break
+      fi
+      echo "  отвечает, но ещё прежний релиз (попытка $i)"
+      ;;
+    *) echo "  попытка $i…" ;;
+  esac
 done
 
 if [ "$ok" != "1" ]; then

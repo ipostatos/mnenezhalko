@@ -18,6 +18,10 @@ User=mnenezhalko
 Group=mnenezhalko
 WorkingDirectory=/opt/mnenezhalko/current/server
 EnvironmentFile=/opt/mnenezhalko/shared/.env
+# Чем именно работает процесс (RELEASE_SHA, RELEASE_VERSION): файл кладёт выкладка
+# в сам релиз, поэтому /api/health честно отвечает, какая сборка сейчас в проде.
+# Дефис в начале — файла может не быть (например, при ручном запуске)
+EnvironmentFile=-/opt/mnenezhalko/current/server/.release-env
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=5

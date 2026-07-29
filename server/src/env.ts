@@ -25,7 +25,17 @@ const webhookSecret =
   process.env.WEBHOOK_SECRET ||
   crypto.createHash('sha256').update(`${botToken}:webhook`).digest('hex')
 
+/**
+ * Что за сборка работает. `RELEASE_SHA` подставляет выкладка (release.sh), локально
+ * его нет — тогда честно отдаём 'dev'. По этому полю проверка живости убеждается,
+ * что ответил ИМЕННО новый процесс, а не переживший рестарт прежний.
+ */
+const releaseSha = process.env.RELEASE_SHA || 'dev'
+const version = process.env.RELEASE_VERSION || '0.2.0-beta.1'
+
 export const env = {
+  releaseSha,
+  version,
   botToken,
   webhookSecret,
   publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
