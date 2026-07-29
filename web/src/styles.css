@@ -35,6 +35,11 @@
   --terracotta: #d98a62;
   --honey: #e0a44a;
 
+  /* «польза сообщества»: деньги тёплые, экология зелёная — цвет несёт смысл.
+     Оба затемнены до читаемого контраста на своих пастельных плашках */
+  --impact-money: #7a4630;
+  --impact-eco: #3f6b4a;
+
   /* шкала отступов и радиусов */
   --sp-1: 4px;
   --sp-2: 8px;
@@ -1413,15 +1418,16 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   font-size: var(--fs-xs);
 }
 
-/* ── сколько сберегли вместе (issue #13) ───────────────────
-   блок стоит под дашбордом выдач: сначала свои книги, потом общий итог */
+/* ── польза сообщества (issue #13) ─────────────────────────
+   блок стоит под дашбордом выдач: сначала свои книги, потом общий итог.
+   Карточка результата: один крупный показатель наверху, метрики и методика —
+   под раскрытием (ревью дизайна 29.07.2026) */
 .impact {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
   margin-bottom: var(--sp-4);
-  /* в свёрнутом виде карточка — одна строка, поэтому дышит меньше */
-  padding: var(--sp-3);
+  padding: var(--sp-4);
 }
 
 /* вся строка — кнопка: свернуть/развернуть должно попадать пальцем целиком */
@@ -1448,44 +1454,136 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 .impact-head .chev {
   color: var(--hint);
   transition: transform 0.18s ease;
+  flex: 0 0 auto;
 }
 
 .impact-head .chev.up {
   transform: rotate(90deg);
 }
 
-.impact-emoji {
-  font-size: 26px;
-  line-height: 1;
+/* фирменная иконка вместо случайного эмодзи — та же плитка, что у плашек */
+.impact-ic {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--impact-eco);
+  background: color-mix(in srgb, var(--impact-eco) 14%, transparent);
+}
+
+.impact-ic svg {
+  width: 22px;
+  height: 22px;
+}
+
+.impact-eyebrow {
+  font-size: var(--fs-xs);
+  color: var(--hint);
+}
+
+/* единственный крупный показатель во всём блоке */
+.impact-hero {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.impact-sub {
+  font-size: var(--fs-sm);
+  color: var(--hint);
+  line-height: 1.35;
 }
 
 .impact-nums {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: var(--sp-2);
 }
 
-/* деревьев ещё не набралось — две колонки вместо трёх, без пустого места */
-.impact-nums.two {
-  grid-template-columns: repeat(2, 1fr);
+.impact-num {
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
 }
 
-.impact-num {
-  text-align: center;
-  padding: var(--sp-3) var(--sp-2);
-  border-radius: var(--r-md);
-  background: var(--accent-soft);
+/* деньги и экология — разные по смыслу, поэтому и по цвету */
+.impact-num.money {
+  background: var(--tone-peach);
+}
+
+.impact-num.money .n {
+  color: var(--impact-money);
+}
+
+.impact-num.eco {
+  background: var(--tone-sage);
+}
+
+.impact-num.eco .n {
+  color: var(--impact-eco);
 }
 
 .impact-num .n {
-  font-weight: 700;
-  font-size: var(--fs-md);
-  color: var(--accent-text);
+  font-weight: 800;
+  /* переменной --fs-md в системе нет: размер задаём явно, иначе цифра
+     молча наследовала размер обычного текста и «крупной» не была */
+  font-size: 20px;
+  line-height: 1.2;
 }
 
 .impact-num .c {
   font-size: var(--fs-xs);
+  color: color-mix(in srgb, var(--text) 65%, transparent);
+  line-height: 1.35;
+}
+
+/* деревья — уточнение к бумаге, а не третий равный итог */
+.impact-num .x {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.impact-how {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-3);
+}
+
+.impact-how-t {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  margin-bottom: var(--sp-2);
+}
+
+/* методика буллетами: сплошной абзац на телефоне не сканируется */
+.impact-how ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--sp-3);
+}
+
+.impact-how li {
+  position: relative;
+  padding-left: 14px;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
   color: var(--hint);
+}
+
+.impact-how li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .impact-note {

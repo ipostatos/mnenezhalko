@@ -1,15 +1,15 @@
 /**
- * Блок «Вместе мы сберегли» (issue #13) и значки библиотекаря (issue #11).
+ * Блок «Польза сообщества» (issue #13) и значки библиотекаря (issue #11).
  *
  * Проверяется то, что легко сломать незаметно: блок не приветствует нулями,
- * спорная методика остаётся на виду, а «деревья» не показываются, пока их
- * набралась смешная доля.
+ * в свёрнутом виде остаётся один главный показатель, спорная методика видна
+ * при раскрытии, а «деревья» не показываются, пока их набралась смешная доля.
  *
  * Запуск: npm run test -w web
  */
 import { describe, expect, test, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { Impact, treeWord } from './Impact'
+import { Impact, treeWord, exchangeWord, group } from './Impact'
 import { Badges, BadgesScreen } from './Badges'
 import { api } from '../api'
 import type { Badge, Impact as ImpactData } from '../types'
@@ -38,29 +38,43 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('сколько сберегли вместе', () => {
-  test('на главной свёрнут в одну строку: место под плашки, а не под статистику', async () => {
+describe('польза сообщества', () => {
+  test('в свёрнутом виде один главный показатель, метрики и методика скрыты', async () => {
     vi.spyOn(api, 'impact').mockResolvedValue(impact())
-    render(<Impact />)
+    const { container } = render(<Impact />)
 
-    expect(await screen.findByText('Вместе мы сберегли ≈8000 zł')).toBeTruthy()
+    expect(await screen.findByText('Польза сообщества')).toBeTruthy()
+    // сумма — единственная крупная цифра, разряды разделены
+    expect(container.querySelector('.impact-hero')?.textContent).toBe(`≈${group(8000)} zł`)
+    expect(screen.getByText(/сберегли вместе · 200 обменов/)).toBeTruthy()
     // цифры и методика спрятаны, пока не попросили
-    expect(screen.queryByText('кг бумаги')).toBeNull()
-    expect(screen.queryByText(/40 злотых за книгу/)).toBeNull()
+    expect(screen.queryByText('бумаги сохранили')).toBeNull()
+    expect(screen.queryByText('Как считаем')).toBeNull()
   })
 
-  test('по нажатию раскрываются злотые, бумага и деревья, и сворачиваются обратно', async () => {
+  test('по нажатию раскрываются две карточки и деревья, и сворачиваются обратно', async () => {
     vi.spyOn(api, 'impact').mockResolvedValue(impact())
-    render(<Impact />)
+    const { container } = render(<Impact />)
 
-    const head = await screen.findByRole('button', { name: /Вместе мы сберегли/ })
+    const head = await screen.findByRole('button', { name: /Польза сообщества/ })
     fireEvent.click(head)
-    expect(screen.getByText('≈60')).toBeTruthy()
-    expect(screen.getByText('кг бумаги')).toBeTruthy()
-    expect(screen.getByText('дерево')).toBeTruthy()
+    // ровно две метрики: деньги и экология, а не три равноправных колонки
+    expect(container.querySelectorAll('.impact-num').length).toBe(2)
+    expect(screen.getByText('≈60 кг')).toBeTruthy()
+    expect(screen.getByText('бумаги сохранили')).toBeTruthy()
+    expect(screen.getByText('это ≈1 дерево')).toBeTruthy()
 
     fireEvent.click(head)
-    await waitFor(() => expect(screen.queryByText('кг бумаги')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('бумаги сохранили')).toBeNull())
+  })
+
+  test('деньги и экология окрашены по-разному: цвет несёт смысл', async () => {
+    vi.spyOn(api, 'impact').mockResolvedValue(impact())
+    const { container } = render(<Impact />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Польза сообщества/ }))
+    expect(container.querySelector('.impact-num.money')).toBeTruthy()
+    expect(container.querySelector('.impact-num.eco')).toBeTruthy()
   })
 
   test('без обменов блок молчит: «сберегли 0 злотых» — плохое приветствие', async () => {
@@ -69,24 +83,42 @@ describe('сколько сберегли вместе', () => {
     await waitFor(() => expect(container.textContent).toBe(''))
   })
 
-  test('пока деревьев меньше десятой доли — колонки нет, а деньги и бумага есть', async () => {
+  test('пока деревьев меньше десятой доли — строки нет, а деньги и бумага есть', async () => {
     vi.spyOn(api, 'impact').mockResolvedValue(
       impact({ exchanges: 3, moneyPln: 120, paperKg: 0.9, trees: 0.02 }),
     )
-    render(<Impact />)
+    const { container } = render(<Impact />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Вместе мы сберегли/ }))
-    expect(screen.getByText('≈0.9')).toBeTruthy()
-    expect(screen.queryByText('≈0.02')).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: /Польза сообщества/ }))
+    expect(screen.getByText('≈0.9 кг')).toBeTruthy()
+    expect(container.querySelector('.impact-num .x')).toBeNull()
   })
 
-  test('методика видна при раскрытии: спорную оценку честнее показать', async () => {
+  test('методика видна при раскрытии списком: спорную оценку честнее показать', async () => {
     vi.spyOn(api, 'impact').mockResolvedValue(impact())
-    render(<Impact />)
+    const { container } = render(<Impact />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Вместе мы сберегли/ }))
-    expect(screen.getByText(/40 злотых за книгу/)).toBeTruthy()
-    expect(screen.getByText(/оценка, а не точный расчёт/)).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /Польза сообщества/ }))
+    expect(screen.getByText('Как считаем')).toBeTruthy()
+    expect(container.querySelectorAll('.impact-how li').length).toBe(3)
+    expect(screen.getByText(/40 zł за книгу/)).toBeTruthy()
+    expect(screen.getByText(/приблизительная оценка, а не точный расчёт/)).toBeTruthy()
+  })
+
+  test('разряды в сумме: «8000» читается как набор цифр, «8 000» — как деньги', () => {
+    expect(group(8000)).toBe('8 000')
+    expect(group(120)).toBe('120')
+    expect(group(1234567)).toBe('1 234 567')
+  })
+
+  test('склонение обменов', () => {
+    expect([1, 2, 5, 11, 22].map(exchangeWord)).toEqual([
+      'обмен',
+      'обмена',
+      'обменов',
+      'обменов',
+      'обмена',
+    ])
   })
 
   test('склонение деревьев', () => {

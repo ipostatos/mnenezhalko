@@ -25,6 +25,7 @@ import {
   EyeOff,
   Flower2,
   Award,
+  Sprout,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -51,6 +52,7 @@ export type IconName =
   | 'hide'
   | 'flower'
   | 'award'
+  | 'sprout'
 
 const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   book: BookOpen,
@@ -74,6 +76,7 @@ const MAP: Record<Exclude<IconName, 'instagram'>, LucideIcon> = {
   hide: EyeOff,
   flower: Flower2,
   award: Award,
+  sprout: Sprout,
 }
 
 /** Instagram в lucide v1 убрали (бренд) — берём выверенную геометрию Feather. */
