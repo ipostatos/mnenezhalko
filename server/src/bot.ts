@@ -5,6 +5,7 @@ import { searchBooks, toCard, type BookCard } from './search.js'
 import { askAi } from './ai.js'
 import { syncFromNotion, setSyncAlert } from './sync.js'
 import { setBookGoneNotifier } from './mydata.js'
+import { checkUserCan, explainVerdict, type Scope } from './moderation.js'
 import { plural } from './plural.js'
 import {
   CITIES,
@@ -358,7 +359,27 @@ bot.command('find', async (ctx) => {
  */
 const aiBusy = new Map<number, { warned: boolean }>()
 
+/**
+ * Та же проверка прав, что и в API: ограничение должно работать и в боте, иначе
+ * человек просто продолжит делать то же самое другим входом. Возвращает true,
+ * если действие запрещено, и сам объясняет человеку причину.
+ */
+async function stoppedByRules(ctx: any, scope: Scope): Promise<boolean> {
+  const v = await checkUserCan(BigInt(ctx.from.id), scope)
+  if (v.allowed) return false
+  const text = explainVerdict(v)
+  if (ctx.callbackQuery) {
+    // в всплывающем окне помещается немного, поэтому и коротко, и сообщением
+    await ctx.answerCallbackQuery({ text: text.slice(0, 190), show_alert: true }).catch(() => {})
+    await ctx.reply(text).catch(() => {})
+  } else {
+    await ctx.reply(text).catch(() => {})
+  }
+  return true
+}
+
 async function handleAi(ctx: any, text: string) {
+  if (await stoppedByRules(ctx, 'ai')) return
   const tgId = ctx.from.id as number
   const busy = aiBusy.get(tgId)
   if (busy) {
@@ -515,6 +536,7 @@ bot.command('loans', async (ctx) => {
 })
 
 bot.command('lend', async (ctx) => {
+  if (await stoppedByRules(ctx, 'add_books')) return
   const raw = ctx.match?.toString().trim() ?? ''
   const [title, holder, ...rest] = raw.split('|').map((s) => s.trim())
   if (!title || !holder) {
@@ -751,6 +773,7 @@ const reviewTextWait = new Map<number, { bookId: string; at: number }>()
 const REVIEW_WAIT_TTL_MS = 2 * 3600_000
 
 bot.callbackQuery(/^rev:([^:]+):([1-5])$/, async (ctx) => {
+  if (await stoppedByRules(ctx, 'reviews')) return
   const bookId = ctx.match![1]
   const rating = Number(ctx.match![2])
   const book = await prisma.book.findUnique({
@@ -1319,6 +1342,7 @@ const ISBN_MISS_HINT =
 
 /** Одиночный ISBN сообщением: ищем в каталогах и предлагаем поставить на полку. */
 async function handleIsbnMessage(ctx: any, raw: string) {
+  if (await stoppedByRules(ctx, 'add_books')) return
   await ctx.replyWithChatAction('typing')
   const r = await lookupIsbnDetailed(raw).catch((e: any) => {
     console.error('[isbn] поиск упал:', e?.message ?? e)
@@ -1605,7 +1629,10 @@ async function sendBatchSummary(
   await ctx.reply(blocks.join('\n\n'), { parse_mode: 'HTML', reply_markup: mainKeyboard() })
 }
 
-bot.command('import', (ctx) => handleListImport(ctx, ctx.match?.toString() ?? ''))
+bot.command('import', async (ctx) => {
+  if (await stoppedByRules(ctx, 'add_books')) return
+  return handleListImport(ctx, ctx.match?.toString() ?? '')
+})
 
 /** Админ: добавлять книги от имени библиотекаря (фото/альбом/список/ISBN). */
 bot.command('onbehalf', async (ctx) => {
@@ -1668,6 +1695,7 @@ bot.callbackQuery('shelf:save', async (ctx) => {
 
 /** Подтверждение пачки книг с одного фото. */
 bot.callbackQuery('shelfbatch:save', async (ctx) => {
+  if (await stoppedByRules(ctx, 'add_books')) return
   const books = shelfBatches.get(ctx.from.id)
   if (!books?.length) return ctx.answerCallbackQuery({ text: 'Пришлите фото ещё раз' })
 
@@ -2116,6 +2144,7 @@ bot.on('message:photo', async (ctx) => {
   if (isMarketTopic(ctx)) return caption ? handleMarketPost(ctx, caption) : undefined
   // фото в личке считаем обложкой книги
   if (ctx.chat.type !== 'private') return
+  if (await stoppedByRules(ctx, 'add_books')) return
   // альбом (несколько фото разом) — добавляем пачкой
   if (ctx.message.media_group_id) return bufferAlbumPhoto(ctx)
   await handleBookPhoto(ctx)

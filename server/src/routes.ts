@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from './db.js'
 import { env } from './env.js'
 import { upsertUser, verifyInitData, type TgUser } from './auth.js'
@@ -19,6 +19,7 @@ import {
 import { digest } from './digest.js'
 import { getTaxonomy } from './taxonomy.js'
 import { deleteMyData, exportMyData } from './mydata.js'
+import { checkUserCan, explainVerdict, type Scope } from './moderation.js'
 import {
   createLoan,
   decorate,
@@ -69,6 +70,25 @@ import { prewarmCoverage } from './prewarm.js'
 import { createHmac } from 'node:crypto'
 import sharp from 'sharp'
 import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
+
+/**
+ * Единая проверка прав перед действием: заблокирован ли человек и не закрыто ли
+ * ему именно это. Ответ 403 несёт понятную человеку причину — «нельзя» без
+ * объяснения выглядит поломкой.
+ *
+ * Прятать кнопку в приложении недостаточно: бот и API принимают тот же запрос
+ * напрямую, поэтому проверка стоит ЗДЕСЬ, а не только на экране.
+ */
+async function denyIfCannot(
+  reply: FastifyReply,
+  tgId: bigint,
+  scope: Scope,
+): Promise<boolean> {
+  const v = await checkUserCan(tgId, scope)
+  if (v.allowed) return false
+  reply.code(403).send({ error: v.code, message: explainVerdict(v) })
+  return true
+}
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
 function who(req: FastifyRequest): TgUser | null {
@@ -463,6 +483,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/books/:id/wait', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'waitlist')) return
     await upsertUser(u)
     const { id } = req.params as { id: string }
     if (tooOften(`wait:${u.id}`, 30, 60_000)) return reply.code(429).send({ error: 'too_many' })
@@ -508,6 +529,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/ai', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'ai')) return
     if (tooOften(`ai:${u.id}`, 12, 60_000)) return reply.code(429).send({ error: 'too_many' })
     const { text, city } = req.body as { text?: string; city?: string }
     if (!text || text.trim().length < 2) return reply.code(400).send({ error: 'empty' })
@@ -579,6 +601,9 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/loans', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    // новая выдача — начало обмена; ВОЗВРАТ книги не ограничивается никогда
+    // (он закрывает обязательство перед другим человеком)
+    if (await denyIfCannot(reply, u.id, 'add_books')) return
     await upsertUser(u)
     const b = req.body as Record<string, any>
     if (!b.title || !b.holder) return reply.code(400).send({ error: 'bad_request' })
@@ -759,6 +784,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/books/:id/review', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'reviews')) return
     await upsertUser(u)
     const { id } = req.params as { id: string }
     const book = await prisma.book.findUnique({
@@ -806,6 +832,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/reviews/:id/report', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'reports')) return
     // жалоба дешёвая для нажимающего и дорогая для автора отзыва — ограничиваем
     if (tooOften(`report:${u.id}`, 20, 3600_000)) {
       return reply.code(429).send({ error: 'too_many' })
@@ -914,6 +941,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/recognize', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'add_books')) return
     // распознавание тоже идёт в Claude, и картинка весит мегабайты
     if (tooOften(`vision:${u.id}`, 20, 300_000)) return reply.code(429).send({ error: 'too_many' })
     const { image } = req.body as { image?: string }
@@ -1006,6 +1034,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/api/isbn', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'add_books')) return
     if (tooOften(`isbn:${u.id}`, 30, 300_000)) return reply.code(429).send({ error: 'too_many' })
     const { code } = req.query as { code?: string }
     if (!code || !looksLikeIsbn(code)) return reply.code(400).send({ error: 'bad_isbn' })
@@ -1023,6 +1052,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post('/api/books', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (await denyIfCannot(reply, u.id, 'add_books')) return
     const user = await upsertUser(u)
     const b = req.body as Record<string, any>
     if (!b.title || String(b.title).trim().length < 2) {

@@ -20,13 +20,22 @@ model User {
   createdAt   DateTime @default(now())
   seenAt      DateTime @default(now())
 
-  librarian   Librarian?
-  marketItems MarketItem[]
-  events      Event[]
-  loansGiven  Loan[]       @relation("LoansGiven")
-  loansTaken  Loan[]       @relation("LoansTaken")
-  reviews     Review[]
-  waitings    Waiting[]
+  /// active | banned. «Ограничен» отдельным состоянием НЕ храним: это
+  /// вычисляется по действующим UserRestriction, иначе появился бы второй
+  /// источник правды, который рано или поздно разойдётся с первым
+  accountStatus String    @default("active")
+  bannedAt      DateTime?
+  bannedByTg    BigInt?
+  banReason     String?
+
+  librarian    Librarian?
+  restrictions UserRestriction[]
+  marketItems  MarketItem[]
+  events       Event[]
+  loansGiven   Loan[]            @relation("LoansGiven")
+  loansTaken   Loan[]            @relation("LoansTaken")
+  reviews      Review[]
+  waitings     Waiting[]
 }
 
 /// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
@@ -372,4 +381,50 @@ model DeletionRequest {
   completedAt DateTime?
   /// что именно унесли: сводка числами, без содержимого
   summary     String?
+}
+
+/// Точечное ограничение: запрет на ОДНО действие, а не на весь аккаунт.
+///
+/// Человеку можно закрыть отзывы за грубость, но оставить полку, возвраты и
+/// очереди: блокировка целиком слишком груба и бьёт по тем, кто ждёт его книги.
+/// Снятое ограничение не удаляется — история решений должна оставаться.
+model UserRestriction {
+  id     String @id @default(cuid())
+  userTg BigInt
+  user   User   @relation(fields: [userTg], references: [tgId], onDelete: Cascade)
+
+  /// add_books | reviews | reports | waitlist | market | ai | all
+  scope       String
+  reason      String
+  createdByTg BigInt
+  createdAt   DateTime  @default(now())
+  /// null — бессрочно; иначе перестаёт действовать само, без вмешательства
+  expiresAt   DateTime?
+  liftedAt    DateTime?
+  liftedByTg  BigInt?
+
+  @@index([userTg, scope, liftedAt])
+}
+
+/// Неизменяемый журнал решений модераторов.
+///
+/// Решение нельзя «просто перезаписать» в User: тогда нельзя ответить на
+/// вопросы «кто это сделал», «почему» и «что было до». Строки отсюда не
+/// правятся и не удаляются — новое решение это новая строка.
+model ModerationAction {
+  id           String   @id @default(cuid())
+  actorTg      BigInt
+  targetUserTg BigInt?
+  /// user | review | book | market
+  targetType   String
+  targetId     String?
+  /// restrict | unrestrict | ban | unban | hide | restore | delete | dismiss
+  action       String
+  reason       String
+  /// подробности решения в JSON — например, срок ограничения
+  meta         String?
+  createdAt    DateTime @default(now())
+
+  @@index([targetUserTg, createdAt])
+  @@index([targetType, targetId])
 }
