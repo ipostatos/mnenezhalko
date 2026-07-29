@@ -14,6 +14,19 @@
 #   crontab -e → 34 3 * * * /opt/mnenezhalko/scripts/backup.sh >> /var/log/mnenezhalko-backup.log 2>&1
 set -euo pipefail
 
+# ⚠️ УСТАРЕЛО. Этот скрипт распаковывал архив ПОВЕРХ живого каталога и собирал
+# проект на самом VPS: в это окно процесс видел смесь старых и новых файлов, а на
+# прод приезжали все инструменты разработки. Прод теперь живёт по симлинку
+# /opt/mnenezhalko/current → releases/<sha>, и перезапись каталога его сломает.
+#
+# Правильная выкладка: bash scripts/release.sh
+if [ "${ALLOW_LEGACY_DEPLOY:-}" != "1" ]; then
+  echo "Этот способ выкладки больше не используется."
+  echo "Соберите релиз: bash scripts/release.sh   (первый раз — scripts/release-setup.sh)"
+  echo "Осознанно запустить старый путь: ALLOW_LEGACY_DEPLOY=1 bash scripts/deploy.sh"
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${DEPLOY_HOST:-root@46.224.220.94}"
 DIR="${DEPLOY_DIR:-/opt/mnenezhalko}"

@@ -56,6 +56,49 @@ jobs:
       - name: Уязвимости в зависимостях прода
         run: npm audit --omit=dev --audit-level=high
 
+  # Неизменяемый артефакт релиза: сборка происходит ЗДЕСЬ, а не на маленьком VPS.
+  # Так на прод не попадает ни один инструмент разработки, а выложенное можно
+  # сверить с тем, что собрал CI (тот же sha — тот же архив).
+  artifact:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22' # как на VPS
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma generate
+        working-directory: server
+
+      - name: Сборка сервера и Mini App
+        run: npm run build
+
+      # в архив идёт РЕЗУЛЬТАТ сборки и то, без чего сервер не поднимется:
+      # схема с миграциями, манифесты для установки только production-зависимостей
+      # и скрипты выкладки. Ни dist-исходников, ни dev-зависимостей
+      - name: Собрать архив релиза
+        run: |
+          set -eu
+          mkdir -p out
+          tar -czf "out/mnenezhalko-${GITHUB_SHA}.tar.gz" \
+            package.json package-lock.json \
+            server/package.json server/dist server/prisma \
+            web/package.json web/dist \
+            scripts
+          ls -lh out
+          tar -tzf "out/mnenezhalko-${GITHUB_SHA}.tar.gz" | head -5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: out/*.tar.gz
+          retention-days: 30
+
   # Сквозной путь человека: добавил книгу → выдал → очередь → вернул → оценил.
   # Отдельной джобой: качает браузер и поднимает настоящий сервер, поэтому идёт
   # дольше основной проверки и не должен задерживать её результат.
