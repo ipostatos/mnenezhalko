@@ -27,7 +27,11 @@ KEEP="${KEEP_RELEASES:-2}"
 MODE="${1:-}"
 
 SHA="$(git -C "$ROOT" rev-parse HEAD)"
-VERSION="$(node -p "require('$ROOT/package.json').version" 2>/dev/null || echo unknown)"
+# версию читаем sed'ом, а не через node: в git-bash на Windows $ROOT это
+# /c/Users/... — такой путь node (виндовый бинарь) не разрешает, require падал,
+# и в health уезжала версия «unknown» при живом релизе
+VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/package.json" | head -1)"
+VERSION="${VERSION:-unknown}"
 SHORT="${SHA:0:7}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
