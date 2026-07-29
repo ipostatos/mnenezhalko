@@ -101,8 +101,11 @@ export async function assertUserCan(tgId: bigint, scope: Scope, now = new Date()
   if (!v.allowed) throw new NotAllowedError(v)
 }
 
+/** «30 июля 2026» — без «г.» на конце, иначе в тексте получается «2026 г..». */
 const dateRu = (d: Date) =>
-  d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
+  d
+    .toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
+    .replace(/\s*г\.?$/, '')
 
 /** Отказ человеческим языком. Кто пожаловался — не раскрываем никогда. */
 export function explainVerdict(v: Exclude<Verdict, { allowed: true }>): string {
