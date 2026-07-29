@@ -22,6 +22,26 @@ const TERMS: { label: string; days: number | null }[] = [
   { label: 'без срока', days: null },
 ]
 
+/** Сколько книг с полки показываем разом: больше — и форма уезжает за экран. */
+const SUGGEST_LIMIT = 5
+
+/**
+ * Сравнение «по-человечески»: регистр, ё/е и знаки препинания не должны мешать
+ * найти свою же книгу («Мастер и Маргарита» ↔ «мастер и маргарита»).
+ */
+export function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
+/** Ищем и по названию, и по автору: половину книг помнят именно по автору. */
+export function bookMatches(b: { title: string; author: string | null }, needle: string): boolean {
+  return norm(`${b.title} ${b.author ?? ''}`).includes(needle)
+}
+
 /** «У кого моя книга сейчас»: список выданных книг и форма новой выдачи. */
 export function Loans({ go }: { go: (r: Route) => void }) {
   const [given, setGiven] = useState<Loan[]>([])
@@ -105,6 +125,9 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       const messages: Record<string, string> = {
         bad_holder: 'Ник не похож на телеграм — напишите @ник или ссылку t.me/ник.',
         empty_title: 'Впишите название книги.',
+        // раньше эти два кода показывались человеку как есть, латиницей
+        book_busy: 'Эта книга уже на руках — сначала отметьте возврат.',
+        not_your_book: 'Эта книга не с вашей полки.',
         unauthorized: 'Откройте приложение через бота',
       }
       showAlert(messages[e.message] ?? e.message)
@@ -134,8 +157,17 @@ export function Loans({ go }: { go: (r: Route) => void }) {
     }
   }
 
-  const suggestions = title.trim().length >= 2
-    ? myBooks.filter((b) => b.title.toLowerCase().includes(title.trim().toLowerCase())).slice(0, 4)
+  // Подсказка с полки. Раньше она молчала, пока не наберёшь две буквы, и человек
+  // просто не знал, что она есть (просьба user 29.07.2026). Теперь полка видна
+  // сразу, а ввод её сужает — и по названию, и по автору.
+  const needle = norm(title)
+  const onShelf = myBooks.filter((b) => b.status !== 'busy')
+  const matched = needle ? onShelf.filter((b) => bookMatches(b, needle)) : onShelf
+  const suggestions = matched.slice(0, SUGGEST_LIMIT)
+  // занятые не предлагаем (выдать их нельзя), но если человек ищет именно такую —
+  // честно говорим почему, иначе «моей книги нет в списке» выглядит поломкой
+  const busyMatch = needle
+    ? myBooks.filter((b) => b.status === 'busy' && bookMatches(b, needle)).slice(0, 2)
     : []
 
   return (
@@ -157,12 +189,13 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         />
         {suggestions.length > 0 && !bookId && (
           <div className="note" style={{ marginBottom: 0 }}>
-            С вашей полки:
+            {needle ? 'С вашей полки:' : 'С вашей полки — выберите или начните вводить название:'}
             {suggestions.map((b) => (
               <button
                 key={b.id}
                 className="link-row"
                 onClick={() => {
+                  haptic('light')
                   setTitle(b.title)
                   setBookId(b.id)
                 }}
@@ -170,6 +203,20 @@ export function Loans({ go }: { go: (r: Route) => void }) {
                 {b.title}
                 {b.author ? ` — ${b.author}` : ''}
               </button>
+            ))}
+            {matched.length > suggestions.length && (
+              <div className="muted">
+                и ещё {matched.length - suggestions.length} на полке — впишите название точнее
+              </div>
+            )}
+          </div>
+        )}
+        {busyMatch.length > 0 && !bookId && (
+          <div className="note" style={{ marginBottom: 0 }}>
+            {busyMatch.map((b) => (
+              <div key={b.id} className="muted">
+                «{b.title}» уже на руках — сначала отметьте возврат
+              </div>
             ))}
           </div>
         )}

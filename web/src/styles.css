@@ -108,6 +108,8 @@ svg,
 input,
 textarea {
   max-width: 100%;
+  /* подстраховка для полей вне класса .input: белую каретку WebView не видно */
+  caret-color: var(--link);
 }
 
 #root {
@@ -416,10 +418,23 @@ h1 {
   font-family: inherit;
   border-radius: var(--r-md);
   outline: none;
+  /* курсор задаём явно: у нас палитра фиксированная и светлая, а WebView
+     Telegram при тёмной теме телефона рисует каретку белым — на белом поле
+     её не видно вообще, и непонятно, попал ли пальцем в поле (жалоба user
+     29.07.2026). То же самое для выделения текста */
+  caret-color: var(--link);
 }
 
+.input::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+}
+
+/* активное поле видно с расстояния вытянутой руки: одной смены цвета рамки
+   на белой карточке для этого не хватало */
 .input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .input::placeholder {
