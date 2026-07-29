@@ -167,7 +167,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
         </div>
       )}
 
-      {books.length > 0 && <Badges />}
+      {books.length > 0 && <Badges go={go} />}
 
       {books.length > 3 && (
         <input

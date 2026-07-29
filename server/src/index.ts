@@ -50,7 +50,7 @@ await app.register(cors, { origin: ownOrigin ? [ownOrigin] : false })
  *   например обложки — они по хэшу и immutable);
  * - хэшированные ассеты /assets/* → кэш навсегда;
  * - index.html и всё остальное (SPA) → no-store, чтобы тянуть свежие ассеты;
- * - иллюстрации /il/* (имена не хэшированы) → умеренный кэш на сутки.
+ * - иллюстрации /il/* и значки /ach/* (имена не хэшированы) → кэш на сутки.
  */
 app.addHook('onSend', (req, reply, payload, done) => {
   const url = req.url.split('?')[0]
@@ -68,7 +68,7 @@ app.addHook('onSend', (req, reply, payload, done) => {
      */
     const found = reply.statusCode === 200 && !reply.getHeader('x-spa-fallback')
     reply.header('Cache-Control', found ? 'public, max-age=31536000, immutable' : 'no-store')
-  } else if (url.startsWith('/il/')) {
+  } else if (url.startsWith('/il/') || url.startsWith('/ach/')) {
     reply.header('Cache-Control', 'public, max-age=86400')
   } else {
     reply.header('Cache-Control', 'no-store')

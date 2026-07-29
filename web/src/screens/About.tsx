@@ -7,7 +7,6 @@ import { Icon } from './Icon'
 
 const MAIN_CHAT = 'https://t.me/+hlRk_HGIDcE4M2Vi'
 const INSTAGRAM = 'https://www.instagram.com/mne_ne_zhalko_pl'
-const GUIDE = 'https://mnenezhalko.notion.site/3fcdfa8ed57444d7ae2129bf5c0299f7'
 const PROJECT = 'https://mnenezhalko.notion.site/in-Poland-e4f29a5687c449f79581add35f17791b'
 const CURATOR = 'https://t.me/LizavetaZh'
 const COFFEE = 'https://buycoffee.to/mnenezhalko'
@@ -221,13 +220,22 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card tile" style={{ ['--tone' as any]: '#e59429' }} onClick={() => openTg(GUIDE)}>
+      {/* инструкция живёт прямо в приложении: раньше плашка уводила на страницу
+          Notion, где предлагалось войти по почте и заполнять таблицы руками */}
+      <button
+        className="row-card tile"
+        style={{ ['--tone' as any]: '#e59429' }}
+        onClick={() => {
+          haptic()
+          go({ name: 'guide' })
+        }}
+      >
         <div className="ic-tile">
           <Icon name="compass" />
         </div>
         <div className="grow">
           <div className="t">Инструкция новичка</div>
-          <div className="d">Как всё устроено в общей таблице проекта</div>
+          <div className="d">Как начать: шесть шагов, прямо здесь</div>
         </div>
         <div className="chev">›</div>
       </button>

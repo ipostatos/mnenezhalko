@@ -17,7 +17,40 @@ const PERIOD_HOURS: Record<DigestPeriod, number> = { day: 24, month: 24 * 30 }
  * считаться новинкой. Сверка идёт раз в 12 часов, но деплой или сбой могут её
  * отложить, поэтому берём трое суток с запасом.
  */
-const SYNC_LAG_MS = 3 * 24 * 3600_000
+export const SYNC_LAG_MS = 3 * 24 * 3600_000
+
+/**
+ * Условие «книга свежая» для запроса. Живёт здесь, рядом с объяснением, и
+ * используется и дайджестом, и значком «Новинка» на обложке: правило должно
+ * быть одно, иначе подборка и бейдж разойдутся.
+ */
+export function freshWhere(since: Date) {
+  return {
+    OR: [
+      { addedAt: { gte: since } },
+      { createdAt: { gte: since }, addedAt: { gte: new Date(since.getTime() - SYNC_LAG_MS) } },
+      // книги без даты в таблице судим только по нашей: другой у них нет
+      { createdAt: { gte: since }, addedAt: null },
+    ],
+  }
+}
+
+/** То же правило, но для уже загруженной книги (карточка знает только данные). */
+export function isFresh(
+  b: { addedAt?: Date | string | null; createdAt?: Date | string | null },
+  since: Date,
+): boolean {
+  const added = b.addedAt ? new Date(b.addedAt) : null
+  const created = b.createdAt ? new Date(b.createdAt) : null
+  if (added && added >= since) return true
+  if (!created || created < since) return false
+  // у книги из таблицы проекта дата там должна быть тоже свежей: иначе весь
+  // каталог, залитый в базу разом, стал бы «новинками» (см. регрессию 29.07)
+  return !added || added >= new Date(since.getTime() - SYNC_LAG_MS)
+}
+
+/** Сколько дней книга считается новинкой для значка на обложке. */
+export const NEW_BADGE_DAYS = 7
 
 export type Digest = {
   period: DigestPeriod
@@ -57,12 +90,7 @@ export async function digest(
      * период И в таблице проекта она тоже свежая. Массовый импорт старого
      * каталога через это условие не проходит.
      */
-    OR: [
-      { addedAt: { gte: since } },
-      { createdAt: { gte: since }, addedAt: { gte: new Date(since.getTime() - SYNC_LAG_MS) } },
-      // книги без даты в таблице судим только по нашей: другой у них нет
-      { createdAt: { gte: since }, addedAt: null },
-    ],
+    ...freshWhere(since),
     ...(city ? { city } : {}),
   }
 

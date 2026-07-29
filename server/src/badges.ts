@@ -21,6 +21,7 @@
  * проверяет тест, а не глазами на проде (badges.test.ts).
  */
 import { prisma } from './db.js'
+import { workKeyOf } from './reviews.js'
 
 /** Что мы знаем о человеке к моменту показа значков. */
 export type LibrarianStats = {
@@ -34,6 +35,12 @@ export type LibrarianStats = {
   read: number
   /** сколько оценок оставил */
   reviews: number
+  /** скольким РАЗНЫМ людям давал книги */
+  readers: number
+  /** сколько книг вернулись ему в срок */
+  onTime: number
+  /** сколько раз книгу с его полки оценили на пять */
+  topRated: number
 }
 
 export type Badge = {
@@ -52,6 +59,7 @@ type BadgeDef = {
   id: string
   title: string
   hint: string
+  /** запасной значок, если картинка не загрузилась */
   emoji: string
   target: number
   value: (s: LibrarianStats) => number
@@ -118,6 +126,30 @@ const DEFS: BadgeDef[] = [
     target: 1,
     value: (s) => s.reviews,
   },
+  {
+    id: 'friend-3',
+    title: 'Книжный друг',
+    hint: 'Дать книги трём разным людям',
+    emoji: '🧸',
+    target: 3,
+    value: (s) => s.readers,
+  },
+  {
+    id: 'keeper',
+    title: 'Хранитель полки',
+    hint: 'Дождаться трёх книг, вернувшихся в срок',
+    emoji: '🏡',
+    target: 3,
+    value: (s) => s.onTime,
+  },
+  {
+    id: 'rare-find',
+    title: 'Редкая находка',
+    hint: 'Книгу с вашей полки оценили на пять',
+    emoji: '📕',
+    target: 1,
+    value: (s) => s.topRated,
+  },
 ]
 
 /**
@@ -143,18 +175,83 @@ export function badgesFor(s: LibrarianStats): Badge[] {
 /** Собрать статистику человека одним заходом в базу. */
 export async function statsFor(tgId: bigint): Promise<LibrarianStats> {
   const librarian = await prisma.librarian.findUnique({ where: { tgId }, select: { id: true } })
-  const [booksOnShelf, given, returned, read, reviews] = await Promise.all([
-    librarian
-      ? prisma.book.count({
-          where: { ownerId: librarian.id, active: true, reviewStatus: 'approved' },
-        })
-      : Promise.resolve(0),
-    prisma.loan.count({ where: { ownerTg: tgId } }),
-    prisma.loan.count({ where: { ownerTg: tgId, status: 'returned' } }),
-    prisma.loan.count({ where: { holderTg: tgId, status: 'returned' } }),
-    prisma.review.count({ where: { authorTg: tgId } }),
-  ])
-  return { booksOnShelf, given, returned, read, reviews }
+  const [booksOnShelf, given, returned, read, reviews, readerRows, onTime, myBooks] =
+    await Promise.all([
+      librarian
+        ? prisma.book.count({
+            where: { ownerId: librarian.id, active: true, reviewStatus: 'approved' },
+          })
+        : Promise.resolve(0),
+      prisma.loan.count({ where: { ownerTg: tgId } }),
+      prisma.loan.count({ where: { ownerTg: tgId, status: 'returned' } }),
+      prisma.loan.count({ where: { holderTg: tgId, status: 'returned' } }),
+      prisma.review.count({ where: { authorTg: tgId } }),
+      // «книжный друг» считает ЛЮДЕЙ, а не выдачи: десять книг одному человеку
+      // это не то же самое, что по книге десятерым
+      prisma.loan.findMany({
+        where: { ownerTg: tgId },
+        select: { holderTg: true, holderUsername: true },
+        take: 500,
+      }),
+      // «в срок» — только там, где срок вообще договаривались: выдача без dueAt
+      // не может быть ни просроченной, ни возвращённой вовремя
+      prisma.loan.count({
+        where: { ownerTg: tgId, status: 'returned', dueAt: { not: null }, returnedAt: { not: null } },
+      }),
+      librarian
+        ? prisma.book.findMany({
+            where: { ownerId: librarian.id, active: true, reviewStatus: 'approved' },
+            select: { title: true, author: true },
+            take: 500,
+          })
+        : Promise.resolve([]),
+    ])
+
+  const readers = new Set(
+    readerRows.map((l) => (l.holderTg ? `id:${l.holderTg}` : `nick:${l.holderUsername ?? ''}`)),
+  )
+  readers.delete('nick:')
+
+  return {
+    booksOnShelf,
+    given,
+    returned,
+    read,
+    reviews,
+    readers: readers.size,
+    onTime: await countOnTime(tgId, onTime),
+    topRated: await countTopRated(tgId, myBooks),
+  }
+}
+
+/**
+ * Сколько книг вернулись в срок. Считаем сравнением дат, а не флагом: срок
+ * могли сдвинуть, а запись о возврате честнее любого счётчика.
+ */
+async function countOnTime(tgId: bigint, candidates: number): Promise<number> {
+  if (!candidates) return 0
+  const rows = await prisma.loan.findMany({
+    where: { ownerTg: tgId, status: 'returned', dueAt: { not: null }, returnedAt: { not: null } },
+    select: { dueAt: true, returnedAt: true },
+    take: 500,
+  })
+  return rows.filter((l) => l.returnedAt! <= l.dueAt!).length
+}
+
+/**
+ * Сколько раз книгу с полки оценили на пять. Оценка живёт на произведении
+ * (см. reviews.ts), поэтому и здесь ключ — произведение; свои пятёрки не
+ * считаются, иначе значок выдавал бы себе сам владелец.
+ */
+async function countTopRated(
+  tgId: bigint,
+  books: { title: string; author: string | null }[],
+): Promise<number> {
+  if (!books.length) return 0
+  const keys = [...new Set(books.map(workKeyOf))]
+  return prisma.review.count({
+    where: { workKey: { in: keys }, rating: 5, status: 'visible', authorTg: { not: tgId } },
+  })
 }
 
 /** Значки человека: статистика плюс её прочтение. */

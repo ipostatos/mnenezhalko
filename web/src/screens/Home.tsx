@@ -99,6 +99,13 @@ export function Home({
       route: { name: 'loans' },
     },
     {
+      icon: 'award',
+      tone: '#c98a2e',
+      title: 'Мои достижения',
+      sub: 'Значки за книги, выдачи и отзывы',
+      route: { name: 'badges' },
+    },
+    {
       icon: 'shelf',
       tone: '#4b82b8',
       title: 'Моя полка',

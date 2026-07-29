@@ -26,7 +26,7 @@ execSync('npx prisma db push --skip-generate --accept-data-loss --schema prisma/
 })
 
 const { prisma } = await import('./db.js')
-const { digest } = await import('./digest.js')
+const { digest, isFresh } = await import('./digest.js')
 
 /** «Сейчас» в тестах фиксировано: дайджест не должен зависеть от часа прогона. */
 const NOW = new Date('2026-07-29T12:00:00Z').getTime()
@@ -153,4 +153,27 @@ test('первое наполнение базы не превращает ве�
 test('книга без даты в таблице проекта считается по нашей', async () => {
   await book({ title: 'Без даты', addedAt: null, createdAt: hoursAgo(5) })
   assert.equal((await digest('day', undefined, 20, NOW)).total, 1)
+})
+
+/* ── значок «Новинка» на обложке ────────────────────────── */
+
+test('значок «Новинка»: свежая книга да, старая нет', () => {
+  const since = new Date(NOW - 7 * 24 * 3600_000)
+  assert.equal(isFresh({ addedAt: hoursAgo(20), createdAt: hoursAgo(20) }, since), true)
+  assert.equal(isFresh({ addedAt: hoursAgo(24 * 30), createdAt: hoursAgo(24 * 30) }, since), false)
+})
+
+test('значок «Новинка» не вешается на весь каталог, залитый в базу разом', () => {
+  // то же правило, что у подборки новинок: если бы значок смотрел только на
+  // «когда появилось у нас», после переналивки базы новинками стали бы все 3249
+  const since = new Date(NOW - 7 * 24 * 3600_000)
+  assert.equal(isFresh({ addedAt: hoursAgo(24 * 200), createdAt: hoursAgo(2) }, since), false)
+  // а книга, вписанная на днях и подхваченная сверкой сегодня, — новинка
+  assert.equal(isFresh({ addedAt: hoursAgo(24 * 8), createdAt: hoursAgo(2) }, since), true)
+})
+
+test('книга без даты в таблице проекта судится по нашей и здесь тоже', () => {
+  const since = new Date(NOW - 7 * 24 * 3600_000)
+  assert.equal(isFresh({ addedAt: null, createdAt: hoursAgo(3) }, since), true)
+  assert.equal(isFresh({ addedAt: null, createdAt: hoursAgo(24 * 20) }, since), false)
 })

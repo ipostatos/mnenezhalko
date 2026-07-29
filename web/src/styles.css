@@ -1496,7 +1496,8 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 }
 
 /* ── значки библиотекаря (issue #11) ───────────────────────
-   горизонтальная лента: заработанные цветные, остальные бледные с прогрессом */
+   картинки нарисованы заказчиком; название значка написано НА картинке,
+   поэтому подписи под ней нет — только подсказка или прогресс */
 .badges {
   margin-bottom: var(--sp-4);
 }
@@ -1512,37 +1513,153 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   display: none;
 }
 
+/* на своём экране значки лежат сеткой: их десять, лента бы не помогла */
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
 .badge {
   flex: 0 0 auto;
-  width: 104px;
-  padding: var(--sp-3) var(--sp-2);
+  /* 100px: на экране 390 помещаются три с половиной карточки, и обрезанный
+     край сам показывает, что ленту можно листать */
+  width: 100px;
+  padding: var(--sp-2);
   border-radius: var(--r-md);
   background: var(--card);
   border: 1px solid var(--border);
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
 }
 
+.badge.big {
+  width: auto;
+  padding: var(--sp-3) var(--sp-2);
+}
+
+/* незаработанный значок бледный, но не спрятанный: видно, к чему идти */
 .badge.locked {
-  opacity: 0.45;
-  filter: grayscale(1);
+  opacity: 0.5;
+  filter: grayscale(0.85);
+}
+
+.badge-img {
+  width: 100%;
+  max-width: 96px;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+  /* картинки нарисованы на светлом фоне — растворяем его в фирменном креме */
+  mix-blend-mode: multiply;
+}
+
+.badge.big .badge-img {
+  max-width: 148px;
 }
 
 .badge-emoji {
-  font-size: 22px;
+  font-size: 34px;
   line-height: 1.2;
-}
-
-.badge-title {
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  color: var(--text);
 }
 
 .badge-hint {
   font-size: 11px;
   color: var(--hint);
   line-height: 1.3;
+}
+
+.badge-hint.got {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+/* ── закладка на обложке (рисунки заказчика) ───────────────
+   висит справа сверху и слегка свешивается за верхний край, как настоящая
+   закладка в книге; показывается только на крупных обложках */
+.cover.lg,
+.cc-item {
+  position: relative;
+}
+
+/* правило .cover img растянуло бы закладку на всю обложку — селектор ниже
+   специфичнее, поэтому размеры остаются её собственными */
+.cover .book-tag,
+.cc-item .book-tag,
+.book-tag {
+  position: absolute;
+  top: -6px;
+  right: 6px;
+  /* 60%: закладка должна читаться, но не закрывать саму обложку */
+  height: 60%;
+  width: auto;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 6px rgba(74, 47, 40, 0.22));
+  z-index: 2;
+}
+
+/* в карусели обложка меньше — закладка тоже скромнее */
+.cc-item .book-tag {
+  height: 52%;
+  right: 5px;
+}
+
+/* ── инструкция новичка (перенесена из Notion в приложение) ── */
+.guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.guide-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.guide-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.guide-num {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.guide-body {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.guide-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--hint);
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--accent-soft);
+}
+
+.guide-step .btn.ghost.sm {
+  align-self: flex-start;
+  width: auto;
 }

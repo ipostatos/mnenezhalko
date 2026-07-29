@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 import { norm, prisma } from './db.js'
 import { CARD_W, CAROUSEL_W, proxyCover } from './imgcache.js'
 import { ratingsFor, workKeyOf, type Rating } from './reviews.js'
+import { NEW_BADGE_DAYS, isFresh } from './digest.js'
 
 export type SearchParams = {
   q?: string
@@ -35,6 +36,8 @@ export type BookCard = {
   notionStatus: string
   /** оценка произведения: средняя и число оценок; null — ещё никто не оценил */
   rating: Rating | null
+  /** книга появилась в проекте на днях — на обложке висит значок «Новинка» */
+  isNew: boolean
   owner: {
     id: string
     name: string
@@ -91,6 +94,8 @@ export function toCard(b: any, opts?: { w?: number; rating?: Rating | null }): B
     rejectionReason: b.rejectionReason ?? null,
     notionStatus: b.notionStatus ?? 'local',
     rating: opts?.rating ?? null,
+    // значок «Новинка» на обложке; правило то же, что у подборки новинок
+    isNew: isFresh(b, new Date(Date.now() - NEW_BADGE_DAYS * 86400_000)),
     owner: b.owner ?? null,
   }
 }

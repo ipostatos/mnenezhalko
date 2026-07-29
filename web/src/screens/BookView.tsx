@@ -6,6 +6,7 @@ import { haptic, openTg } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
 import { Reviews, Stars } from './Reviews'
 import { WaitBlock } from './WaitBlock'
+import { BookTag } from './BookTag'
 
 export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
   const [book, setBook] = useState<Book | null>(null)
@@ -43,6 +44,7 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
           ) : (
             <span>{book.title.slice(0, 1).toUpperCase()}</span>
           )}
+          <BookTag book={book} />
         </div>
         <div className="grow">
           <h1>{book.title}</h1>
