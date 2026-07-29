@@ -88,6 +88,16 @@ export async function exportMyData(tgId: bigint) {
       prisma.event.findMany({ where: { createdBy: tgId }, orderBy: { createdAt: 'asc' } }),
     ])
 
+  // ограничения и решения модераторов — тоже данные о человеке, и в выгрузке
+  // им место наравне с книгами и выдачами
+  const [restrictions, decisions] = await Promise.all([
+    prisma.userRestriction.findMany({ where: { userTg: tgId }, orderBy: { createdAt: 'asc' } }),
+    prisma.moderationAction.findMany({
+      where: { targetUserTg: tgId },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ])
+
   const loan = (l: (typeof given)[number], role: 'дал почитать' | 'взял почитать') => ({
     role,
     книга: l.title,
@@ -159,7 +169,45 @@ export async function exportMyData(tgId: bigint) {
       когда: iso(m.createdAt),
     })),
     встречи: events.map((e) => ({ название: e.title, когда: iso(e.startsAt) })),
+    ограничения_и_модерация: {
+      состояние_аккаунта: user?.accountStatus ?? 'нет профиля',
+      заблокирован: user?.accountStatus === 'banned',
+      причина_блокировки: user?.banReason ?? null,
+      когда_заблокирован: iso(user?.bannedAt),
+      ограничения: restrictions.map((r) => ({
+        что_закрыто: r.scope,
+        причина: r.reason,
+        поставлено: iso(r.createdAt),
+        действует_до: iso(r.expiresAt),
+        снято: iso(r.liftedAt),
+      })),
+      // кто именно из админов принял решение, наружу не отдаём: это данные о
+      // модераторе, а не о вас
+      решения_по_мне: decisions.map((a) => ({
+        что: a.action,
+        к_чему: a.targetType,
+        причина: a.reason,
+        когда: iso(a.createdAt),
+      })),
+    },
   }
+}
+
+/**
+ * Вычищает из свободного текста имя, ник и id человека.
+ *
+ * Причину ограничения модератор пишет руками, и «спам от @vasya» после удаления
+ * данных Васи хранить нельзя. Полностью текст не выбрасываем: без него журнал
+ * решений перестаёт что-либо объяснять.
+ */
+export function scrubPersonal(text: string, identifiers: string[]): string {
+  let out = text
+  for (const id of identifiers) {
+    if (!id) continue
+    const safe = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    out = out.replace(new RegExp(`@?${safe}`, 'gi'), ERASED_NAME)
+  }
+  return out
 }
 
 /* ── удаление ─────────────────────────────────────────────── */
@@ -273,6 +321,13 @@ export async function deleteMyData(
 
   const workKeys = [...new Set(reviews.map((r) => r.workKey))]
 
+  // по этим строкам чистим свободный текст модераторов: там мог оказаться ник
+  // или имя человека, а обещание «удалим данные» распространяется и на них
+  const me = await prisma.user.findUnique({ where: { tgId } })
+  const identifiers = [String(tgId), me?.username ?? '', me?.firstName ?? '', librarian?.name ?? '']
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 3)
+
   await prisma.$transaction(async (tx) => {
     // 1. только его: очереди, жалобы, отзывы, объявления
     await tx.waiting.deleteMany({ where: { userTg: tgId } })
@@ -347,11 +402,37 @@ export async function deleteMyData(
       })
     }
 
-    // 6. сам профиль
+    // 6. журнал модерации: сам факт решения в истории остаётся (иначе нельзя
+    //    объяснить, почему что-то было скрыто), но человек в нём исчезает.
+    //    Вместо id — тот же отпечаток HMAC, что и в журнале удалений: сверить
+    //    «то же ли это лицо» можно, восстановить id нельзя
+    const hash = tgHash(tgId)
+    const mine = await tx.moderationAction.findMany({
+      where: { OR: [{ targetUserTg: tgId }, { actorTg: tgId }] },
+    })
+    for (const a of mine) {
+      await tx.moderationAction.update({
+        where: { id: a.id },
+        data: {
+          targetUserTg: a.targetUserTg === tgId ? null : a.targetUserTg,
+          targetHash: a.targetUserTg === tgId ? hash : a.targetHash,
+          actorTg: a.actorTg === tgId ? null : a.actorTg,
+          actorHash: a.actorTg === tgId ? hash : a.actorHash,
+          // причину и подробности пишет человек руками: там могли оказаться имя
+          // и ник, и после обещания «удалим» им там не место
+          reason: scrubPersonal(a.reason, identifiers),
+          meta: a.meta ? scrubPersonal(a.meta, identifiers) : null,
+        },
+      })
+    }
+    // письма, которые так и не ушли, после удаления отправлять некому
+    await tx.notificationOutbox.deleteMany({ where: { recipientTg: tgId } })
+
+    // 7. сам профиль
     await tx.user.deleteMany({ where: { tgId } })
 
-    // 7. журнал: только хэш, чтобы повторить удаление после восстановления копии
-    const hash = tgHash(tgId)
+    // 8. журнал удалений: только отпечаток, чтобы повторить удаление после
+    //    восстановления резервной копии
     await tx.deletionRequest.upsert({
       where: { tgHash: hash },
       create: { tgHash: hash, completedAt: new Date(), summary: JSON.stringify(summary) },

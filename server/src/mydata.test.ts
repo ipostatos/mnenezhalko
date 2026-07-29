@@ -73,6 +73,9 @@ beforeEach(async () => {
   await prisma.marketItem.deleteMany()
   await prisma.deletionRequest.deleteMany()
   await prisma.waiting.deleteMany()
+  await prisma.notificationOutbox.deleteMany()
+  await prisma.moderationAction.deleteMany()
+  await prisma.userRestriction.deleteMany()
   await prisma.user.deleteMany()
   for (const [tgId, username] of [
     [ME, 'me'],
@@ -320,6 +323,65 @@ test('отпечаток в журнале — HMAC с отдельным сек
   // тот же id — тот же отпечаток, иначе повторное применение не сработает
   assert.equal(tgHash(ME), tgHash(ME))
   assert.notEqual(tgHash(ME), tgHash(FRIEND))
+})
+
+test('выгрузка показывает ограничения и решения по человеку', async () => {
+  const { restrictUser } = await import('./moderation.js')
+  await prisma.user.create({ data: { tgId: 970099n, username: 'admin' } })
+  await restrictUser({
+    actorTg: 970099n,
+    targetTg: ME,
+    scope: 'reviews',
+    reason: 'спам в отзывах',
+    days: 7,
+  })
+
+  const dump: any = await exportMyData(ME)
+  assert.equal(dump.ограничения_и_модерация.состояние_аккаунта, 'active')
+  assert.equal(dump.ограничения_и_модерация.ограничения.length, 1)
+  assert.equal(dump.ограничения_и_модерация.ограничения[0].что_закрыто, 'reviews')
+  assert.equal(dump.ограничения_и_модерация.решения_по_мне.length, 1)
+  assert.equal(dump.ограничения_и_модерация.решения_по_мне[0].что, 'restrict')
+  // кто именно из админов решил — это данные о модераторе, не о человеке
+  assert.ok(!JSON.stringify(dump.ограничения_и_модерация.решения_по_мне).includes('970099'))
+})
+
+test('удаление обезличивает журнал модерации, но не стирает историю решений', async () => {
+  const { restrictUser } = await import('./moderation.js')
+  await prisma.user.update({ where: { tgId: ME }, data: { username: 'vasya', firstName: 'Вася' } })
+  await prisma.user.create({ data: { tgId: 970099n, username: 'admin' } })
+  await restrictUser({
+    actorTg: 970099n,
+    targetTg: ME,
+    scope: 'reviews',
+    reason: 'спам от @vasya, жалобы на Вася',
+  })
+
+  await deleteMyData(ME)
+
+  const log = await prisma.moderationAction.findMany()
+  assert.equal(log.length, 1, 'сам факт решения остаётся: без него ничего не объяснить')
+  assert.equal(log[0].targetUserTg, null, 'сырого Telegram id в журнале больше нет')
+  assert.equal(log[0].targetHash, tgHash(ME))
+  assert.ok(!log[0].reason.includes('vasya'), 'ник вычищен из причины')
+  assert.ok(!log[0].reason.includes('Вася'), 'имя вычищено из причины')
+  assert.match(log[0].reason, /спам от/, 'смысл решения сохранён')
+  // ограничения ушли вместе с профилем (каскадом)
+  assert.equal(await prisma.userRestriction.count({ where: { userTg: ME } }), 0)
+  // и неотправленные письма человеку тоже
+  assert.equal(await prisma.notificationOutbox.count({ where: { recipientTg: ME } }), 0)
+})
+
+test('решения удалившегося АДМИНА тоже обезличиваются', async () => {
+  const { restrictUser } = await import('./moderation.js')
+  await restrictUser({ actorTg: ME, targetTg: FRIEND, scope: 'reviews', reason: 'спам' })
+
+  await deleteMyData(ME)
+
+  const log = await prisma.moderationAction.findFirstOrThrow()
+  assert.equal(log.actorTg, null)
+  assert.equal(log.actorHash, tgHash(ME))
+  assert.equal(log.targetUserTg, FRIEND, 'вторая сторона решения не пострадала')
 })
 
 test('ручка удаления требует осознанного подтверждения', async () => {

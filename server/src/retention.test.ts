@@ -39,6 +39,9 @@ const IDLE = 980002n
 before(async () => {})
 
 beforeEach(async () => {
+  await prisma.notificationOutbox.deleteMany()
+  await prisma.moderationAction.deleteMany()
+  await prisma.userRestriction.deleteMany()
   await prisma.reviewReport.deleteMany()
   await prisma.review.deleteMany()
   await prisma.waiting.deleteMany()
@@ -206,6 +209,54 @@ test('профиль с историей выдач не удаляется да
   const r = await applyRetention(NOW)
   assert.equal(r.профилей_удалено, 0)
   assert.equal(await prisma.user.count({ where: { tgId: IDLE } }), 1)
+})
+
+test('старые решения модераторов уходят, свежие остаются', async () => {
+  await prisma.moderationAction.create({
+    data: {
+      actorTg: ACTIVE,
+      targetUserTg: IDLE,
+      targetType: 'user',
+      action: 'restrict',
+      reason: 'давнее решение',
+      createdAt: daysAgo(RETENTION.moderationLogDays + 1),
+    },
+  })
+  await prisma.moderationAction.create({
+    data: {
+      actorTg: ACTIVE,
+      targetUserTg: IDLE,
+      targetType: 'user',
+      action: 'ban',
+      reason: 'свежее решение',
+      createdAt: daysAgo(10),
+    },
+  })
+
+  const r = await applyRetention(NOW)
+  assert.equal(r.решений_модерации_удалено, 1)
+  const left = await prisma.moderationAction.findMany()
+  assert.deepEqual(left.map((a) => a.reason), ['свежее решение'])
+})
+
+test('отправленные письма чистятся, неотправленные ждут', async () => {
+  await prisma.notificationOutbox.create({
+    data: {
+      recipientTg: IDLE,
+      kind: 'moderation',
+      payload: 'давно доставлено',
+      createdAt: daysAgo(60),
+      sentAt: daysAgo(60),
+    },
+  })
+  await prisma.notificationOutbox.create({
+    data: { recipientTg: IDLE, kind: 'moderation', payload: 'ещё не ушло', createdAt: daysAgo(60) },
+  })
+
+  const r = await applyRetention(NOW)
+  assert.equal(r.писем_удалено, 1)
+  const left = await prisma.notificationOutbox.findMany()
+  assert.deepEqual(left.map((n) => n.payload), ['ещё не ушло'])
 })
 
 test('на чистой базе чистка ничего не делает и говорит об этом', async () => {

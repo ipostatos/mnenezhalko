@@ -26,8 +26,8 @@ import {
   decideReview,
   explainVerdict,
   isScope,
+  flushNotices,
   moderationQueue,
-  notifyModerated,
   restrictUser,
   unbanUser,
   unrestrictUser,
@@ -394,7 +394,8 @@ export async function registerRoutes(app: FastifyInstance) {
     })
     // повторное нажатие не делает второго решения и честно говорит об этом
     if (!res.ok) return reply.code(res.code === 'not_found' ? 404 : 409).send({ error: res.code })
-    if (before?.authorTg) void notifyModerated(before.authorTg, res.notice)
+    // письмо уже лежит в очереди внутри той же транзакции — только подтолкнём отправку
+    void flushNotices()
     return json(res)
   })
 
@@ -414,7 +415,7 @@ export async function registerRoutes(app: FastifyInstance) {
       days: b.days ? Number(b.days) : null,
     })
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
-    void notifyModerated(targetTg, res.notice)
+    void flushNotices()
     return json(res)
   })
 
@@ -432,7 +433,7 @@ export async function registerRoutes(app: FastifyInstance) {
       reason: String(b.reason ?? ''),
     })
     if (!res.ok) return reply.code(409).send({ error: res.code })
-    void notifyModerated(targetTg, res.notice)
+    void flushNotices()
     return json(res)
   })
 
@@ -444,7 +445,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const targetTg = BigInt((req.params as { tgId: string }).tgId)
     const res = await banUser({ actorTg: u.id, targetTg, reason: String(b.reason ?? '') })
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
-    void notifyModerated(targetTg, res.notice)
+    void flushNotices()
     return json(res)
   })
 
@@ -456,7 +457,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const targetTg = BigInt((req.params as { tgId: string }).tgId)
     const res = await unbanUser({ actorTg: u.id, targetTg, reason: String(b.reason ?? '') })
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
-    void notifyModerated(targetTg, res.notice)
+    void flushNotices()
     return json(res)
   })
 

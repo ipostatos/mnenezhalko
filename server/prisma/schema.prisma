@@ -413,8 +413,14 @@ model UserRestriction {
 /// правятся и не удаляются — новое решение это новая строка.
 model ModerationAction {
   id           String   @id @default(cuid())
-  actorTg      BigInt
+  actorTg      BigInt?
   targetUserTg BigInt?
+  /// Отпечаток цели (HMAC, см. mydata.ts::tgHash). Появляется, когда человек
+  /// удалил свои данные: сам факт решения в истории остаётся, а сырого
+  /// Telegram id в журнале после обещания «удалим» быть не должно.
+  targetHash   String?
+  /// то же для автора решения, если свои данные удалил администратор
+  actorHash    String?
   /// user | review | book | market
   targetType   String
   targetId     String?
@@ -427,4 +433,24 @@ model ModerationAction {
 
   @@index([targetUserTg, createdAt])
   @@index([targetType, targetId])
+}
+
+/// Исходящие сообщения людям: решение записано, письмо ещё не ушло.
+///
+/// Между «решение сохранено» и «сообщение отправлено» процесс может упасть, и
+/// человек не узнает об ограничении. Поэтому письмо кладётся в ту же
+/// транзакцию, что и решение, а отправкой занимается фоновая джоба — тот же
+/// приём, что и с обещанием «сообщим, когда книга освободится» (waitlist.ts).
+model NotificationOutbox {
+  id          String    @id @default(cuid())
+  recipientTg BigInt
+  /// moderation | ... — на будущее, чтобы очередь годилась не только модерации
+  kind        String
+  payload     String
+  createdAt   DateTime  @default(now())
+  sentAt      DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+
+  @@index([sentAt, createdAt])
 }

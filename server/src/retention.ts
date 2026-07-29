@@ -25,6 +25,10 @@ export const RETENTION = {
   hiddenReviewDays: 30,
   /** жалобы на отзыв, который уже давно не скрыт */
   reportDays: 365,
+  /** решения модераторов: 12 месяцев после того, как ограничение перестало действовать */
+  moderationLogDays: 365,
+  /** отправленные письма о решениях: хранить их дальше незачем */
+  sentNoticeDays: 30,
 } as const
 
 export type RetentionReport = {
@@ -33,6 +37,8 @@ export type RetentionReport = {
   очередей_удалено: number
   отзывов_удалено: number
   жалоб_удалено: number
+  решений_модерации_удалено: number
+  писем_удалено: number
 }
 
 const ago = (days: number, now: number) => new Date(now - days * DAY)
@@ -49,6 +55,8 @@ export async function applyRetention(now = Date.now()): Promise<RetentionReport>
     очередей_удалено: 0,
     отзывов_удалено: 0,
     жалоб_удалено: 0,
+    решений_модерации_удалено: 0,
+    писем_удалено: 0,
   }
 
   // 1. Закрытые выдачи старше срока: строка остаётся историей обмена, люди из
@@ -124,6 +132,21 @@ export async function applyRetention(now = Date.now()): Promise<RetentionReport>
     const r = await prisma.user.deleteMany({ where: { tgId: { in: idle.map((u) => u.tgId) } } })
     report.профилей_удалено = r.count
   }
+
+  // 6. Журнал модерации: решение хранится год после того, как перестало
+  //    действовать. Дольше держать незачем, а раньше нельзя: по нему объясняют
+  //    человеку, почему его ограничили, и разбирают спорные случаи
+  const logCutoff = ago(RETENTION.moderationLogDays, now)
+  const oldLog = await prisma.moderationAction.deleteMany({
+    where: { createdAt: { lt: logCutoff } },
+  })
+  report.решений_модерации_удалено = oldLog.count
+
+  // 7. Отправленные письма о решениях
+  const sent = await prisma.notificationOutbox.deleteMany({
+    where: { sentAt: { lt: ago(RETENTION.sentNoticeDays, now) } },
+  })
+  report.писем_удалено = sent.count
 
   return report
 }

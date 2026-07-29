@@ -19,6 +19,7 @@
  *   — «Ваши данные»: выгрузка и удаление работают и у заблокированного, иначе
  *     блокировка превращалась бы в удержание чужих данных.
  */
+import { Prisma } from '@prisma/client'
 import { prisma } from './db.js'
 import { isAdmin } from './env.js'
 
@@ -147,8 +148,7 @@ export type ModerationResult<T extends string> =
   | { ok: true; notice: string; action: string }
   | { ok: false; code: T }
 
-/** Запись в неизменяемый журнал. Отдельной функцией, чтобы её нельзя было забыть. */
-export async function logModeration(entry: {
+export type ModerationEntry = {
   actorTg: bigint
   targetUserTg?: bigint | null
   targetType: 'user' | 'review' | 'book' | 'market'
@@ -156,8 +156,18 @@ export async function logModeration(entry: {
   action: string
   reason: string
   meta?: unknown
-}) {
-  return prisma.moderationAction.create({
+}
+
+/**
+ * Запись в неизменяемый журнал — ТОЛЬКО внутри транзакции решения.
+ *
+ * Раньше журнал писался после транзакции, и падение между ними давало
+ * действующее ограничение без единой записи о том, кто и почему его поставил.
+ * Инвариант «каждое решение записано» держится только тогда, когда изменение
+ * состояния и запись коммитятся вместе.
+ */
+export async function logModeration(tx: Prisma.TransactionClient, entry: ModerationEntry) {
+  return tx.moderationAction.create({
     data: {
       actorTg: entry.actorTg,
       targetUserTg: entry.targetUserTg ?? null,
@@ -168,6 +178,53 @@ export async function logModeration(entry: {
       meta: entry.meta === undefined ? null : JSON.stringify(entry.meta),
     },
   })
+}
+
+/**
+ * Письмо человеку кладётся в ту же транзакцию, что и решение.
+ *
+ * Отправить его прямо там нельзя (внешняя операция), а отправлять сразу после
+ * commit — значит потерять сообщение, если процесс упадёт между этими двумя
+ * шагами. Человек тогда не узнает, что ему что-то закрыли. Поэтому очередь:
+ * решение и намерение написать сохраняются вместе, отправкой занимается джоба.
+ */
+export async function queueNotice(
+  tx: Prisma.TransactionClient,
+  recipientTg: bigint,
+  text: string,
+) {
+  return tx.notificationOutbox.create({
+    data: { recipientTg, kind: 'moderation', payload: text },
+  })
+}
+
+/** Отправка накопленных писем. Зовётся джобой и сразу после решения. */
+export async function flushNotices(limit = 50): Promise<{ sent: number; failed: number }> {
+  const rows = await prisma.notificationOutbox.findMany({
+    where: { sentAt: null, attempts: { lt: 5 } },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+  })
+  let sent = 0
+  let failed = 0
+  for (const row of rows) {
+    if (!noticeSender) break
+    try {
+      await noticeSender(row.recipientTg, row.payload)
+      await prisma.notificationOutbox.update({
+        where: { id: row.id },
+        data: { sentAt: new Date(), attempts: { increment: 1 } },
+      })
+      sent++
+    } catch (e: any) {
+      failed++
+      await prisma.notificationOutbox.update({
+        where: { id: row.id },
+        data: { attempts: { increment: 1 }, lastError: String(e?.message ?? e).slice(0, 300) },
+      })
+    }
+  }
+  return { sent, failed }
 }
 
 /**
@@ -198,6 +255,14 @@ export async function restrictUser(opts: {
   // (поймано тестом на параллельные решения). Частичный уникальный индекс
   // «одно действующее ограничение на scope» в схеме Prisma не выразить, поэтому
   // сериализуем здесь
+  const until = expiresAt ? `до ${dateRu(expiresAt)}` : 'бессрочно'
+  const notice = [
+    `Вам временно закрыто: ${SCOPE_TITLES[opts.scope]} (${until}).`,
+    `Причина: ${opts.reason.trim()}.`,
+    'Остальным в проекте вы пользуетесь как обычно.',
+    'Если считаете решение ошибкой, напишите админам проекта.',
+  ].join('\n')
+
   const created = await prisma.$transaction(async (tx) => {
     const existing = await tx.userRestriction.findFirst({
       where: {
@@ -218,30 +283,20 @@ export async function restrictUser(opts: {
         expiresAt,
       },
     })
+    await logModeration(tx, {
+      actorTg: opts.actorTg,
+      targetUserTg: opts.targetTg,
+      targetType: 'user',
+      action: 'restrict',
+      reason: opts.reason.trim().slice(0, 300),
+      meta: { scope: opts.scope, days: opts.days ?? null },
+    })
+    await queueNotice(tx, opts.targetTg, notice)
     return true
   })
   if (!created) return { ok: false, code: 'already_restricted' }
 
-  await logModeration({
-    actorTg: opts.actorTg,
-    targetUserTg: opts.targetTg,
-    targetType: 'user',
-    action: 'restrict',
-    reason: opts.reason.trim().slice(0, 300),
-    meta: { scope: opts.scope, days: opts.days ?? null },
-  })
-
-  const until = expiresAt ? `до ${dateRu(expiresAt)}` : 'бессрочно'
-  return {
-    ok: true,
-    action: 'restrict',
-    notice: [
-      `Вам временно закрыто: ${SCOPE_TITLES[opts.scope]} (${until}).`,
-      `Причина: ${opts.reason.trim()}.`,
-      'Остальным в проекте вы пользуетесь как обычно.',
-      'Если считаете решение ошибкой, напишите админам проекта.',
-    ].join('\n'),
-  }
+  return { ok: true, action: 'restrict', notice }
 }
 
 /** Снять ограничение. Само ограничение не удаляется: история решений остаётся. */
@@ -254,27 +309,37 @@ export async function unrestrictUser(opts: {
 }): Promise<ModerationResult<'not_restricted' | 'no_reason'>> {
   const now = opts.now ?? new Date()
   if (!opts.reason.trim()) return { ok: false, code: 'no_reason' }
-  const rows = (await activeRestrictions(opts.targetTg, now)).filter((r) => r.scope === opts.scope)
-  if (!rows.length) return { ok: false, code: 'not_restricted' }
+  const notice = `Ограничение снято: ${SCOPE_TITLES[opts.scope]} снова доступно.`
 
-  await prisma.userRestriction.updateMany({
-    where: { id: { in: rows.map((r) => r.id) } },
-    data: { liftedAt: now, liftedByTg: opts.actorTg },
+  // условный переход состояния: снимаем только то, что ещё действует, и решаем
+  // по ЧИСЛУ изменённых строк. Два админа, нажавшие «снять» одновременно, иначе
+  // записали бы два решения и отправили два письма об одном и том же
+  const lifted = await prisma.$transaction(async (tx) => {
+    const r = await tx.userRestriction.updateMany({
+      where: {
+        userTg: opts.targetTg,
+        scope: opts.scope,
+        liftedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      data: { liftedAt: now, liftedByTg: opts.actorTg },
+    })
+    if (!r.count) return 0
+    // снятие чужого решения — тоже решение, и оно тоже попадает в журнал
+    await logModeration(tx, {
+      actorTg: opts.actorTg,
+      targetUserTg: opts.targetTg,
+      targetType: 'user',
+      action: 'unrestrict',
+      reason: opts.reason.trim().slice(0, 300),
+      meta: { scope: opts.scope, lifted: r.count },
+    })
+    await queueNotice(tx, opts.targetTg, notice)
+    return r.count
   })
-  // снятие чужого решения — тоже решение, и оно тоже попадает в журнал
-  await logModeration({
-    actorTg: opts.actorTg,
-    targetUserTg: opts.targetTg,
-    targetType: 'user',
-    action: 'unrestrict',
-    reason: opts.reason.trim().slice(0, 300),
-    meta: { scope: opts.scope, lifted: rows.length },
-  })
-  return {
-    ok: true,
-    action: 'unrestrict',
-    notice: `Ограничение снято: ${SCOPE_TITLES[opts.scope]} снова доступно.`,
-  }
+  if (!lifted) return { ok: false, code: 'not_restricted' }
+
+  return { ok: true, action: 'unrestrict', notice }
 }
 
 /**
@@ -297,12 +362,19 @@ export async function banUser(opts: {
 
   // проверка «уже заблокирован» и сама блокировка — одной транзакцией, иначе
   // два одновременных нажатия дадут две записи в журнале и два письма человеку
+  const notice = [
+    'Ваш доступ к проекту закрыт.',
+    `Причина: ${opts.reason.trim()}.`,
+    'Свои данные вы по-прежнему можете выгрузить и удалить на экране «Ваши данные».',
+    'Если считаете решение ошибкой, напишите админам проекта.',
+  ].join('\n')
+
   const banned = await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { tgId: opts.targetTg } })
     if (!user) return 'unknown_user' as const
-    if (user.accountStatus === 'banned') return 'already_banned' as const
-    await tx.user.update({
-      where: { tgId: opts.targetTg },
+    // условный переход: обновляем ТОЛЬКО пока человек ещё не заблокирован
+    const changed = await tx.user.updateMany({
+      where: { tgId: opts.targetTg, accountStatus: { not: 'banned' } },
       data: {
         accountStatus: 'banned',
         bannedAt: now,
@@ -310,26 +382,20 @@ export async function banUser(opts: {
         banReason: opts.reason.trim().slice(0, 300),
       },
     })
+    if (!changed.count) return 'already_banned' as const
+    await logModeration(tx, {
+      actorTg: opts.actorTg,
+      targetUserTg: opts.targetTg,
+      targetType: 'user',
+      action: 'ban',
+      reason: opts.reason.trim().slice(0, 300),
+    })
+    await queueNotice(tx, opts.targetTg, notice)
     return 'ok' as const
   })
   if (banned !== 'ok') return { ok: false, code: banned }
-  await logModeration({
-    actorTg: opts.actorTg,
-    targetUserTg: opts.targetTg,
-    targetType: 'user',
-    action: 'ban',
-    reason: opts.reason.trim().slice(0, 300),
-  })
-  return {
-    ok: true,
-    action: 'ban',
-    notice: [
-      'Ваш доступ к проекту закрыт.',
-      `Причина: ${opts.reason.trim()}.`,
-      'Свои данные вы по-прежнему можете выгрузить и удалить на экране «Ваши данные».',
-      'Если считаете решение ошибкой, напишите админам проекта.',
-    ].join('\n'),
-  }
+
+  return { ok: true, action: 'ban', notice }
 }
 
 export async function unbanUser(opts: {
@@ -338,22 +404,30 @@ export async function unbanUser(opts: {
   reason: string
 }): Promise<ModerationResult<'not_banned' | 'no_reason' | 'unknown_user'>> {
   if (!opts.reason.trim()) return { ok: false, code: 'no_reason' }
-  const user = await prisma.user.findUnique({ where: { tgId: opts.targetTg } })
-  if (!user) return { ok: false, code: 'unknown_user' }
-  if (user.accountStatus !== 'banned') return { ok: false, code: 'not_banned' }
+  const notice = 'Доступ к проекту восстановлен.'
 
-  await prisma.user.update({
-    where: { tgId: opts.targetTg },
-    data: { accountStatus: 'active', bannedAt: null, bannedByTg: null, banReason: null },
+  const res = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { tgId: opts.targetTg } })
+    if (!user) return 'unknown_user' as const
+    // тот же условный переход, что и у блокировки: решает число изменённых строк
+    const changed = await tx.user.updateMany({
+      where: { tgId: opts.targetTg, accountStatus: 'banned' },
+      data: { accountStatus: 'active', bannedAt: null, bannedByTg: null, banReason: null },
+    })
+    if (!changed.count) return 'not_banned' as const
+    await logModeration(tx, {
+      actorTg: opts.actorTg,
+      targetUserTg: opts.targetTg,
+      targetType: 'user',
+      action: 'unban',
+      reason: opts.reason.trim().slice(0, 300),
+    })
+    await queueNotice(tx, opts.targetTg, notice)
+    return 'ok' as const
   })
-  await logModeration({
-    actorTg: opts.actorTg,
-    targetUserTg: opts.targetTg,
-    targetType: 'user',
-    action: 'unban',
-    reason: opts.reason.trim().slice(0, 300),
-  })
-  return { ok: true, action: 'unban', notice: 'Доступ к проекту восстановлен.' }
+  if (res !== 'ok') return { ok: false, code: res }
+
+  return { ok: true, action: 'unban', notice }
 }
 
 /* ── очередь разбора ──────────────────────────────────────── */
@@ -471,49 +545,56 @@ export async function decideReview(opts: {
   const needsReason = opts.decision === 'hide' || opts.decision === 'delete'
   if (needsReason && !opts.reason.trim()) return { ok: false, code: 'no_reason' }
 
-  const review = await prisma.review.findUnique({ where: { id: opts.reviewId } })
-  if (!review) return { ok: false, code: 'not_found' }
-  if (opts.decision === 'hide' && review.status === 'hidden') {
-    return { ok: false, code: 'already_hidden' }
-  }
-  if (opts.decision === 'restore' && review.status === 'visible') {
-    return { ok: false, code: 'already_visible' }
-  }
-
   const reason = opts.reason.trim().slice(0, 300) || 'без комментария'
-
-  if (opts.decision === 'delete') {
-    await prisma.review.delete({ where: { id: opts.reviewId } })
-  } else if (opts.decision === 'hide') {
-    await prisma.review.update({
-      where: { id: opts.reviewId },
-      data: { status: 'hidden', hiddenAt: now, hiddenByTg: opts.actorTg },
-    })
-  } else if (opts.decision === 'restore' || opts.decision === 'dismiss') {
-    // «отклонить жалобы» и «вернуть» это одно и то же действие с разным смыслом:
-    // отзыв снова виден, накопленные жалобы обнуляются
-    await prisma.reviewReport.deleteMany({ where: { reviewId: opts.reviewId } })
-    await prisma.review.update({
-      where: { id: opts.reviewId },
-      data: { status: 'visible', hiddenAt: null, hiddenByTg: null, reports: 0 },
-    })
-  }
-
-  await logModeration({
-    actorTg: opts.actorTg,
-    targetUserTg: review.authorTg,
-    targetType: 'review',
-    targetId: opts.reviewId,
-    action: opts.decision,
-    reason,
-    meta: { workKey: review.workKey },
-  })
-
   const notices: Record<typeof opts.decision, string> = {
     hide: `Ваш отзыв скрыт модератором. Причина: ${reason}.`,
     delete: `Ваш отзыв удалён модератором. Причина: ${reason}.`,
     restore: 'Ваш отзыв снова виден: жалобы на него рассмотрены и отклонены.',
     dismiss: 'Ваш отзыв снова виден: жалобы на него рассмотрены и отклонены.',
   }
+
+  /**
+   * Переход состояния УСЛОВНЫЙ, решает число изменённых строк: два админа могут
+   * нажать «скрыть» одновременно, и «прочитал состояние → записал» дало бы два
+   * решения в журнале и два письма автору об одном и том же.
+   */
+  const outcome = await prisma.$transaction(async (tx) => {
+    const review = await tx.review.findUnique({ where: { id: opts.reviewId } })
+    if (!review) return { code: 'not_found' as const }
+
+    if (opts.decision === 'delete') {
+      const gone = await tx.review.deleteMany({ where: { id: opts.reviewId } })
+      if (!gone.count) return { code: 'not_found' as const }
+    } else if (opts.decision === 'hide') {
+      const changed = await tx.review.updateMany({
+        where: { id: opts.reviewId, status: 'visible' },
+        data: { status: 'hidden', hiddenAt: now, hiddenByTg: opts.actorTg },
+      })
+      if (!changed.count) return { code: 'already_hidden' as const }
+    } else {
+      // «вернуть» и «отклонить жалобы» это одно действие с разным смыслом:
+      // отзыв снова виден, накопленные жалобы обнуляются
+      const changed = await tx.review.updateMany({
+        where: opts.decision === 'restore' ? { id: opts.reviewId, status: 'hidden' } : { id: opts.reviewId },
+        data: { status: 'visible', hiddenAt: null, hiddenByTg: null, reports: 0 },
+      })
+      if (!changed.count) return { code: 'already_visible' as const }
+      await tx.reviewReport.deleteMany({ where: { reviewId: opts.reviewId } })
+    }
+
+    await logModeration(tx, {
+      actorTg: opts.actorTg,
+      targetUserTg: review.authorTg,
+      targetType: 'review',
+      targetId: opts.reviewId,
+      action: opts.decision,
+      reason,
+      meta: { workKey: review.workKey },
+    })
+    await queueNotice(tx, review.authorTg, notices[opts.decision])
+    return { code: 'ok' as const }
+  })
+
+  if (outcome.code !== 'ok') return { ok: false, code: outcome.code }
   return { ok: true, action: opts.decision, notice: notices[opts.decision] }
 }

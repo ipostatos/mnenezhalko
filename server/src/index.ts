@@ -22,6 +22,7 @@ import { startJobLoop } from './scheduler.js'
 import { coverPrewarmJob } from './prewarm.js'
 import { housekeepCovers } from './covers.js'
 import { applyRetention, describeRetention } from './retention.js'
+import { flushNotices } from './moderation.js'
 import { expireMarketItems } from './market.js'
 import { escalateStale, expireWaitings } from './waitlist.js'
 
@@ -171,6 +172,19 @@ startSyncLoop()
 // диск под превью обложек иначе растёт бесконечно (см. imgcache.ts) — не зависит от бота
 // прогрев превью всего каталога: людям — тёплые обложки, а не поход на CDN
 startJobLoop({ ...coverPrewarmJob, log: (m) => app.log.info(m), logError: (m) => app.log.error(m) })
+
+// письма о решениях модераторов: кладутся в очередь в одной транзакции с самим
+// решением, поэтому доходят даже если процесс упал сразу после решения
+startJobLoop({
+  name: 'moderation-notices',
+  periodMs: 5 * 60_000,
+  run: async () => {
+    const r = await flushNotices()
+    return r.sent || r.failed ? `отправлено ${r.sent}, не удалось ${r.failed}` : 'очередь пуста'
+  },
+  log: (m) => app.log.info(m),
+  logError: (m) => app.log.error(m),
+})
 
 // сроки хранения данных: приложение чистит их само, иначе обещание на экране
 // «Ваши данные» ничем не обеспечено (см. retention.ts)

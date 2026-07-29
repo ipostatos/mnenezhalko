@@ -12,6 +12,7 @@ import {
   decideReview,
   explainVerdict,
   isScope,
+  flushNotices,
   moderationQueue,
   setModerationNoticeSender,
   restrictUser,
@@ -2122,7 +2123,8 @@ bot.callbackQuery(/^rv:(hide|restore|delete|dismiss):(.+)$/, async (ctx) => {
   }
   await ctx.answerCallbackQuery({ text: 'Готово' })
   await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
-  if (before?.authorTg) await tellUser(before.authorTg, res.notice)
+  // письмо положено в очередь в той же транзакции, что и решение
+  await flushNotices()
 })
 
 /** Быстрая кнопка «закрыть автору отзывы» прямо из карточки разбора. */
@@ -2148,7 +2150,7 @@ bot.callbackQuery(/^rs:(\w+):(\d+)$/, async (ctx) => {
     return ctx.answerCallbackQuery({ text: texts[res.code] ?? res.code })
   }
   await ctx.answerCallbackQuery({ text: 'Ограничение поставлено' })
-  await tellUser(targetTg, res.notice)
+  await flushNotices()
 })
 
 /** `/restrict tgId область дней причина` (0 дней — бессрочно). */
@@ -2169,7 +2171,7 @@ bot.command('restrict', async (ctx) => {
     days: Number(days) > 0 ? Number(days) : null,
   })
   if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
-  await tellUser(BigInt(id), res.notice)
+  await flushNotices()
   await ctx.reply('Готово, человеку сообщили.')
 })
 
@@ -2187,7 +2189,7 @@ bot.command('unrestrict', async (ctx) => {
     reason,
   })
   if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
-  await tellUser(BigInt(id), res.notice)
+  await flushNotices()
   await ctx.reply('Ограничение снято, человеку сообщили.')
 })
 
@@ -2207,7 +2209,7 @@ bot.command('ban', async (ctx) => {
     }
     return ctx.reply(texts[res.code] ?? res.code)
   }
-  await tellUser(BigInt(id), res.notice)
+  await flushNotices()
   await ctx.reply('Заблокирован, человеку сообщили. Свои данные он забрать по-прежнему может.')
 })
 
@@ -2218,7 +2220,7 @@ bot.command('unban', async (ctx) => {
   if (!id || !reason) return ctx.reply('Формат: /unban tgId причина')
   const res = await unbanUser({ actorTg: BigInt(ctx.from!.id), targetTg: BigInt(id), reason })
   if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
-  await tellUser(BigInt(id), res.notice)
+  await flushNotices()
   await ctx.reply('Доступ восстановлен, человеку сообщили.')
 })
 
