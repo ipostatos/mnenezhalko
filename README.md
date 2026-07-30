@@ -291,6 +291,7 @@ npm run privacy:reapply -w server -- /opt/backups/mnenezhalko/deletion-journal.c
 | `GOOGLE_BOOKS_KEY` | бесплатный ключ Google Books. **Без него русские издания по ISBN почти не находятся**: OpenLibrary их не знает, а Google Books на анонимные запросы отвечает `429` (общая квота). Польские издания находятся и без ключа — через каталог Biblioteka Narodowa |
 | `CLUB_URL` | страница книжного клуба «Книжная Клумба» (кнопка в меню бота и `/club`) |
 | `PRIVACY_DELETION_PEPPER` | секрет для отпечатков в журнале удалений. По умолчанию выводится из `BOT_TOKEN`; на проде задаётся явно, чтобы журнал не читался при утечке токена |
+| `MONITOR_PING_TOKEN` | общий секрет внешнего монитора. Пока не задан, ручка `POST /api/monitor/ping` не существует (404), а проверка `observe-local.sh` предупреждает, что снаружи прод никто не проверяет. См. `docs/MONITORING.md` |
 | `ADMIN_IDS` | Telegram id админов через запятую (`/sync`, `/addgroup`, `/addevent`) |
 | `NOTION_*` | id коллекций и вью Notion (значения по умолчанию уже верные) |
 

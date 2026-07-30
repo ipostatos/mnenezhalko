@@ -85,9 +85,16 @@ import { badgesOf } from './badges.js'
 import { suggestPeople } from './people.js'
 import { impact } from './impact.js'
 import { prewarmCoverage } from './prewarm.js'
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import sharp from 'sharp'
 import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
+
+/**
+ * Ключ отметки внешнего монитора в SyncState. Одна строка на всех: её пишет
+ * ручка `/api/monitor/ping`, читает проверка `scripts/observe-local.sh`.
+ * Имя держим здесь, чтобы у ручки и у проверки был один источник правды.
+ */
+export const MONITOR_PING_KEY = 'monitor:external'
 
 /**
  * Единая проверка прав перед действием: заблокирован ли человек и не закрыто ли
@@ -296,6 +303,36 @@ export async function registerRoutes(app: FastifyInstance) {
       version: env.version,
       sha: env.releaseSha,
     }
+  })
+
+  /**
+   * Отметка внешнего монитора: «снаружи заходили, прод отвечает».
+   *
+   * Зачем запись, если монитор и так всё видит: у двух сторожей разные слепые
+   * зоны. Внутренний watchdog не увидит смерть машины, внешний — собственное
+   * выключение (расписание GitHub засыпает после 60 дней без коммитов, секрет
+   * можно случайно удалить). Тишина снаружи неотличима от «всё хорошо», пока
+   * кто-то изнутри не спросит «а когда ко мне последний раз заходили».
+   *
+   * Ручка намеренно бедная: ни тела, ни параметров — только время последнего
+   * захода в SyncState. Без настроенного токена её нет вовсе.
+   */
+  app.post('/api/monitor/ping', async (req, reply) => {
+    if (!env.monitorToken) return reply.code(404).send({ error: 'not_configured' })
+    const given = String(req.headers['x-monitor-token'] ?? '')
+    // сравнение постоянного времени: побайтовое «равно» на секрете подсказывает
+    // перебором, сколько знаков угадано
+    const a = createHash('sha256').update(given).digest()
+    const b = createHash('sha256').update(env.monitorToken).digest()
+    if (!timingSafeEqual(a, b)) return reply.code(401).send({ error: 'unauthorized' })
+    await prisma.syncState
+      .upsert({
+        where: { key: MONITOR_PING_KEY },
+        update: { value: new Date().toISOString() },
+        create: { key: MONITOR_PING_KEY, value: new Date().toISOString() },
+      })
+      .catch(() => null)
+    return { ok: true }
   })
 
   app.post('/api/me', async (req, reply) => {

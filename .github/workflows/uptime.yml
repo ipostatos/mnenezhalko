@@ -1,0 +1,52 @@
+name: uptime
+
+# Проверка прода СНАРУЖИ. Внутренний watchdog живёт на той же машине, что и
+# приложение, поэтому смерть машины, пропажу сети и протухший сертификат он
+# по построению не увидит: нет машины — нет и проверки. Этот запуск состоится
+# на чужой инфраструктуре и увидит ровно то, что видит человек с телефона.
+#
+# Сигналы, по убыванию надёжности:
+#   1. упавшая джоба — GitHub сам пишет владельцу репозитория письмо;
+#   2. сообщение в Telegram, если заданы секреты MONITOR_BOT_TOKEN и MONITOR_CHAT_ID
+#      (см. docs/MONITORING.md — бот для тревог заводится ОТДЕЛЬНЫЙ от рабочего).
+#
+# ⚠️ Расписание GitHub не обещает точности: запуск может задержаться на
+# несколько минут при загрузке очереди. Для «жив ли сервер» этого достаточно.
+# ⚠️ В публичном репозитории расписание выключается после 60 дней без коммитов —
+# об этом написано в docs/MONITORING.md, там же как включить обратно.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # история прошлых запусков: по ней решается, писать или молчать
+
+# два обхода одновременно рассказали бы людям про одно и то же состояние дважды
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # без npm ci: проверке не нужны зависимости проекта, и это принципиально —
+      # монитор должен подниматься, даже когда со сборкой репозитория что-то не так
+      - name: Проверка прода снаружи
+        env:
+          MONITOR_URL: ${{ vars.MONITOR_URL || 'https://mnenezhalko-46-224-220-94.sslip.io' }}
+          MONITOR_BOT_TOKEN: ${{ secrets.MONITOR_BOT_TOKEN }}
+          MONITOR_CHAT_ID: ${{ secrets.MONITOR_CHAT_ID }}
+          MONITOR_PING_TOKEN: ${{ secrets.MONITOR_PING_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/uptime-check.mjs
