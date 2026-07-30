@@ -36,7 +36,9 @@ NOW="${OBSERVE_NOW:-$(date +%s)}"
 # разойтись в выводе и прислать людям два разных сообщения об одном состоянии.
 if [ -z "${OBSERVE_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
   mkdir -p "$(dirname "$LOCK")" 2>/dev/null || true
-  OBSERVE_LOCKED=1 flock -n -E 99 "$LOCK" "$0" "$@"
+  # через bash явно: exec-бит у скрипта может быть не выставлен (файлы
+  # приезжают из архива), а запуск «flock … $0» тогда падал бы Permission denied
+  OBSERVE_LOCKED=1 flock -n -E 99 "$LOCK" bash "$0" "$@"
   rc=$?
   if [ "$rc" -eq 99 ]; then
     echo "предыдущая проверка ещё идёт — пропускаю запуск"
