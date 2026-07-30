@@ -20,6 +20,7 @@ import {
   shelfState,
 } from './publish.js'
 import { digest } from './digest.js'
+import { removeMarketItem } from './market.js'
 import { getTaxonomy } from './taxonomy.js'
 import { deleteMyData, exportMyData } from './mydata.js'
 import {
@@ -410,6 +411,25 @@ export async function registerRoutes(app: FastifyInstance) {
   })
 
   /** Ограничить участнику одно действие. */
+  /**
+   * Снять карточку барахолки. То же ядро, что у команды бота
+   * (`/market_remove`): второе понимание слова «снято» не заводим.
+   */
+  app.post('/api/admin/market/:id/remove', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { reason?: string }
+    const res = await removeMarketItem({ actorTg: u.id, id, reason: String(b.reason ?? '') })
+    if (!res.ok) {
+      const code = res.code === 'no_reason' ? 400 : res.code === 'not_found' ? 404 : 409
+      return reply.code(code).send({ error: res.code })
+    }
+    void flushNotices()
+    return json({ ok: true, id: res.item.id })
+  })
+
   app.post('/api/admin/users/:tgId/restrict', async (req, reply) => {
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
