@@ -30,7 +30,18 @@ execSync('npx prisma db push --skip-generate --accept-data-loss --schema prisma/
 
 const { prisma } = await import('./db.js')
 const { env } = await import('./env.js')
-const { registerRoutes, MONITOR_PING_KEY } = await import('./routes.js')
+const { registerRoutes, MONITOR_PING_KEY, MONITOR_PING_SCHEDULE_KEY, MONITOR_PING_FIRST_KEY } =
+  await import('./routes.js')
+
+const ping = (source?: string) =>
+  app.inject({
+    method: 'POST',
+    url: source ? `/api/monitor/ping?source=${source}` : '/api/monitor/ping',
+    headers: { 'x-monitor-token': 'test-monitor-token' },
+  })
+
+const valueOf = async (key: string) =>
+  (await prisma.syncState.findUnique({ where: { key } }))?.value ?? null
 
 const app = Fastify()
 
@@ -90,6 +101,37 @@ test('правильный токен — 200 и время захода в Sync
   assert.ok(row, 'отметка должна появиться')
   const age = Date.now() - new Date(row!.value).getTime()
   assert.ok(age >= 0 && age < 60_000, `время захода должно быть свежим, получено ${row!.value}`)
+})
+
+test('ручной прогон НЕ обновляет отметку расписания', async () => {
+  // иначе один ручной прогон раз в месяц маскировал бы выключенное расписание —
+  // ровно ту дыру, ради которой отметка и заводилась
+  await ping('schedule')
+  const sched = await valueOf(MONITOR_PING_SCHEDULE_KEY)
+  assert.ok(sched, 'заход по расписанию должен отметиться')
+
+  await new Promise((r) => setTimeout(r, 5))
+  const res = await ping('manual')
+  assert.equal(res.json().source, 'manual')
+  assert.equal(await valueOf(MONITOR_PING_SCHEDULE_KEY), sched, 'отметка расписания не должна двигаться')
+  assert.notEqual(await valueOf(MONITOR_PING_KEY), sched, 'общая отметка должна обновиться')
+})
+
+test('источник без имени и незнакомый источник считаются ручными', async () => {
+  const before = await valueOf(MONITOR_PING_SCHEDULE_KEY)
+  assert.equal((await ping()).json().source, 'manual')
+  assert.equal((await ping('cron-like-nonsense')).json().source, 'manual')
+  assert.equal(await valueOf(MONITOR_PING_SCHEDULE_KEY), before)
+})
+
+test('время первого захода не переписывается никогда', async () => {
+  // это точка отсчёта «сколько уже молчит расписание»: сдвинется она —
+  // и «расписание не работает вторые сутки» навсегда останется «только настроили»
+  const first = await valueOf(MONITOR_PING_FIRST_KEY)
+  assert.ok(first)
+  await new Promise((r) => setTimeout(r, 5))
+  await ping('schedule')
+  assert.equal(await valueOf(MONITOR_PING_FIRST_KEY), first)
 })
 
 test('повторный заход обновляет ту же строку, а не плодит новые', async () => {

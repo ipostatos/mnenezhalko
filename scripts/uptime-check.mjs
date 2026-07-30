@@ -250,7 +250,41 @@ export async function probeOnce(base) {
   }
 }
 
+/* ─────────────────────── ручной прогон против расписания ────────────────── */
+
+/**
+ * Ручной прогон — это диагностика, а не наблюдение. Смешивать их нельзя
+ * в обе стороны:
+ *
+ *   • ручной зелёный прогон посреди аварии выглядел бы «предыдущий запуск
+ *     успешен» и следующее расписание прислало бы ВТОРУЮ тревогу о том же;
+ *   • ручной прогон против заведомо сломанного адреса (проверка письма от
+ *     GitHub) разбудил бы людей настоящей тревогой.
+ *
+ * Поэтому решение о сообщении принимается только по запускам расписания.
+ * `MONITOR_FORCE_NOTIFY=1` — осознанно проверить сам путь отправки.
+ */
+export function isScheduled(env = process.env) {
+  return env.GITHUB_EVENT_NAME === 'schedule'
+}
+
+export function shouldNotify({ scheduled, force }) {
+  return Boolean(scheduled || force)
+}
+
 /* ──────────────────────────────── история ──────────────────────────────── */
+
+/**
+ * Оставляет от ответа GitHub только то, из чего складывается состояние
+ * наблюдения: завершённые запуски ПО РАСПИСАНИЮ, кроме текущего.
+ */
+export function parseRuns(data, { currentRunId } = {}) {
+  return (data?.workflow_runs || [])
+    .filter((r) => r.event === 'schedule')
+    .filter((r) => String(r.id) !== String(currentRunId))
+    .map((r) => ({ conclusion: r.conclusion, startedAt: new Date(r.run_started_at).getTime() }))
+    .sort((a, b) => b.startedAt - a.startedAt)
+}
 
 /**
  * Прошлые запуски этого же расписания. Токен даёт сам GitHub, права только
@@ -262,17 +296,14 @@ export async function fetchHistory(env = process.env) {
   if (!GITHUB_TOKEN || !GITHUB_REPOSITORY || !GITHUB_WORKFLOW_REF) return []
   // GITHUB_WORKFLOW_REF = owner/repo/.github/workflows/uptime.yml@refs/heads/main
   const file = GITHUB_WORKFLOW_REF.split('@')[0].split('/').pop()
-  const url = `https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${file}/runs?per_page=30&status=completed`
+  // event=schedule просим у самого GitHub, чтобы 30 записей не заняли ручные прогоны
+  const url = `https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${file}/runs?per_page=30&status=completed&event=schedule`
   try {
     const res = await fetch(url, {
       headers: { authorization: `Bearer ${GITHUB_TOKEN}`, accept: 'application/vnd.github+json' },
     })
     if (!res.ok) return []
-    const data = await res.json()
-    return (data.workflow_runs || [])
-      .filter((r) => String(r.id) !== String(GITHUB_RUN_ID))
-      .map((r) => ({ conclusion: r.conclusion, startedAt: new Date(r.run_started_at).getTime() }))
-      .sort((a, b) => b.startedAt - a.startedAt)
+    return parseRuns(await res.json(), { currentRunId: GITHUB_RUN_ID })
   } catch {
     return []
   }
@@ -306,15 +337,23 @@ async function sendTelegram(text, env) {
   console.log(`монитор: отправлено сообщений — ${sent}`)
 }
 
-/** Отметка «снаружи заходили»: по ней внутренняя проверка поймёт, что монитор жив. */
-async function pingBack(base, token) {
+/**
+ * Отметка «снаружи заходили»: по ней внутренняя проверка поймёт, что монитор жив.
+ * Источник передаётся честно: живым наблюдением считается только расписание,
+ * иначе один ручной прогон раз в месяц маскировал бы выключенное расписание.
+ */
+async function pingBack(base, token, source) {
   if (!token) return
   try {
-    const res = await fetch(`${base}/api/monitor/ping`, {
+    const res = await fetch(`${base}/api/monitor/ping?source=${encodeURIComponent(source)}`, {
       method: 'POST',
       headers: { 'x-monitor-token': token },
     })
-    console.log(res.ok ? 'монитор: отметка о заходе принята' : `монитор: отметка отклонена (${res.status})`)
+    console.log(
+      res.ok
+        ? `монитор: отметка о заходе принята (${source})`
+        : `монитор: отметка отклонена (${res.status})`,
+    )
   } catch {
     console.log('монитор: отметку отправить не удалось')
   }
@@ -342,7 +381,8 @@ if (isMain) {
     }
   }
 
-  console.log(`════ внешняя проверка ${base} ════`)
+  const scheduled = isScheduled(env)
+  console.log(`════ внешняя проверка ${base} (${scheduled ? 'по расписанию' : 'ручной прогон'}) ════`)
   for (const line of result.lines) {
     console.log(`  ${line.level === 'bad' ? '🔴' : line.level === 'warn' ? '⚠️ ' : '✅'} ${line.text}`)
   }
@@ -350,7 +390,12 @@ if (isMain) {
   const incident = result.incidents.length > 0
   const history = await fetchHistory(env)
   const now = Date.now()
-  const action = decide({ incident, history, now, remindMs: limits.remindMs })
+  const notify = shouldNotify({ scheduled, force: env.MONITOR_FORCE_NOTIFY === '1' })
+  const action = notify ? decide({ incident, history, now, remindMs: limits.remindMs }) : 'silent'
+
+  if (!notify) {
+    console.log('монитор: ручной прогон — сообщения не шлём (MONITOR_FORCE_NOTIFY=1, чтобы проверить отправку)')
+  }
 
   if (action !== 'silent') {
     const firstFail = history.find((r) => r.conclusion === 'success')?.startedAt
@@ -369,7 +414,7 @@ if (isMain) {
     console.log('монитор: сообщение не нужно (нового ничего)')
   }
 
-  if (!incident) await pingBack(base, env.MONITOR_PING_TOKEN)
+  if (!incident) await pingBack(base, env.MONITOR_PING_TOKEN, scheduled ? 'schedule' : 'manual')
 
   console.log('')
   if (incident) {

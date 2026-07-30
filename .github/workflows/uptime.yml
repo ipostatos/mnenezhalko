@@ -19,6 +19,16 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      url:
+        description: 'Другой адрес для диагностики (пусто — боевой)'
+        required: false
+        default: ''
+      notify:
+        description: 'Проверить путь отправки в Telegram (обычно ручной прогон молчит)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -44,7 +54,10 @@ jobs:
       # монитор должен подниматься, даже когда со сборкой репозитория что-то не так
       - name: Проверка прода снаружи
         env:
-          MONITOR_URL: ${{ vars.MONITOR_URL || 'https://mnenezhalko-46-224-220-94.sslip.io' }}
+          MONITOR_URL: ${{ inputs.url || vars.MONITOR_URL || 'https://mnenezhalko-46-224-220-94.sslip.io' }}
+          # ручной прогон это диагностика: он не решает за расписание, писать людям
+          # или молчать, и его отметка не считается живым наблюдением
+          MONITOR_FORCE_NOTIFY: ${{ inputs.notify && '1' || '' }}
           MONITOR_BOT_TOKEN: ${{ secrets.MONITOR_BOT_TOKEN }}
           MONITOR_CHAT_ID: ${{ secrets.MONITOR_CHAT_ID }}
           MONITOR_PING_TOKEN: ${{ secrets.MONITOR_PING_TOKEN }}
