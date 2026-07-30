@@ -36,11 +36,21 @@ const releaseSha = process.env.RELEASE_SHA || 'dev'
 // с 0.2.0-beta.1). Нет переменной — значит это не релиз, а локальный запуск.
 const version = process.env.RELEASE_VERSION || 'dev'
 
+/**
+ * Токен внешнего монитора. Он стучится в прод снаружи (расписание GitHub
+ * Actions) и после удачного обхода отмечается через `POST /api/monitor/ping`.
+ * По этой отметке ВНУТРЕННЯЯ проверка понимает, что монитор жив: иначе
+ * выключенное расписание выглядело бы ровно как «снаружи всё хорошо».
+ * Пусто — ручка отключена целиком (404), отметки никто не ждёт.
+ */
+const monitorToken = process.env.MONITOR_PING_TOKEN || ''
+
 export const env = {
   releaseSha,
   version,
   botToken,
   webhookSecret,
+  monitorToken,
   publicUrl: (process.env.PUBLIC_URL || '').replace(/\/+$/, ''),
   botMode: (process.env.BOT_MODE || 'polling') as 'polling' | 'webhook',
   port: Number(process.env.PORT || 8080),

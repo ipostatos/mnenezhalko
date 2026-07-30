@@ -2,3 +2,6 @@
 *.sh text eol=lf
 *.service text eol=lf
 Caddyfile.snippet text eol=lf
+*.timer text eol=lf
+# проверка монитора запускается на Linux-бегуне GitHub и на сервере
+*.mjs text eol=lf

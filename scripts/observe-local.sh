@@ -21,6 +21,8 @@ PORT="${DEPLOY_PORT:-4310}"
 BACKUPS="${OBSERVE_BACKUPS:-/opt/backups/mnenezhalko}"
 DB="${OBSERVE_DB:-$DIR/shared/data/mnenezhalko.db}"
 UNIT="${OBSERVE_UNIT:-mnenezhalko}"
+# читаем только наличие настройки внешнего монитора, окружение службы целиком не тащим
+ENV_FILE="${OBSERVE_ENV_FILE:-$DIR/shared/.env}"
 
 q() { sqlite3 "$DB" "$1" 2>/dev/null || echo "?"; }
 now=$(date -u +%s)
@@ -106,6 +108,29 @@ tok=$(q "select value from SyncState where key='notion:tokenOk'")
 [ "$sync_age" -gt 24 ] && bad "синк Notion не проходил $sync_age ч (период 12 ч)" || true
 alert=$(q "select value from SyncState where key='syncAlert'")
 [ -n "$alert" ] && [ "$alert" != "?" ] && warn "предохранитель синка сработал" || true
+
+echo "════ внешний монитор ════"
+# Двое сторожат друг друга: этот скрипт не увидит смерть машины, а расписание
+# GitHub не увидит собственного выключения (в публичном репозитории оно засыпает
+# после 60 дней без коммитов, секрет можно случайно удалить). Тишина снаружи
+# неотличима от «всё хорошо» — поэтому спрашиваем, когда к нам заходили.
+mon_token=$(grep '^MONITOR_PING_TOKEN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r')
+if [ -z "$mon_token" ]; then
+  warn "внешний монитор не настроен (нет MONITOR_PING_TOKEN) — снаружи прод никто не проверяет"
+else
+  ping_at=$(q "select value from SyncState where key='monitor:external'")
+  if [ -z "$ping_at" ] || [ "$ping_at" = "?" ]; then
+    bad "внешний монитор ни разу не отмечался — проверьте расписание uptime в GitHub Actions"
+  else
+    ping_age=$(( (now - $(date -u -d "$ping_at" +%s 2>/dev/null || echo 0)) / 60 ))
+    # расписание раз в 10 минут; три часа тишины это уже не задержка очереди
+    if [ "$ping_age" -gt 180 ]; then
+      bad "внешний монитор не заходил $ping_age мин — проверка снаружи не работает"
+    else
+      ok "внешний монитор заходил $ping_age мин назад"
+    fi
+  fi
+fi
 
 echo "════ бэкап ════"
 last=$(ls -t "$BACKUPS"/*.db.gz 2>/dev/null | head -1)
