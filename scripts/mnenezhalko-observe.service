@@ -1,0 +1,27 @@
+[Unit]
+Description=MneNeZhalko internal watchdog (observation gate check)
+Documentation=file:///opt/mnenezhalko/current/docs/MONITORING.md
+After=network-online.target mnenezhalko.service
+
+[Service]
+Type=oneshot
+# От root осознанно: проверка читает systemctl, journalctl, размер бэкапов
+# в /opt/backups и .env службы (там токен бота, чтобы написать администраторам).
+# Скрипт только читает — ни одной записи в базу и ни одного рестарта.
+User=root
+# Путь через симлинк current: разрешается при КАЖДОМ запуске, поэтому таймер
+# всегда выполняет скрипт текущего релиза и не ломается при переключении.
+ExecStart=/bin/bash /opt/mnenezhalko/current/scripts/observe-alert.sh
+# Инцидент — это НЕ сбой самой проверки: скрипт возвращает 1, когда нашёл
+# проблему в проде. Без этого таймер уходил бы в failed и путал картину.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=3min
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+# состояние дедупликации сообщений (какой инцидент уже отправлен)
+ReadWritePaths=/opt/mnenezhalko/shared/monitoring

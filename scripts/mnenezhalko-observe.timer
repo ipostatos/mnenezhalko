@@ -1,0 +1,18 @@
+[Unit]
+Description=Hourly internal watchdog for MneNeZhalko
+Documentation=file:///opt/mnenezhalko/current/docs/MONITORING.md
+
+[Timer]
+# первая проверка через 5 минут после загрузки: раньше сервис может ещё
+# подниматься, и «health не ответил» был бы ложной тревогой
+OnBootSec=5min
+OnUnitActiveSec=1h
+# пропущенную из-за перезагрузки проверку выполняем сразу после старта,
+# а не ждём следующего часа
+Persistent=true
+# разброс, чтобы проверка не приходилась ровно на минуту бэкапа или синка
+RandomizedDelaySec=3min
+Unit=mnenezhalko-observe.service
+
+[Install]
+WantedBy=timers.target
