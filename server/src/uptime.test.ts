@@ -17,9 +17,8 @@ import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 
-const { evaluate, fingerprintOf, decide, buildMessage, LIMITS } = await import(
-  pathToFileURL(resolve(import.meta.dirname, '../../scripts/uptime-check.mjs')).href
-)
+const { evaluate, fingerprintOf, decide, buildMessage, parseRuns, isScheduled, shouldNotify, LIMITS } =
+  await import(pathToFileURL(resolve(import.meta.dirname, '../../scripts/uptime-check.mjs')).href)
 
 const HOUR = 3600_000
 
@@ -174,6 +173,51 @@ test('отменённые и пропущенные запуски не счи�
   ]
   assert.equal(decide({ incident: true, history, now }), 'silent')
   assert.equal(decide({ incident: false, history, now }), 'recovery')
+})
+
+test('в состояние наблюдения идут только запуски по расписанию', () => {
+  // ручной зелёный прогон посреди аварии выглядел бы «предыдущий успешен»,
+  // и следующее расписание прислало бы вторую тревогу о том же самом
+  const runs = parseRuns(
+    {
+      workflow_runs: [
+        { id: 3, event: 'workflow_dispatch', conclusion: 'success', run_started_at: '2026-07-30T12:00:00Z' },
+        { id: 2, event: 'schedule', conclusion: 'failure', run_started_at: '2026-07-30T11:50:00Z' },
+        { id: 1, event: 'schedule', conclusion: 'success', run_started_at: '2026-07-30T11:40:00Z' },
+      ],
+    },
+    { currentRunId: 4 },
+  )
+  assert.deepEqual(
+    runs.map((r: { conclusion: string }) => r.conclusion),
+    ['failure', 'success'],
+  )
+  const now = Date.parse('2026-07-30T12:10:00Z')
+  assert.equal(decide({ incident: true, history: runs, now }), 'silent')
+})
+
+test('текущий запуск не попадает в собственную историю', () => {
+  const runs = parseRuns(
+    {
+      workflow_runs: [
+        { id: 9, event: 'schedule', conclusion: null, run_started_at: '2026-07-30T12:00:00Z' },
+        { id: 8, event: 'schedule', conclusion: 'success', run_started_at: '2026-07-30T11:50:00Z' },
+      ],
+    },
+    { currentRunId: 9 },
+  )
+  assert.equal(runs.length, 1)
+  assert.equal(runs[0].conclusion, 'success')
+})
+
+test('ручной прогон молчит, расписание пишет, принудительная проверка отправки пишет', () => {
+  assert.equal(shouldNotify({ scheduled: false, force: false }), false)
+  assert.equal(shouldNotify({ scheduled: true, force: false }), true)
+  // иначе диагностический прогон против заведомо сломанного адреса разбудил бы людей
+  assert.equal(shouldNotify({ scheduled: false, force: true }), true)
+  assert.equal(isScheduled({ GITHUB_EVENT_NAME: 'schedule' }), true)
+  assert.equal(isScheduled({ GITHUB_EVENT_NAME: 'workflow_dispatch' }), false)
+  assert.equal(isScheduled({}), false)
 })
 
 test('в сообщение не попадает ничего, кроме техники', () => {

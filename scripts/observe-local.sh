@@ -115,21 +115,35 @@ echo "════ внешний монитор ════"
 # после 60 дней без коммитов, секрет можно случайно удалить). Тишина снаружи
 # неотличима от «всё хорошо» — поэтому спрашиваем, когда к нам заходили.
 mon_token=$(grep '^MONITOR_PING_TOKEN=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r')
+age_of() { # ISO-время в минутах назад; пусто или мусор → -1
+  if [ -z "$1" ] || [ "$1" = "?" ]; then echo -1; return; fi
+  s=$(date -u -d "$1" +%s 2>/dev/null) || { echo -1; return; }
+  echo $(( (now - s) / 60 ))
+}
 if [ -z "$mon_token" ]; then
   warn "внешний монитор не настроен (нет MONITOR_PING_TOKEN) — снаружи прод никто не проверяет"
 else
-  ping_at=$(q "select value from SyncState where key='monitor:external'")
-  if [ -z "$ping_at" ] || [ "$ping_at" = "?" ]; then
-    bad "внешний монитор ни разу не отмечался — проверьте расписание uptime в GitHub Actions"
-  else
-    ping_age=$(( (now - $(date -u -d "$ping_at" +%s 2>/dev/null || echo 0)) / 60 ))
+  # Наблюдением считается ТОЛЬКО расписание: ручной прогон это диагностика,
+  # и один такой прогон не должен маскировать выключенное расписание.
+  sched_age=$(age_of "$(q "select value from SyncState where key='monitor:external:schedule'")")
+  any_age=$(age_of "$(q "select value from SyncState where key='monitor:external'")")
+  first_age=$(age_of "$(q "select value from SyncState where key='monitor:external:first'")")
+
+  if [ "$sched_age" -ge 0 ]; then
     # расписание раз в 10 минут; три часа тишины это уже не задержка очереди
-    if [ "$ping_age" -gt 180 ]; then
-      bad "внешний монитор не заходил $ping_age мин — проверка снаружи не работает"
+    if [ "$sched_age" -gt 180 ]; then
+      bad "внешний монитор не заходил по расписанию $sched_age мин — проверка снаружи не работает"
     else
-      ok "внешний монитор заходил $ping_age мин назад"
+      ok "внешний монитор заходил по расписанию $sched_age мин назад"
     fi
+  elif [ "$first_age" -ge 1440 ]; then
+    # заходы были, но ни одного по расписанию за сутки — значит расписание не работает,
+    # а ручные прогоны только создают видимость наблюдения
+    bad "расписание внешнего монитора не сработало ни разу за $(( first_age / 60 )) ч"
+  else
+    warn "внешний монитор по расписанию ещё не заходил (первый запуск GitHub раскачивает до часа)"
   fi
+  [ "$any_age" -ge 0 ] && [ "$any_age" != "$sched_age" ] && say "последний заход любым способом: $any_age мин назад" || true
 fi
 
 echo "════ бэкап ════"

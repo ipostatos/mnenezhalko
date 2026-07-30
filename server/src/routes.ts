@@ -95,6 +95,18 @@ import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } f
  * Имя держим здесь, чтобы у ручки и у проверки был один источник правды.
  */
 export const MONITOR_PING_KEY = 'monitor:external'
+/**
+ * Отдельно от «заходили вообще» — «заходили ПО РАСПИСАНИЮ». Живым наблюдением
+ * считается только расписание: один ручной прогон раз в месяц иначе маскировал
+ * бы выключенное расписание, а это ровно та дыра, ради которой отметка и нужна.
+ */
+export const MONITOR_PING_SCHEDULE_KEY = 'monitor:external:schedule'
+/**
+ * Время самого первого захода. По нему проверка отличает «монитор только что
+ * настроили, расписание ещё раскачивается» от «расписание не работает вовсе»:
+ * иначе оба случая выглядят одинаково — отметок нет.
+ */
+export const MONITOR_PING_FIRST_KEY = 'monitor:external:first'
 
 /**
  * Единая проверка прав перед действием: заблокирован ли человек и не закрыто ли
@@ -325,14 +337,31 @@ export async function registerRoutes(app: FastifyInstance) {
     const a = createHash('sha256').update(given).digest()
     const b = createHash('sha256').update(env.monitorToken).digest()
     if (!timingSafeEqual(a, b)) return reply.code(401).send({ error: 'unauthorized' })
+
+    // источник заявляет сам монитор; чужого здесь нет — ручка за общим секретом,
+    // а неизвестное значение считаем ручным прогоном (строгий вариант из двух)
+    const raw = (req.query as { source?: string } | undefined)?.source
+    const scheduled = raw === 'schedule'
+    const now = new Date().toISOString()
+
+    const mark = (key: string) =>
+      prisma.syncState
+        .upsert({ where: { key }, update: { value: now }, create: { key, value: now } })
+        .catch(() => null)
+
+    await mark(MONITOR_PING_KEY)
+    if (scheduled) await mark(MONITOR_PING_SCHEDULE_KEY)
+    // первый заход не перезаписываем никогда: это точка отсчёта «сколько уже молчит
+    // расписание». Пустой `update` вместо createMany со skipDuplicates — того на SQLite нет
     await prisma.syncState
       .upsert({
-        where: { key: MONITOR_PING_KEY },
-        update: { value: new Date().toISOString() },
-        create: { key: MONITOR_PING_KEY, value: new Date().toISOString() },
+        where: { key: MONITOR_PING_FIRST_KEY },
+        update: {},
+        create: { key: MONITOR_PING_FIRST_KEY, value: now },
       })
       .catch(() => null)
-    return { ok: true }
+
+    return { ok: true, source: scheduled ? 'schedule' : 'manual' }
   })
 
   app.post('/api/me', async (req, reply) => {
