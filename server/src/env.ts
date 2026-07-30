@@ -31,7 +31,10 @@ const webhookSecret =
  * что ответил ИМЕННО новый процесс, а не переживший рестарт прежний.
  */
 const releaseSha = process.env.RELEASE_SHA || 'dev'
-const version = process.env.RELEASE_VERSION || '0.2.0-beta.1'
+// номер версии подставляет та же выкладка из package.json. Держать здесь копию
+// строки нельзя: она молча расходится с манифестом на каждом релизе (так и вышло
+// с 0.2.0-beta.1). Нет переменной — значит это не релиз, а локальный запуск.
+const version = process.env.RELEASE_VERSION || 'dev'
 
 export const env = {
   releaseSha,
