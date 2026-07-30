@@ -220,6 +220,46 @@ test('недоступный Telegram API не роняет watchdog', { skip: !
   assert.match(r.out, /отправлено 0, не удалось 2/)
 })
 
+/* ── сломанная проверка ───────────────────────────────────── */
+
+test('проверка без exec-бита всё равно выполняется', { skip: !bashOk }, () => {
+  // файлы приезжают из архива релиза с правами 644: прямой запуск падал бы
+  // «Permission denied» — именно так watchdog и промолчал на проде
+  const p = join(dir, 'check.sh')
+  writeFileSync(p, `#!/usr/bin/env bash\necho '${NORMAL}'\nexit 0\n`, { mode: 0o644 })
+  const r = spawnSync('bash', [bashPath(SCRIPT)], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      OBSERVE_CMD: bashPath(p),
+      OBSERVE_STATE_DIR: bashPath(stateDir),
+      OBSERVE_ENV_FILE: bashPath(join(dir, '.env')),
+      OBSERVE_RELEASE_ENV: bashPath(join(dir, '.release-env')),
+      OBSERVE_LOCK: bashPath(join(dir, 'lock')),
+      OBSERVE_NOW: '1000000',
+      OBSERVE_SEND_CMD: `{ echo "=== to $OBSERVE_CHAT_ID"; cat; } >> ${bashPath(sent)}`,
+    },
+  })
+  assert.equal(r.status, 0)
+  assert.match(`${r.stdout}`, /норма, молчу/)
+  assert.doesNotMatch(`${r.stdout}`, /не выполнилась/)
+})
+
+test('🔥 не запустившаяся проверка — это инцидент, а не тишина', { skip: !bashOk }, () => {
+  const r = run({ report: '', code: 127, now: 1_000_000, extra: { OBSERVE_CMD: '/no/such/check.sh' } })
+  assert.equal(r.status, 1, 'инцидент, но не сбой юнита')
+  assert.match(r.sent, /проверка наблюдения не выполнилась/)
+  assert.match(r.sent, /о состоянии прода ничего не известно/)
+  assert.match(r.sent, /=== to 111/)
+  assert.match(r.sent, /=== to 222/)
+})
+
+test('пустой отчёт при коде 0 тоже инцидент', { skip: !bashOk }, () => {
+  // проверка «прошла», но не сказала ничего: доверять такому нельзя
+  const r = run({ report: '', code: 0, now: 1_000_000 })
+  assert.match(r.sent, /проверка наблюдения не выполнилась/)
+})
+
 test('параллельный запуск блокируется', { skip: !bashOk || !has('flock') }, () => {
   const lock = join(dir, 'lock-busy')
   fakeCheck(NORMAL, 0)
