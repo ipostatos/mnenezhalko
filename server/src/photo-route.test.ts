@@ -87,11 +87,40 @@ test('валидная подписанная ссылка отдаёт webp-п�
   assert.ok(Number(r.headers['content-length'] ?? r.rawPayload.length) > 0)
 })
 
-test('не-картинка по Content-Type — 415', async () => {
+test('🔥 JPEG под видом octet-stream проходит: так его и отдаёт Telegram', async () => {
+  // Регресс с прода 30.07.2026: файловый CDN Telegram отвечает
+  // `application/octet-stream` на обычное фото, а ручка отбивала такое 415 —
+  // ни одно фото барахолки не показывалось. Решает декод, а не заголовок.
+  fakeTelegram = async (url) => {
+    if (url.includes('getFile')) return okMeta()
+    const jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#eba788' } })
+      .jpeg()
+      .toBuffer()
+    return new Response(new Uint8Array(jpeg), {
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream' },
+    })
+  }
+  const r = await app.inject({ method: 'GET', url: photoProxyUrl(FILE_ID) })
+  assert.equal(r.statusCode, 200)
+  assert.equal(r.headers['content-type'], 'image/webp')
+})
+
+test('не-картинка не проходит независимо от заголовка — 415', async () => {
+  // тот же html, но теперь его отвергает декод, а не Content-Type
   fakeTelegram = async (url) =>
     url.includes('getFile')
       ? okMeta()
       : new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } })
+  const r = await app.inject({ method: 'GET', url: photoProxyUrl(FILE_ID) })
+  assert.equal(r.statusCode, 415)
+})
+
+test('не-картинка с честным image/* — тоже 415', async () => {
+  fakeTelegram = async (url) =>
+    url.includes('getFile')
+      ? okMeta()
+      : new Response('совсем не картинка', { status: 200, headers: { 'content-type': 'image/png' } })
   const r = await app.inject({ method: 'GET', url: photoProxyUrl(FILE_ID) })
   assert.equal(r.statusCode, 415)
 })

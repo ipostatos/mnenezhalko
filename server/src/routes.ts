@@ -1339,11 +1339,19 @@ export async function registerRoutes(app: FastifyInstance) {
         15_000,
       )
       if (!file.ok) return reply.code(502).send({ error: 'upstream_failed' })
-      const type = file.headers.get('content-type') || 'image/jpeg'
-      if (!type.startsWith('image/')) return reply.code(415).send({ error: 'not_an_image' })
       const raw = await readBodyLimited(file, PHOTO_MAX_BYTES)
 
-      // фактический декод обязателен: Content-Type можно прислать любой
+      /**
+       * 🔥 Раньше здесь стоял отказ по `Content-Type` — и он отбивал ВСЕ фото
+       * барахолки: файловый CDN Telegram отдаёт `application/octet-stream`
+       * даже для обычного JPEG (проверено на проде: `ff d8 ff` в теле, 415
+       * в ответе). Заметить это было нельзя, пока бота не было в чате и
+       * объявлений не существовало.
+       *
+       * Решает не заголовок, а фактический декод: sharp читает БАЙТЫ, и всё,
+       * что не является картинкой, здесь и отваливается. Заголовку доверять
+       * нечему — его присылает чужая сторона.
+       */
       let body: Buffer
       try {
         body = await sharp(raw, { failOn: 'none' })
