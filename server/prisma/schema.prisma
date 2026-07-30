@@ -340,7 +340,7 @@ model MarketItem {
   description String?
   price       String?
   photo       String? // telegram file_id
-  status      String    @default("active") // active | closed
+  status      String    @default("active") // active | closed | removed (снято модератором)
   /// когда объявление протухает и закрывается автоматически (см. expireMarketItems);
   /// null у старых строк — для них срок считается от bumpedAt
   expiresAt   DateTime?

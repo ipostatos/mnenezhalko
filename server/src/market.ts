@@ -9,6 +9,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { env } from './env.js'
 import { prisma } from './db.js'
+import { logModeration, queueNotice } from './moderation.js'
 import { CITIES } from './seed.js'
 
 const client = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
@@ -154,4 +155,79 @@ export async function saveOffer(
       authorUsername: msg.authorUsername ?? null,
     },
   })
+}
+
+/* ── снятие объявления модератором ────────────────────────── */
+
+/**
+ * Убрать карточку барахолки.
+ *
+ * До 30 июля 2026 убрать объявление было НЕЧЕМ: статус меняли только джоба
+ * протухания (45 дней) и удаление профиля автора. То есть спамная или ошибочная
+ * карточка висела в витрине до конца срока. Удаление исходного сообщения в теме
+ * не помогает вовсе: Bot API не присылает событий об удалении, бот о нём не
+ * узнаёт.
+ *
+ * Строка НЕ удаляется физически: `removed` оставляет возможность вернуть
+ * объявление и сохраняет объяснимый след в журнале. Причина обязательна — её
+ * увидит автор.
+ *
+ * Ищем либо по `id`, либо по исходному сообщению (ответ на пост в теме).
+ * ⚠️ У `MarketItem` нет колонки с чатом, поэтому «свой» чат проверяет вызывающий
+ * (бот сверяет `ctx.chat.id` с MAIN_CHAT_ID). Колонка появится вместе с импортом
+ * истории, где дедуп нужен по паре чат+сообщение (docs/TECH_DEBT.md).
+ */
+export async function removeMarketItem(opts: {
+  actorTg: bigint
+  id?: string
+  sourceMsgId?: number
+  reason: string
+}): Promise<
+  | { ok: true; item: { id: string; title: string; authorTg: bigint }; notice: string }
+  | { ok: false; code: 'no_reason' | 'not_found' | 'already_removed' }
+> {
+  const reason = opts.reason.trim().slice(0, 300)
+  if (!reason) return { ok: false, code: 'no_reason' }
+
+  const found = opts.id
+    ? await prisma.marketItem.findUnique({ where: { id: opts.id } })
+    : opts.sourceMsgId !== undefined
+      ? await prisma.marketItem.findFirst({ where: { sourceMsgId: opts.sourceMsgId } })
+      : null
+  if (!found) return { ok: false, code: 'not_found' }
+
+  const notice = `Ваше объявление «${found.title}» снято модератором. Причина: ${reason}.`
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    /**
+     * Переход УСЛОВНЫЙ, решает число изменённых строк: два админа могут снять
+     * одну карточку одновременно, и «прочитал состояние → записал» дало бы две
+     * записи в журнале и два письма автору об одном и том же.
+     */
+    const changed = await tx.marketItem.updateMany({
+      where: { id: found.id, status: 'active' },
+      data: { status: 'removed' },
+    })
+    if (!changed.count) return 'already_removed' as const
+
+    // журнал и письмо — в той же транзакции: сбой любого из них откатывает
+    // и снятие, иначе объявление исчезло бы без объяснения и без следа
+    await logModeration(tx, {
+      actorTg: opts.actorTg,
+      targetUserTg: found.authorTg,
+      targetType: 'market',
+      targetId: found.id,
+      action: 'remove',
+      reason,
+      // в журнал кладём только то, что и так в самой карточке: ни ника, ни id
+      meta: { title: found.title, city: found.city },
+    })
+    // автор у объявления есть всегда (в схеме связь обязательна), поэтому
+    // письмо кладём без условий — молча снятая карточка выглядела бы пропажей
+    await queueNotice(tx, found.authorTg, notice)
+    return 'ok' as const
+  })
+  if (outcome !== 'ok') return { ok: false, code: outcome }
+
+  return { ok: true, item: { id: found.id, title: found.title, authorTg: found.authorTg }, notice }
 }

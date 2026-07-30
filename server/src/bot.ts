@@ -31,7 +31,7 @@ import {
   eventsTopicUrl,
   marketTopicUrl,
 } from './seed.js'
-import { parseOffer, saveOffer } from './market.js'
+import { parseOffer, removeMarketItem, saveOffer } from './market.js'
 import {
   claimLoanByToken,
   createLoan,
@@ -2172,6 +2172,59 @@ bot.command('restrict', async (ctx) => {
   if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
   await flushNotices()
   await ctx.reply('Готово, человеку сообщили.')
+})
+
+/**
+ * Снять карточку барахолки: `/market_remove <id> причина` или ответом на пост
+ * в теме — тогда объявление находится по исходному сообщению.
+ *
+ * ⚠️ Само сообщение в Telegram команда НЕ удаляет: это внешняя необратимая
+ * операция, которую не связать одной транзакцией с базой. Удаляет человек,
+ * убедившись в результате.
+ */
+bot.command('market_remove', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const args = (ctx.match?.toString() ?? '').trim()
+  const reply = (ctx.message as any)?.reply_to_message
+  // ответ на пост в теме барахолки: id брать не нужно, вся строка — причина
+  const byReply = reply && BigInt(ctx.chat?.id ?? 0) === MAIN_CHAT_ID
+
+  let id: string | undefined
+  let reason: string
+  if (byReply) {
+    reason = args
+  } else {
+    const [first, ...rest] = args.split(/\s+/)
+    id = first || undefined
+    reason = rest.join(' ')
+  }
+  if (!reason || (!byReply && !id)) {
+    return ctx.reply(
+      'Формат: /market_remove <id> причина — или ответом на объявление в теме: /market_remove причина',
+    )
+  }
+
+  const res = await removeMarketItem({
+    actorTg: BigInt(ctx.from!.id),
+    id,
+    sourceMsgId: byReply ? reply.message_id : undefined,
+    reason,
+  })
+  if (!res.ok) {
+    const text: Record<string, string> = {
+      no_reason: 'Нужна причина: её увидит автор.',
+      not_found: 'Такого объявления нет. Ответьте на сам пост или дайте id.',
+      already_removed: 'Это объявление уже снято.',
+    }
+    return ctx.reply(text[res.code] ?? res.code)
+  }
+  await flushNotices()
+  await ctx.reply(
+    `Снял «${esc(res.item.title)}» из барахолки. Автору сообщили.
+` +
+      'Само сообщение в теме не удалено — это делается вручную.',
+    { parse_mode: 'HTML' },
+  )
 })
 
 bot.command('unrestrict', async (ctx) => {
