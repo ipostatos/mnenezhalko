@@ -14,7 +14,10 @@
   --bg: #f7f1e8;
   --bg-tint: #fbf7f0;
   --text: #2b3440;
-  --hint: #8f8578;
+  /* приглушённый текст был #8f8578 — на белой карточке это ~3:1, читалось как
+     «светлый шрифт на светлом фоне» (жалоба user 4.08.2026). Затемнён до ~5:1,
+     тёплый оттенок сохранён */
+  --hint: #6e6459;
   --card: #ffffff;
   --accent: #eba788;
   --accent-soft: #fbeee4;
@@ -24,6 +27,9 @@
   --border: rgba(43, 52, 64, 0.1);
   --ok: #5a9d6b;
   --warn: #e0a44a;
+  /* тот же смысл, но для ТЕКСТА: медовый #e0a44a на белом даёт ~2:1 и не
+     читается вовсе. Рамки и подложки по-прежнему берут --warn */
+  --warn-text: #94601a;
   --bad: #d9584b;
 
   /* нежные пастельные тона для чипов/плашек */
@@ -911,7 +917,7 @@ textarea.input {
 }
 
 .tag.sell {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .tag.search {
@@ -980,7 +986,7 @@ textarea.input {
 }
 
 .tag.mood-2 {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .tag.mood-3,
@@ -1292,7 +1298,7 @@ textarea.input {
 
 /* «жанр не указан» — это кнопка, ведущая в правку, а не просто пометка */
 .tag.warn-tag {
-  color: var(--warn);
+  color: var(--warn-text);
   border-color: var(--warn);
   background: transparent;
   font-family: inherit;
@@ -1480,7 +1486,7 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 /* ── оценки и аннотации читателей (issue #18) ── */
 
 .stars {
-  color: var(--warn);
+  color: var(--warn-text);
   letter-spacing: 1px;
   font-size: var(--fs-sm);
 }
@@ -1501,7 +1507,7 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   margin-top: 3px;
   font-size: var(--fs-xs);
   font-weight: 700;
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .rating-head {
@@ -1554,7 +1560,7 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 }
 
 .star-btn.on {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 .star-btn:active {
@@ -2003,21 +2009,24 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   margin-bottom: var(--sp-2);
 }
 
-/* таблица сроков: на 360px две колонки в строку не помещаются, поэтому
-   вторая уходит под первую и выделяется цветом */
+/* Таблица сроков.
+   Была флекс-строкой «что | сколько»: короткие сроки вставали справа, длинные
+   переносились вниз, а самый длинный (`nowrap`) вылезал за экран и обрезался
+   на полуслове — читать было нельзя (жалоба user 4.08.2026). Теперь каждая
+   запись устроена одинаково: сверху «что», под ним срок. Ничего не переносится
+   по-разному и ничего не обрезается. */
 .retention {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-1) var(--sp-4);
   margin-bottom: var(--sp-4);
 }
 
 .retention-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--sp-3);
-  padding: var(--sp-2) 0;
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-3) 0;
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
@@ -2027,13 +2036,48 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 }
 
 .retention-row .w {
-  flex: 1 1 60%;
+  color: var(--text);
+  line-height: 1.35;
 }
 
 .retention-row .h {
   color: var(--link);
   font-weight: 600;
-  white-space: nowrap;
+  /* nowrap убран намеренно: длинный срок должен переноситься, а не уезжать
+     под край экрана */
+  line-height: 1.35;
+}
+
+/* реквизиты контролёра — та же форма, что и у сроков: подпись и значение */
+.controller {
+  display: grid;
+  gap: var(--sp-3);
+  margin-top: var(--sp-1);
+}
+
+.controller-row {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+
+.controller-row .w {
+  color: var(--hint);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 700;
+}
+
+.controller-row .v {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+/* предупреждающая строка текстом (например, «реквизиты ещё не заполнены») */
+.warn-text {
+  color: var(--warn-text);
 }
 
 /* карточка необратимого действия — чтобы её нельзя было принять за обычную */
