@@ -10,36 +10,41 @@
 }
 
 :root {
-  /* базовая палитра — тёплый крем и индиго */
-  --bg: #f7f1e8;
-  --bg-tint: #fbf7f0;
-  --text: #2b3440;
-  /* приглушённый текст был #8f8578 — на белой карточке это ~3:1, читалось как
-     «светлый шрифт на светлом фоне» (жалоба user 4.08.2026). Затемнён до ~5:1,
-     тёплый оттенок сохранён */
-  --hint: #6e6459;
+  /* === ПОДСТРОЙКА ПОД ПЛАТФОРМУ (2026-08-04): зелёная система вместо крема ===
+     Токены дизайн-системы платформы (Radix green). Прежние кремово-персиковые
+     значения лежат в git-истории (ветка main, прод 1dc1530), откат простой:
+     не мержить ветку feat/platform-reskin или git revert.
+       фон App Background  #FBFEFC     акцент/кнопки #30A46C
+       заголовки           #193B2D     логотип/ссылки #218358
+       текст               #1C2024     приглушённый  #60646C */
+  --bg: #fbfefc;
+  --bg-tint: #f3faf5;
+  --text: #1c2024;
+  /* заголовки идут отдельным тёмно-зелёным тоном платформы */
+  --heading: #193b2d;
+  --hint: #60646c;
   --card: #ffffff;
-  --accent: #eba788;
-  --accent-soft: #fbeee4;
-  /* акцент светлый — текст на нём тёмный тёплый, иначе белый нечитаем */
-  --accent-text: #4a2f28;
-  --link: #b56a4e;
-  --border: rgba(43, 52, 64, 0.1);
-  --ok: #5a9d6b;
-  --warn: #e0a44a;
-  /* тот же смысл, но для ТЕКСТА: медовый #e0a44a на белом даёт ~2:1 и не
-     читается вовсе. Рамки и подложки по-прежнему берут --warn */
-  --warn-text: #94601a;
+  --accent: #30a46c;
+  --accent-soft: #e6f6eb;
+  /* на сплошной зелёной заливке кнопок и активных чипов текст белый */
+  --accent-text: #ffffff;
+  --link: #218358;
+  --border: rgba(25, 59, 45, 0.12);
+  --ok: #30a46c;
+  --warn: #e2a336;
+  /* амбер платформы на белом слишком светлый для ТЕКСТА, затемнён */
+  --warn-text: #8a5a12;
   --bad: #d9584b;
 
-  /* нежные пастельные тона для чипов/плашек */
-  --tone-sage: #e4ebd8;
-  --tone-peach: #f7e2d3;
-  --tone-lav: #eae4f2;
-  --tone-blush: #f6dee1;
-  --tone-sky: #dce8f0;
-  --terracotta: #d98a62;
-  --honey: #e0a44a;
+  /* пастель для градиента плашек и чипов: зелёная гамма + жанровые тона платформы
+     (Indigo/Pink), градиент плашек = мятный → мягкий зелёный */
+  --tone-sage: #cfe9d6;
+  --tone-peach: #eaf6ef;
+  --tone-lav: #e7ecf9;
+  --tone-blush: #f7e6f1;
+  --tone-sky: #e0eef0;
+  --terracotta: #5bb98b;
+  --honey: #e2a336;
 
   /* «польза сообщества»: деньги тёплые, экология зелёная — цвет несёт смысл.
      Оба затемнены до читаемого контраста на своих пастельных плашках */
@@ -131,6 +136,8 @@ h1 {
   font-size: var(--fs-h1);
   font-weight: 800;
   margin: 0 0 4px;
+  /* заголовки тёмно-зелёные (Accent/Text/Default платформы) */
+  color: var(--heading);
 }
 
 .sub {
@@ -147,6 +154,11 @@ h1 {
 
 .hero .logo {
   font-size: 24px;
+}
+
+/* логотип-название приложения красим в акцентный зелёный платформы (Accent/Text/Subtle) */
+.hero h1 {
+  color: var(--link);
 }
 
 .section-title {
@@ -494,7 +506,8 @@ h1 {
 .chip.lang {
   background: var(--accent-soft);
   border-color: var(--accent-soft);
-  color: var(--accent-text);
+  /* на светло-зелёной подложке текст тёмно-зелёный, не белый --accent-text */
+  color: var(--link);
   font-weight: 600;
 }
 
@@ -2107,7 +2120,8 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--accent-soft);
-  color: var(--accent-text);
+  /* на светло-зелёной подложке текст тёмно-зелёный, не белый --accent-text */
+  color: var(--link);
   font-size: var(--fs-xs);
   font-weight: 700;
 }
@@ -2207,3 +2221,10 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 .behalf-hit:active {
   background: var(--accent-soft);
 }
+
+/* === ПОДСТРОЙКА ПОД ПЛАТФОРМУ (2026-08-04): иллюстрации временно убраны ===
+   Просьба user на время перехода на дизайн-систему платформы. Вернуть =
+   удалить этот блок. Функциональные картинки не трогаем: обложка при
+   сканировании (.scan-cover), обложки книг в каталоге, значки достижений. */
+.illus { display: none; }
+.promo img { display: none; }
