@@ -5,7 +5,6 @@ import type { Facets, ShelfBook, ShelfState } from '../types'
 import { haptic, showAlert, showConfirm, onAppShow } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
 import { Icon } from './Icon'
-import { Badges } from './Badges'
 import { plural } from '../plural'
 import { TagPicker } from './TagPicker'
 
@@ -221,7 +220,9 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
         </div>
       )}
 
-      {books.length > 0 && <Badges go={go} />}
+      {/* лента значков с полки убрана (просьба user 4.08.2026, вслед за плашкой
+          на главной). Экран `badges` и ручка /api/my-badges на месте —
+          вернуть можно строкой {books.length > 0 && <Badges go={go} />} */}
 
       {books.length > 3 && (
         <input
