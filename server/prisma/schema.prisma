@@ -425,10 +425,11 @@ model ModerationAction {
   targetHash   String?
   /// то же для автора решения, если свои данные удалил администратор
   actorHash    String?
-  /// user | review | book | market
+  /// user | review | book | market | event | message
   targetType   String
   targetId     String?
-  /// restrict | unrestrict | ban | unban | hide | restore | delete | dismiss
+  /// restrict | unrestrict | ban | unban | hide | restore | delete | dismiss |
+  /// remove (объявление, встреча) | spam_delete | spam_false_positive
   action       String
   reason       String
   /// подробности решения в JSON — например, срок ограничения

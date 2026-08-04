@@ -151,9 +151,10 @@ export type ModerationResult<T extends string> =
   | { ok: false; code: T }
 
 export type ModerationEntry = {
-  actorTg: bigint
+  /** null — решение приняла машина (антиспам), а не человек */
+  actorTg: bigint | null
   targetUserTg?: bigint | null
-  targetType: 'user' | 'review' | 'book' | 'market' | 'event'
+  targetType: 'user' | 'review' | 'book' | 'market' | 'event' | 'message'
   targetId?: string | null
   action: string
   reason: string

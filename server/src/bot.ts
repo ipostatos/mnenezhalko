@@ -13,6 +13,7 @@ import {
   explainVerdict,
   isScope,
   flushNotices,
+  logModerationAction,
   moderationQueue,
   setModerationNoticeSender,
   restrictUser,
@@ -34,6 +35,7 @@ import {
 import { parseOffer, removeMarketItem, saveOffer } from './market.js'
 import { EVENT_TAIL_MS, listPastEvents, removeEvent } from './events.js'
 import { findPerson, personCard, projectStats } from './admin.js'
+import { checkSpam } from './antispam.js'
 import {
   claimLoanByToken,
   createLoan,
@@ -2663,11 +2665,172 @@ bot.command('addevent', async (ctx) => {
   await notifyNewEvent(event)
 })
 
+/* ── антиспам ─────────────────────────────────────────────── */
+
+/**
+ * Проверка каждого сообщения чата и лички на рекламу.
+ *
+ * Что делает и, главное, чего НЕ делает:
+ *  - явный спам удаляется, но копия текста уходит админам. Молча пропавшее
+ *    сообщение выглядит как поломка чата, и разобрать жалобу «у меня удалили»
+ *    было бы нечем;
+ *  - спорное НЕ трогается вовсе: приходит карточка с кнопками, решает человек.
+ *    Ошибка машины здесь необратима — удалённое в Telegram не вернуть;
+ *  - автор НЕ наказывается автоматически. Ограничение ставит админ кнопкой:
+ *    счёт баллов годится, чтобы убрать сообщение, но не чтобы закрыть человеку
+ *    участие в проекте.
+ *
+ * Возвращает true, если сообщение дальше обрабатывать не нужно.
+ */
+async function stoppedBySpam(ctx: any, text: string): Promise<boolean> {
+  if (env.antispamOff) return false
+  const from = ctx.from
+  if (!from || from.is_bot) return false
+  // свои решения админов и их объявления не проверяем вовсе
+  if (isAdmin(from.id)) return false
+
+  const inMainChat = BigInt(ctx.chat?.id ?? 0) === MAIN_CHAT_ID
+  const isPrivate = ctx.chat?.type === 'private'
+  if (!inMainChat && !isPrivate) return false
+
+  const tgId = BigInt(from.id)
+  const [user, librarian] = await Promise.all([
+    prisma.user.findUnique({ where: { tgId }, select: { createdAt: true } }),
+    prisma.librarian.findFirst({ where: { tgId, mergedIntoId: null }, select: { id: true } }),
+  ])
+
+  const verdict = checkSpam(text, {
+    marketTopic: isMarketTopic(ctx),
+    known: Boolean(librarian),
+    firstSeen: !user,
+  })
+  if (verdict.level === 'clean') return false
+
+  // в личке бот никого не удаляет: там человек пишет ему, а не сообществу.
+  // Просто не пускаем рекламу в платный ИИ-подбор
+  if (isPrivate) {
+    if (verdict.level !== 'spam') return false
+    await ctx.reply(
+      'Похоже на рекламу, отвечать на такое не буду. Если это ошибка, напишите администраторам.',
+    )
+    return true
+  }
+
+  const who =
+    `${esc(from.first_name ?? 'без имени')}${from.username ? ` @${esc(from.username)}` : ''}` +
+    ` (id <code>${from.id}</code>)`
+  const quote = esc(text.slice(0, 500)) + (text.length > 500 ? '…' : '')
+  const msgId = ctx.message.message_id
+
+  if (verdict.level === 'spam') {
+    const deleted = await ctx.api
+      .deleteMessage(ctx.chat.id, msgId)
+      .then(() => true)
+      .catch((e: any) => {
+        console.warn('[antispam] удалить не вышло:', e?.description ?? e?.message ?? e)
+        return false
+      })
+
+    await tellAdmins(
+      [
+        deleted ? '🗑 <b>Удалил рекламу</b>' : '⚠️ <b>Реклама, удалить не смог</b>',
+        `Автор: ${who}`,
+        `Причина: ${esc(verdict.reason)} (${verdict.score} баллов)`,
+        '',
+        `<i>${quote}</i>`,
+      ].join('\n'),
+      new InlineKeyboard()
+        .text('↩️ Это не спам', `sp:false:${from.id}`)
+        .row()
+        .text('🔇 Ограничить автора', `rs:all:${from.id}`),
+    )
+
+    await logModerationAction({
+      // решение приняла машина: в журнале это должно быть видно, поэтому
+      // автора нет, а не «нулевой админ»
+      actorTg: null,
+      targetUserTg: tgId,
+      targetType: 'message',
+      action: 'spam_delete',
+      reason: verdict.reason,
+      meta: { score: verdict.score, chatId: String(ctx.chat.id), messageId: msgId },
+    })
+
+    // автору говорим, что случилось: если это ошибка, он придёт к админам,
+    // а не решит, что чат сломался. Написать можем не всегда — это нормально
+    await bot.api
+      .sendMessage(
+        String(from.id),
+        'Ваше сообщение в чате проекта удалено как реклама.\n' +
+          `Что сработало: ${verdict.reason}.\n` +
+          'Если это ошибка, напишите администраторам проекта.',
+      )
+      .catch(() => {})
+    return true
+  }
+
+  // спорное: сообщение остаётся, решает человек
+  await tellAdmins(
+    [
+      '⚠️ <b>Похоже на рекламу, не трогал</b>',
+      `Автор: ${who}`,
+      `Причина: ${esc(verdict.reason)} (${verdict.score} баллов)`,
+      '',
+      `<i>${quote}</i>`,
+    ].join('\n'),
+    new InlineKeyboard()
+      .text('🗑 Удалить', `sp:del:${ctx.chat.id}:${msgId}`)
+      .text('✅ Оставить', `sp:keep:${from.id}`),
+  )
+  return false
+}
+
+/** Удалить спорное сообщение по кнопке из карточки. */
+bot.callbackQuery(/^sp:del:(-?\d+):(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const [, chatId, msgId] = ctx.match
+  const ok = await ctx.api
+    .deleteMessage(Number(chatId), Number(msgId))
+    .then(() => true)
+    .catch(() => false)
+  await logModerationAction({
+    actorTg: BigInt(ctx.from.id),
+    targetType: 'message',
+    action: 'spam_delete',
+    reason: 'решение админа по карточке антиспама',
+    meta: { chatId, messageId: Number(msgId) },
+  })
+  await ctx.answerCallbackQuery({ text: ok ? 'Удалил' : 'Не вышло: сообщения уже нет' })
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+})
+
+/**
+ * «Это не спам» и «Оставить» ничего не отменяют технически (удалённое в
+ * Telegram не вернуть), но записывают ошибку в журнал: по этим записям и
+ * настраиваются пороги, иначе тюнинг был бы вслепую.
+ */
+bot.callbackQuery(/^sp:(false|keep):(\d+)$/, async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCallbackQuery({ text: 'Только для админов' })
+  const [, kind, authorId] = ctx.match
+  await logModerationAction({
+    actorTg: BigInt(ctx.from.id),
+    targetUserTg: BigInt(authorId),
+    targetType: 'message',
+    action: 'spam_false_positive',
+    reason: kind === 'false' ? 'админ: это не спам' : 'админ: оставить сообщение',
+  })
+  await ctx.answerCallbackQuery({ text: 'Записал, спасибо — по этим отметкам правим пороги' })
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+})
+
 /* ── входящие сообщения: темы чата, фото книг, запрос к ИИ ── */
 
 bot.on('message:photo', async (ctx) => {
   // афиша и барахолка обычно приходят картинкой с подписью
   const caption = ctx.message.caption?.trim()
+  // спам приходит картинкой не реже, чем текстом: проверяем подпись до разбора,
+  // иначе реклама успела бы стать карточкой барахолки
+  if (caption && (await stoppedBySpam(ctx, caption))) return
   if (isEventsTopic(ctx)) return caption ? handleAnnouncement(ctx, caption) : undefined
   if (isMarketTopic(ctx)) return caption ? handleMarketPost(ctx, caption) : undefined
   // фото в личке считаем обложкой книги
@@ -2681,6 +2844,10 @@ bot.on('message:photo', async (ctx) => {
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim()
   if (text.startsWith('/')) return
+
+  // антиспам идёт ПЕРВЫМ: реклама не должна ни превратиться в карточку
+  // барахолки, ни уехать в платный ИИ-подбор
+  if (await stoppedBySpam(ctx, text)) return
 
   if (isEventsTopic(ctx)) return handleAnnouncement(ctx, text)
   if (isMarketTopic(ctx)) return handleMarketPost(ctx, text)
@@ -2730,12 +2897,13 @@ async function handleMarketPost(ctx: any, text: string) {
 /* ── здоровье канала записи в Notion ──────────────────────── */
 
 /** Отправляет сообщение всем админам; молчит, если админов нет. */
-async function tellAdmins(text: string) {
+async function tellAdmins(text: string, keyboard?: InlineKeyboard) {
   for (const id of env.adminIds) {
     await bot.api
       .sendMessage(String(id), text, {
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },
+        ...(keyboard ? { reply_markup: keyboard } : {}),
       })
       .catch(() => {})
   }
