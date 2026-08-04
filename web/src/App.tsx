@@ -100,7 +100,7 @@ export function App() {
     case 'market':
       return <Market city={city} />
     case 'add':
-      return <AddBook city={city} go={go} />
+      return <AddBook city={city} go={go} isAdmin={!!me?.user.isAdmin} />
     case 'digest':
       return <Digest city={city} go={go} />
     case 'loans':

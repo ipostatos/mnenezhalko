@@ -631,6 +631,8 @@ export async function checkDuplicates(input: {
   author?: string | null
   kind: 'book' | 'game'
   ownerTg?: bigint | null
+  /** админ проверяет полку не свою, а того, ЗА КОГО вносит книгу */
+  ownerLibrarianId?: string | null
 }): Promise<DupCheck> {
   const empty = { count: 0, city: null, byCity: [], unknownCity: 0, where: '' }
   const nt = norm(input.title)
@@ -655,9 +657,16 @@ export async function checkDuplicates(input: {
     (b) => norm(b.title) === nt && (!na || !b.author || norm(b.author) === na),
   )
 
-  const ownLib = input.ownerTg
-    ? await prisma.librarian.findUnique({ where: { tgId: input.ownerTg }, select: { id: true } })
-    : null
+  // «своя» полка — та, на которую книга и ляжет: для админа, вносящего книгу за
+  // человека, это полка человека, иначе он видел бы дубли у себя, а не у него
+  const ownLib = input.ownerLibrarianId
+    ? await prisma.librarian.findUnique({
+        where: { id: input.ownerLibrarianId },
+        select: { id: true },
+      })
+    : input.ownerTg
+      ? await prisma.librarian.findUnique({ where: { tgId: input.ownerTg }, select: { id: true } })
+      : null
 
   const own = ownLib ? matches.find((b) => b.ownerId === ownLib.id) : undefined
   const others = matches.filter(

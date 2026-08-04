@@ -2156,3 +2156,54 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   white-space: nowrap;
   padding-top: 2px;
 }
+
+/* ── «чья это книга»: админ вносит книги за библиотекаря ─── */
+
+.behalf {
+  margin-bottom: var(--sp-4);
+}
+
+.behalf-picked {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* .grow живёт внутри .row-card, здесь карточка другая — задаём явно, иначе имя
+   ломается по слогам в узкую колонку рядом с кнопкой */
+.behalf-picked .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.behalf-picked .t-sm {
+  font-weight: 700;
+}
+
+.behalf-picked .btn.narrow {
+  width: auto;
+  flex-shrink: 0;
+}
+
+.behalf-hits {
+  display: grid;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+}
+
+.behalf-hit {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-tint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+}
+
+.behalf-hit:active {
+  background: var(--accent-soft);
+}
