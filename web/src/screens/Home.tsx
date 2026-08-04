@@ -3,7 +3,6 @@ import type { Health, LoanSummary, Me } from '../types'
 import { haptic, openTg } from '../telegram'
 import { MAIN_CHAT, INSTAGRAM } from '../links'
 import { MoodBoard } from './MoodBoard'
-import { Impact } from './Impact'
 import { Icon, type IconName } from './Icon'
 
 type Tile = {
@@ -95,13 +94,9 @@ export function Home({
       sub: 'Кому отдали почитать и когда ждать назад',
       route: { name: 'loans' },
     },
-    {
-      icon: 'award',
-      tone: '#c98a2e',
-      title: 'Мои достижения',
-      sub: 'Значки за книги, выдачи и отзывы',
-      route: { name: 'badges' },
-    },
+    // «Мои достижения» с главной убраны (просьба user 4.08.2026): значки —
+    // не то, ради чего человек открывает приложение. Экран `badges` на месте,
+    // вход в него — лентой значков на «Моей полке» и из инструкции новичка
     {
       icon: 'shelf',
       tone: '#4b82b8',
@@ -194,7 +189,8 @@ export function Home({
 
       <MoodBoard summary={loans} onOpen={() => go({ name: 'loans' })} />
 
-      <Impact />
+      {/* блок «Польза сообщества» с главной убран (просьба user 4.08.2026).
+          Компонент Impact и ручка /api/impact живы — вернуть можно одной строкой */}
 
       <div className="section-title">Что можно сделать</div>
       {tiles.map((t) => (
