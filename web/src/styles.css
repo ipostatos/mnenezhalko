@@ -2228,3 +2228,6 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
    сканировании (.scan-cover), обложки книг в каталоге, значки достижений. */
 .illus { display: none; }
 .promo img { display: none; }
+/* закладки-ленты «Новинка»/«Книга на руках» на обложках — рисунки старого
+   дизайна, на время перехода убраны (статус книги и так виден в тексте) */
+.book-tag { display: none; }

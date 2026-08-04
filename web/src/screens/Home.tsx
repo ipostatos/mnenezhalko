@@ -44,7 +44,7 @@ export function Home({
     },
     {
       icon: 'wand',
-      tone: '#DD93C2',
+      tone: '#AA99EC',
       title: 'Подобрать книгу',
       sub: 'Расскажите, чего хочется — найду',
       route: { name: 'ai' },
@@ -62,7 +62,7 @@ export function Home({
     // в него ведут счётчики; выбор своего города — там же
     {
       icon: 'calendar',
-      tone: '#5BB98B',
+      tone: '#EC9455',
       title: 'Ближайшие встречи',
       sub: 'Что и когда происходит рядом',
       route: { name: 'events' },
@@ -89,7 +89,7 @@ export function Home({
     },
     {
       icon: 'bookHeart',
-      tone: '#8DA4EF',
+      tone: '#3DB9CF',
       title: 'У кого моя книга',
       sub: 'Кому отдали почитать и когда ждать назад',
       route: { name: 'loans' },
@@ -99,14 +99,14 @@ export function Home({
     // вход в него — лентой значков на «Моей полке» и из инструкции новичка
     {
       icon: 'shelf',
-      tone: '#5BB98B',
+      tone: '#5EB0EF',
       title: 'Моя полка',
       sub: 'Мои книги, статусы, редактирование',
       route: { name: 'myshelf' },
     },
     {
       icon: 'plus',
-      tone: '#EC9455',
+      tone: '#BE93E4',
       title: 'Добавить книгу',
       sub: 'Поставить свою книгу на полку',
       route: { name: 'add' },
@@ -117,7 +117,7 @@ export function Home({
       ? ([
           {
             icon: 'shield',
-            tone: '#5BB98B',
+            tone: '#CF91D8',
             title: 'Разбор',
             sub: 'Книги на проверке, жалобы, ограничения',
             route: { name: 'admin' },
@@ -126,14 +126,14 @@ export function Home({
       : []),
     {
       icon: 'chat',
-      tone: '#8DA4EF',
+      tone: '#53B9AB',
       title: 'Чат проекта',
       sub: 'МнеНеЖалко в Польше',
       url: MAIN_CHAT,
     },
     {
       icon: 'instagram',
-      tone: '#DD93C2',
+      tone: '#E58FB1',
       title: 'Инстаграм',
       sub: '@mne_ne_zhalko_pl',
       url: INSTAGRAM,
