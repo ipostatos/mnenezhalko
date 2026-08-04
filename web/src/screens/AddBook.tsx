@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Route } from '../App'
-import type { DupCheck, Facets } from '../types'
+import type { DupCheck, Facets, LibrarianPick } from '../types'
 import { haptic, showAlert, showConfirm } from '../telegram'
 import { plural } from '../plural'
 import { TagPicker } from './TagPicker'
@@ -39,7 +39,16 @@ async function compress(file: File): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.82)
 }
 
-export function AddBook({ city, go }: { city?: string; go: (r: Route) => void }) {
+export function AddBook({
+  city,
+  go,
+  isAdmin = false,
+}: {
+  city?: string
+  go: (r: Route) => void
+  /** админам и модераторам доступен выбор «чья это книга» */
+  isAdmin?: boolean
+}) {
   const [title, setTitle] = useState('')
   const [author, setAuthor] = useState('')
   const [genres, setGenres] = useState<string[]>([])
@@ -49,9 +58,13 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   const [kind, setKind] = useState('book')
   const [facets, setFacets] = useState<Facets | null>(null)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState<{ id: string; inNotion: boolean; pending: boolean } | null>(
-    null,
-  )
+  const [saved, setSaved] = useState<{
+    id: string
+    inNotion: boolean
+    pending: boolean
+    /** имя библиотекаря, если книгу вносили за него */
+    owner: string | null
+  } | null>(null)
 
   const [cover, setCover] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -62,6 +75,35 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   const [isbn, setIsbn] = useState('')
   const [isbnBusy, setIsbnBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  /**
+   * «Чья это книга» — только у админов и модераторов.
+   *
+   * Человек может не иметь возможности внести свои книги сам (нет Telegram под
+   * рукой, не разобрался, попросил на встрече). Раньше такие книги оседали на
+   * полке админа и номинально становились его — теперь владелец выбирается
+   * явно, а в аудите остаётся, кто именно внёс (просьба user 4.08.2026).
+   */
+  const [owner, setOwner] = useState<LibrarianPick | null>(null)
+  const [ownerQuery, setOwnerQuery] = useState('')
+  const [ownerHits, setOwnerHits] = useState<LibrarianPick[]>([])
+
+  useEffect(() => {
+    if (!isAdmin || owner) return
+    const q = ownerQuery.trim()
+    if (q.length < 2) {
+      setOwnerHits([])
+      return
+    }
+    // подсказки не должны лететь на каждую букву
+    const t = setTimeout(() => {
+      api
+        .adminLibrarians(q)
+        .then((r) => setOwnerHits(r.librarians))
+        .catch(() => setOwnerHits([]))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [ownerQuery, owner, isAdmin])
 
   useEffect(() => {
     api.facets().then(setFacets).catch(() => {})
@@ -161,12 +203,17 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
   }
 
   async function save() {
-    // свой дубль — предупреждаем и просим подтвердить (чужие экземпляры не мешают)
-    const check = await api.duplicates(title.trim(), author.trim() || undefined, kind).catch(() => null)
+    // свой дубль — предупреждаем и просим подтвердить (чужие экземпляры не мешают).
+    // Когда книгу вносят за человека, «свой» — это его дубль, а не наш
+    const check = await api
+      .duplicates(title.trim(), author.trim() || undefined, kind, owner?.id)
+      .catch(() => null)
     if (
       check?.own &&
       !(await showConfirm(
-        `У вас на полке уже есть «${check.own.title}». Всё равно добавить ещё один экземпляр?`,
+        owner
+          ? `У ${owner.name} на полке уже есть «${check.own.title}». Всё равно добавить ещё один экземпляр?`
+          : `У вас на полке уже есть «${check.own.title}». Всё равно добавить ещё один экземпляр?`,
       ))
     ) {
       return
@@ -184,12 +231,14 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
         // сюда приходит либо ссылка от распознавания, либо снимок без него
         coverUrl: cover && !cover.startsWith('data:') ? cover : undefined,
         coverImage: cover && cover.startsWith('data:') ? cover : undefined,
+        ownerLibrarianId: owner?.id,
       })
       haptic('success')
       setSaved({
         id: res.book.id,
         inNotion: res.notionStatus === 'synced',
         pending: res.book.reviewStatus === 'pending',
+        owner: owner?.name ?? null,
       })
     } catch (e: any) {
       showAlert(e.message === 'unauthorized' ? 'Откройте приложение через бота' : e.message)
@@ -209,7 +258,14 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
           </>
         ) : (
           <>
-            Книга на полке! Теперь её видно в поиске, а с вами свяжутся напрямую в Telegram.
+            {saved.owner ? (
+              <>
+                Книга на полке: {saved.owner}. Теперь её видно в поиске, а писать по ней будут
+                владельцу.
+              </>
+            ) : (
+              <>Книга на полке! Теперь её видно в поиске, а с вами свяжутся напрямую в Telegram.</>
+            )}
             <div className="sub" style={{ marginTop: 'var(--sp-2)' }}>
               {saved.inNotion
                 ? 'Карточка уже в общей таблице проекта.'
@@ -245,7 +301,79 @@ export function AddBook({ city, go }: { city?: string; go: (r: Route) => void })
     <>
       <img className="illus" src="/il/add.jpg" alt="" loading="lazy" />
       <h1>Добавить на полку</h1>
-      <div className="sub">Книга останется у вас — просто станет видна библиотекарям.</div>
+      <div className="sub">
+        {owner
+          ? `Книга встанет на полку: ${owner.name}${owner.city ? ` · ${owner.city}` : ''}. Писать по ней будут владельцу, не вам.`
+          : 'Книга останется у вас — просто станет видна библиотекарям.'}
+      </div>
+
+      {/* выбор владельца — только админам и модераторам: вносим книги за того,
+          кто не может сделать это сам, чтобы они не оседали на нашей полке */}
+      {isAdmin && (
+        <div className="card behalf">
+          <div className="section-title" style={{ margin: '0 0 var(--sp-2)' }}>
+            Чья это книга
+          </div>
+          {owner ? (
+            <div className="behalf-picked">
+              <div className="grow">
+                <div className="t-sm">{owner.name}</div>
+                <div className="d muted">
+                  {[owner.telegram ? `@${owner.telegram}` : null, owner.city, `${owner.books} на полке`]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </div>
+              </div>
+              <button
+                className="btn ghost sm narrow"
+                onClick={() => {
+                  haptic()
+                  setOwner(null)
+                  setOwnerQuery('')
+                }}
+              >
+                Убрать
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                className="input"
+                placeholder="Имя или @ник библиотекаря"
+                value={ownerQuery}
+                onChange={(e) => setOwnerQuery(e.target.value)}
+              />
+              {ownerHits.length > 0 && (
+                <div className="behalf-hits">
+                  {ownerHits.map((l) => (
+                    <button
+                      key={l.id}
+                      className="behalf-hit"
+                      onClick={() => {
+                        haptic()
+                        setOwner(l)
+                        setOwnerHits([])
+                        // город книги — города владельца: свой подставлять нельзя
+                        if (l.city) setPlace(l.city)
+                      }}
+                    >
+                      <span className="t-sm">{l.name}</span>
+                      <span className="d muted">
+                        {[l.telegram ? `@${l.telegram}` : null, l.city, `${l.books} кн.`]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="d muted" style={{ marginTop: 'var(--sp-2)' }}>
+                Оставьте пустым — книга встанет на вашу полку.
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <input
         ref={fileRef}

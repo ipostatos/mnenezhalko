@@ -24,6 +24,7 @@ import type {
   Badge,
   Impact,
   Person,
+  LibrarianPick,
   DeletionPreview,
   ModerationQueue,
 } from './types'
@@ -139,11 +140,16 @@ export const api = {
     kind?: string
     coverUrl?: string
     coverImage?: string
+    /** админ ставит книгу на полку этого библиотекаря, а не на свою */
+    ownerLibrarianId?: string
   }) => req<ShelfResult>('POST', '/api/books', data),
+  /** Поиск библиотекаря, за которого админ вносит книгу. */
+  adminLibrarians: (q: string) =>
+    req<{ librarians: LibrarianPick[] }>('GET', `/api/admin/librarians${qs({ q })}`),
   /** Фото обложки (dataURL) → распознанные поля, сохранённая обложка и дубли. */
   recognize: (image: string) => req<RecognizeResult>('POST', '/api/recognize', { image }),
-  duplicates: (title: string, author?: string, kind?: string) =>
-    req<DupCheck>('GET', `/api/duplicates${qs({ title, author, kind })}`),
+  duplicates: (title: string, author?: string, kind?: string, ownerLibrarianId?: string) =>
+    req<DupCheck>('GET', `/api/duplicates${qs({ title, author, kind, ownerLibrarianId })}`),
   /** Книга по ISBN из открытых каталогов (OpenLibrary, Biblioteka Narodowa, Google Books). */
   isbn: (code: string) => req<IsbnLookup>('GET', `/api/isbn${qs({ code })}`),
   /** Ссылка на счёт Telegram Stars для доната прямо в Mini App. */

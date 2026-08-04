@@ -277,6 +277,19 @@ export type Person = {
 }
 
 /**
+ * Библиотекарь в выборе «чья это книга»: админ вносит книги за человека,
+ * который не может сделать это сам (см. `/api/admin/librarians`).
+ */
+export type LibrarianPick = {
+  id: string
+  name: string
+  telegram: string | null
+  city: string | null
+  /** сколько книг уже на полке — помогает отличить однофамильцев */
+  books: number
+}
+
+/**
  * Что исчезнет при удалении данных (или уже исчезло). Ключи по-русски: их
  * показывают человеку как есть, см. server/src/mydata.ts.
  */

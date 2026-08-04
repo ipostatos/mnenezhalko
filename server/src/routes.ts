@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { prisma } from './db.js'
+import { norm, prisma } from './db.js'
 import { env, isAdmin } from './env.js'
 import { upsertUser, verifyInitData, type TgUser } from './auth.js'
 import { bookById, facets, searchBooks, toCard } from './search.js'
@@ -800,6 +800,59 @@ export async function registerRoutes(app: FastifyInstance) {
   })
 
   /**
+   * Поиск библиотекаря для добавления книги ОТ ЕГО ИМЕНИ (только админам).
+   *
+   * В боте это `/onbehalf @ник`, но там нужен именно ник, а в проекте есть
+   * библиотекари из Notion вообще без ника — их так не выбрать. Поэтому ищем и
+   * по имени тоже, и отдаём id: дальше книга кладётся на полку по id, а не по
+   * тексту. Библиотекарей ~150, поэтому фильтруем в памяти — так работает и с
+   * кириллицей, где SQLite `contains` регистр не понимает.
+   */
+  app.get('/api/admin/librarians', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const { q } = req.query as { q?: string }
+    const needle = norm(String(q ?? '').replace(/^@/, '').slice(0, 64))
+
+    const all = await prisma.librarian.findMany({
+      where: { mergedIntoId: null },
+      select: {
+        id: true,
+        name: true,
+        telegram: true,
+        city: true,
+        _count: { select: { books: { where: { active: true } } } },
+      },
+    })
+    const rank = (l: (typeof all)[number]) => {
+      const name = norm(l.name ?? '')
+      const tg = norm(l.telegram ?? '')
+      if (!needle) return 4
+      if (tg.startsWith(needle)) return 0
+      if (name.startsWith(needle)) return 1
+      if (tg.includes(needle)) return 2
+      if (name.includes(needle)) return 3
+      return 99
+    }
+    const found = all
+      .map((l) => ({ l, r: rank(l) }))
+      .filter((x) => x.r < 99)
+      // при равном совпадении первым тот, у кого книг больше: это «живой»
+      // библиотекарь, а не пустая запись-однофамилец
+      .sort((a, b) => a.r - b.r || b.l._count.books - a.l._count.books)
+      .slice(0, 10)
+      .map(({ l }) => ({
+        id: l.id,
+        name: l.name,
+        telegram: l.telegram,
+        city: l.city,
+        books: l._count.books,
+      }))
+    return json({ librarians: found })
+  })
+
+  /**
    * Подсказка людей при вводе ника («у кого моя книга»). Только по подписи и с
    * лимитом: это про своих, а не справочник ников всего проекта.
    */
@@ -1371,13 +1424,22 @@ export async function registerRoutes(app: FastifyInstance) {
    */
   app.get('/api/duplicates', async (req) => {
     const u = who(req)
-    const { title, author, kind } = req.query as { title?: string; author?: string; kind?: string }
+    const { title, author, kind, ownerLibrarianId } = req.query as {
+      title?: string
+      author?: string
+      kind?: string
+      ownerLibrarianId?: string
+    }
+    // чужую полку проверяет только админ (он вносит книгу за человека); у всех
+    // остальных параметр молча игнорируется — это подсказка, а не право доступа
+    const forOwner = ownerLibrarianId && u && isAdmin(u.id) ? String(ownerLibrarianId) : null
     return json(
       await checkDuplicates({
         title: title || '',
         author,
         kind: kind === 'game' ? 'game' : 'book',
         ownerTg: u?.id ?? null,
+        ownerLibrarianId: forOwner,
       }),
     )
   })
@@ -1414,6 +1476,24 @@ export async function registerRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'bad_request' })
     }
 
+    /**
+     * Админ ставит книгу на полку ЧУЖОГО библиотекаря (просьба user 4.08.2026).
+     * Раньше в Mini App этого не было вовсе: книги человека, который не может
+     * внести их сам, оседали на полке админа и номинально были его. В боте это
+     * `/onbehalf @ник`, здесь — явный id библиотекаря из `/api/admin/librarians`.
+     * Владелец книги — он, `addedByTg` остаётся админским: видно, кто внёс.
+     */
+    let onBehalf: { id: string; name: string; city: string | null } | null = null
+    if (b.ownerLibrarianId) {
+      if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+      const lib = await prisma.librarian.findFirst({
+        where: { id: String(b.ownerLibrarianId), mergedIntoId: null },
+        select: { id: true, name: true, city: true },
+      })
+      if (!lib) return reply.code(404).send({ error: 'librarian_not_found' })
+      onBehalf = lib
+    }
+
     // город может прийти как «Warszawa/Wola» либо отдельным полем district
     const [city, districtFromCity] = String(b.city || '').split('/').map((s: string) => s.trim())
     const list = (v: unknown) =>
@@ -1448,11 +1528,13 @@ export async function registerRoutes(app: FastifyInstance) {
       author: b.author ? String(b.author) : null,
       genres: list(b.genres),
       languages: list(b.languages),
-      city: city || user.city || null,
+      // город книги — города владельца, а не того, кто её вносит
+      city: city || onBehalf?.city || user.city || null,
       district: (b.district ? String(b.district) : districtFromCity) || null,
       coverUrl,
+      ownerLibrarianId: onBehalf?.id ?? null,
     })
-    return json(res)
+    return json({ ...res, onBehalf: onBehalf ? { name: onBehalf.name } : null })
   })
 
   /**
