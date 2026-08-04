@@ -334,7 +334,12 @@ model Event {
 /// Барахолка по городам
 model MarketItem {
   id          String    @id @default(cuid())
+  /// город проекта: по нему работает фильтр. «Все города» — если справочник
+  /// агломераций такого населённого пункта не знает (см. agglomeration.ts)
   city        String
+  /// исходный населённый пункт, если это не сам город проекта: «Wieliczka»
+  /// при городе «Kraków». Показывается подписью «Kraków (Wieliczka)»
+  locality    String?
   kind        String    @default("give") // give | sell | search
   title       String
   description String?
