@@ -467,3 +467,53 @@ test('незакрытые выдачи видно с обеих сторон', 
   assert.ok('error' in blocked)
   assert.equal((blocked as any).loans[0].role, 'взяли почитать')
 })
+
+/* ── выгрузка приходит файлом в чат с ботом ──────────────────
+   Скачивание blob-ссылкой внутри вебвью Telegram подвешивало приложение
+   (жалоба user 4.08.2026), поэтому файл отправляет бот. Проверяем, что ручка
+   действительно шлёт документ тому, кто её позвал, и что отказ Telegram
+   виден клиенту, а не проглатывается. */
+
+const { bot } = await import('./bot.js')
+
+let sentCalls: { method: string; payload: any }[] = []
+let sendFails = false
+
+bot.api.config.use(async (prev, method, payload: any, signal) => {
+  sentCalls.push({ method, payload })
+  if (method === 'sendDocument') {
+    if (sendFails) throw new Error('Forbidden: bot was blocked by the user')
+    return { ok: true, result: {} } as any
+  }
+  return prev(method, payload, signal)
+})
+
+test('выгрузка отправляется документом в чат с тем, кто её попросил', async () => {
+  sentCalls = []
+  sendFails = false
+  await seedShelf(ME)
+
+  const r = await app.inject({ method: 'POST', url: '/api/me/export/send', headers: asUser(ME) })
+  assert.equal(r.statusCode, 200)
+
+  const call = sentCalls.find((c) => c.method === 'sendDocument')
+  assert.ok(call, 'бот должен был отправить документ')
+  assert.equal(call!.payload.chat_id, Number(ME))
+  assert.match(call!.payload.document.filename, /^mnenezhalko-\d{4}-\d{2}-\d{2}\.json$/)
+})
+
+test('если бот не смог прислать файл, клиент узнаёт об этом (502)', async () => {
+  sentCalls = []
+  sendFails = true
+  await seedShelf(ME)
+
+  const r = await app.inject({ method: 'POST', url: '/api/me/export/send', headers: asUser(ME) })
+  assert.equal(r.statusCode, 502)
+  assert.equal(r.json().error, 'send_failed')
+  sendFails = false
+})
+
+test('чужие данные так не заберёшь: без подписи Telegram — 401', async () => {
+  const r = await app.inject({ method: 'POST', url: '/api/me/export/send' })
+  assert.equal(r.statusCode, 401)
+})

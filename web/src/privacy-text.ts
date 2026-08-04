@@ -1,19 +1,17 @@
 /**
  * Текст о персональных данных — по-русски и по-польски.
  *
- * ⚠️ Реквизиты контролёра данных ОСТАВЛЕНЫ ПЛЕЙСХОЛДЕРАМИ намеренно. Кто
- * является контролёром, по какому адресу с ним связаться и на какую почту
- * писать по правам на данные — управленческое решение, а не догадка
- * разработчика. Подставить сюда выдуманное юридическое лицо было бы хуже, чем
- * честно показать пробел.
+ * Реквизиты контролёра заполнены по решению user 4.08.2026: контролёр — частное
+ * лицо, поэтому показываем имя и почту для связи, почтовый адрес не публикуем.
+ * Имя пишется одинаково в обеих версиях текста и не транслитерируется.
  *
  * Заполняется в одном месте: константы ниже. Пока значение начинается с «{{»,
- * приложение показывает его как незаполненное.
+ * приложение считает его незаполненным и не рисует строку.
  */
 export const CONTROLLER = {
-  name: '{{DATA_CONTROLLER_NAME}}',
+  name: 'Baryshau Artsiom',
   address: '{{DATA_CONTROLLER_ADDRESS}}',
-  email: '{{PRIVACY_EMAIL}}',
+  email: 'ipostatos@gmail.com',
 }
 
 /** Значение ещё не подставлено — показываем как пробел, а не как текст. */
@@ -29,6 +27,8 @@ export type PrivacyText = {
   intro: string
   controllerTitle: string
   controllerNote: string
+  /** Подписи к реквизитам — показываются только у заполненных. */
+  controllerFields: { name: string; address: string; email: string }
   sections: PrivacySection[]
   retentionTitle: string
   retentionNote: string
@@ -96,6 +96,7 @@ export const PRIVACY: Record<PrivacyLang, PrivacyText> = {
     controllerNote:
       'Это тот, кто решает, зачем и как данные обрабатываются, и кому вы пишете по любому ' +
       'вопросу о них.',
+    controllerFields: { name: 'Кто', address: 'Адрес', email: 'Почта для писем' },
     sections: [
       {
         title: 'Что мы храним',
@@ -149,7 +150,8 @@ export const PRIVACY: Record<PrivacyLang, PrivacyText> = {
     ],
     howTitle: 'Как этим воспользоваться',
     how: [
-      'Выгрузка и удаление — кнопками на этом экране, сразу и без переписки.',
+      'Выгрузка и удаление — кнопками на этом экране, сразу и без переписки. ' +
+        'Файл с вашими данными бот пришлёт в чат с вами.',
       'Незакрытая выдача удаление задерживает: пока чужая книга у вас на руках (или ваша у ' +
         'кого-то), запись о ней нужна обеим сторонам. Сначала возврат.',
       'Закрытые выдачи после удаления остаются в истории обмена, но опознать в них вас уже нельзя.',
@@ -170,6 +172,7 @@ export const PRIVACY: Record<PrivacyLang, PrivacyText> = {
     controllerNote:
       'To osoba lub podmiot, który decyduje, po co i jak dane są przetwarzane, i do którego ' +
       'piszesz w każdej sprawie ich dotyczącej.',
+    controllerFields: { name: 'Kto', address: 'Adres', email: 'E-mail' },
     sections: [
       {
         title: 'Co przechowujemy',
@@ -223,7 +226,8 @@ export const PRIVACY: Record<PrivacyLang, PrivacyText> = {
     ],
     howTitle: 'Jak z tego skorzystać',
     how: [
-      'Eksport i usunięcie — przyciskami na tym ekranie, od razu i bez korespondencji.',
+      'Eksport i usunięcie — przyciskami na tym ekranie, od razu i bez korespondencji. ' +
+        'Plik z Twoimi danymi bot przyśle na czat z Tobą.',
       'Otwarte wypożyczenie wstrzymuje usunięcie: dopóki cudza książka jest u Ciebie (albo ' +
         'Twoja u kogoś), zapis o niej jest potrzebny obu stronom. Najpierw zwrot.',
       'Zamknięte wypożyczenia po usunięciu zostają w historii wymiany, ale nie da się w nich ' +

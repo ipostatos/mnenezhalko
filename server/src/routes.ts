@@ -52,6 +52,7 @@ import {
 } from './loans.js'
 import {
   askForRating,
+  bot,
   botUsername,
   createDonateLink,
   flushWaitlistNotices,
@@ -86,6 +87,7 @@ import { badgesOf } from './badges.js'
 import { suggestPeople } from './people.js'
 import { impact } from './impact.js'
 import { prewarmCoverage } from './prewarm.js'
+import { InputFile } from 'grammy'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import sharp from 'sharp'
 import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
@@ -407,6 +409,40 @@ export async function registerRoutes(app: FastifyInstance) {
       .header('Content-Type', 'application/json; charset=utf-8')
       .header('Content-Disposition', `attachment; filename="mnenezhalko-${day}.json"`)
       .send(JSON.stringify(data, null, 2))
+  })
+
+  /**
+   * Прислать выгрузку файлом в чат с ботом.
+   *
+   * Прежний путь — скачать blob-ссылкой прямо в Mini App — в вебвью Telegram
+   * не работает: приложение подвисало, и обновление страницы не помогало
+   * (жалоба user 4.08.2026). Файл, присланный ботом, человек получает
+   * гарантированно, может открыть в любом редакторе и переслать куда угодно.
+   * Ручка `GET /api/me/export` осталась: она честно отдаёт JSON тем, кто
+   * пришёл не из вебвью.
+   */
+  app.post('/api/me/export/send', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (tooOften(`export:${u.id}`, 5, 3600_000)) {
+      return reply.code(429).send({ error: 'too_many' })
+    }
+    const data = await exportMyData(u.id)
+    const day = new Date().toISOString().slice(0, 10)
+    const file = Buffer.from(JSON.stringify(data, null, 2), 'utf8')
+    try {
+      await bot.api.sendDocument(Number(u.id), new InputFile(file, `mnenezhalko-${day}.json`), {
+        caption:
+          'Ваши данные из проекта «МнеНеЖалко». Это файл JSON — его открывает любой текстовый ' +
+          'редактор. Файл лежит только в этом чате: удалите сообщение, когда он будет не нужен.',
+      })
+    } catch (e) {
+      // причины разные (бот выключен, человек заблокировал бота), но человеку
+      // важно одно: файл не дошёл — и есть запасной путь через буфер обмена
+      req.log.error({ err: String(e) }, 'export send failed')
+      return reply.code(502).send({ error: 'send_failed' })
+    }
+    return json({ ok: true })
   })
 
   /** Что именно исчезнет при удалении — до того, как человек нажмёт кнопку. */

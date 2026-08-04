@@ -101,6 +101,7 @@ export const api = {
 
   /* «Мои данные»: выгрузка и удаление (см. server/src/mydata.ts) */
   exportMyData: () => req<Record<string, unknown>>('GET', '/api/me/export'),
+  sendMyData: () => req<{ ok: true }>('POST', '/api/me/export/send', {}),
   deletePreview: () => req<DeletionPreview>('GET', '/api/me/delete-preview'),
   deleteMyData: () => req<DeletionPreview>('POST', '/api/me/delete-request', { confirm: 'УДАЛИТЬ' }),
 

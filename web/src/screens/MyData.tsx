@@ -17,39 +17,48 @@ export function MyData({ go }: { go: (r: Route) => void }) {
   const [lang, setLang] = useState<PrivacyLang>('ru')
   const t = PRIVACY[lang]
 
+  // реквизиты контролёра: показываем только заполненные (см. privacy-text.ts)
+  const filled = (
+    [
+      [t.controllerFields.name, CONTROLLER.name],
+      [t.controllerFields.address, CONTROLLER.address],
+      [t.controllerFields.email, CONTROLLER.email],
+    ] as [string, string][]
+  ).filter(([, v]) => !isPlaceholder(v))
+
   const [busy, setBusy] = useState<'export' | 'preview' | 'delete' | null>(null)
   const [preview, setPreview] = useState<{ summary: Record<string, number>; effects: string[] } | null>(null)
   const [blocked, setBlocked] = useState<{ title: string; role: string }[] | null>(null)
   const [done, setDone] = useState(false)
 
+  /**
+   * Выгрузка приходит файлом в чат с ботом.
+   *
+   * Раньше файл собирался прямо здесь и скачивался blob-ссылкой — в вебвью
+   * Telegram это подвешивало приложение намертво, обновление не помогало
+   * (жалоба user 4.08.2026). Бот шлёт файл в чат: сохранить, переслать и
+   * открыть его человек сможет обычными средствами Telegram.
+   */
   async function download() {
     haptic()
     setBusy('export')
     try {
-      const data = await api.exportMyData()
-      const text = JSON.stringify(data, null, 2)
-      // вебвью Telegram по-разному относится к скачиванию: пробуем файл, а если
-      // не вышло — кладём в буфер обмена, чтобы человек всё равно унёс свои данные
-      try {
-        const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `mnenezhalko-${new Date().toISOString().slice(0, 10)}.json`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        setTimeout(() => URL.revokeObjectURL(url), 10_000)
-        showAlert('Файл с вашими данными сохранён.')
-      } catch {
-        await navigator.clipboard.writeText(text)
-        showAlert('Скачать файл не получилось, поэтому данные скопированы в буфер обмена.')
-      }
+      await api.sendMyData()
+      showAlert('Файл с вашими данными отправлен в чат с ботом.')
     } catch (e: any) {
-      showAlert(
-        e?.message === 'too_many'
-          ? 'Слишком часто. Попробуйте через час.'
-          : 'Не получилось собрать выгрузку. Попробуйте позже.',
-      )
+      if (e?.message === 'too_many') {
+        showAlert('Слишком часто. Попробуйте через час.')
+      } else {
+        // бот не смог прислать файл (например, вы его заблокировали) — тогда
+        // хотя бы отдадим данные в буфер обмена, чтобы право не осталось на бумаге
+        try {
+          const data = await api.exportMyData()
+          await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+          showAlert('Бот не смог прислать файл, поэтому данные скопированы в буфер обмена.')
+        } catch {
+          showAlert('Не получилось собрать выгрузку. Попробуйте позже или напишите нам.')
+        }
+      }
     } finally {
       setBusy(null)
     }
@@ -129,18 +138,20 @@ export function MyData({ go }: { go: (r: Route) => void }) {
         <div className="d muted" style={{ marginBottom: 'var(--sp-2)' }}>
           {t.controllerNote}
         </div>
-        {/* пока реквизиты не подставлены, показываем ОДНУ честную строку, а не
-            три одинаковые: это заметный пробел, а не оформление */}
-        {[CONTROLLER.name, CONTROLLER.address, CONTROLLER.email].every(isPlaceholder) ? (
-          <div className="d" style={{ color: 'var(--warn)' }}>
-            {t.placeholderNote}
-          </div>
+        {/* показываем только заполненные реквизиты: пустая строка «ещё не
+            заполнено» рядом с именем выглядела бы как поломка, а не как пробел.
+            Если не заполнено ничего — одна честная строка вместо трёх */}
+        {filled.length === 0 ? (
+          <div className="d warn-text">{t.placeholderNote}</div>
         ) : (
-          <>
-            <Field value={CONTROLLER.name} note={t.placeholderNote} />
-            <Field value={CONTROLLER.address} note={t.placeholderNote} />
-            <Field value={CONTROLLER.email} note={t.placeholderNote} />
-          </>
+          <div className="controller">
+            {filled.map(([label, value]) => (
+              <div className="controller-row" key={label}>
+                <span className="w">{label}</span>
+                <span className="v">{value}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -184,7 +195,7 @@ export function MyData({ go }: { go: (r: Route) => void }) {
 
       <div style={{ height: 'var(--sp-4)' }} />
       <button className="btn" disabled={busy !== null} onClick={download}>
-        <Icon name="book" /> {busy === 'export' ? 'Собираю…' : 'Скачать мои данные'}
+        <Icon name="book" /> {busy === 'export' ? 'Собираю…' : 'Прислать мои данные файлом'}
       </button>
 
       <div style={{ height: 'var(--sp-2)' }} />
@@ -244,16 +255,4 @@ export function MyData({ go }: { go: (r: Route) => void }) {
       )}
     </>
   )
-}
-
-/** Реквизит контролёра: либо значение, либо честная пометка «ещё не заполнено». */
-function Field({ value, note }: { value: string; note: string }) {
-  if (isPlaceholder(value)) {
-    return (
-      <div className="d" style={{ color: 'var(--warn)' }}>
-        {note}
-      </div>
-    )
-  }
-  return <div className="t-sm">{value}</div>
 }
