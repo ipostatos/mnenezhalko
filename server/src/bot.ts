@@ -32,7 +32,8 @@ import {
   marketTopicUrl,
 } from './seed.js'
 import { parseOffer, removeMarketItem, saveOffer } from './market.js'
-import { EVENT_TAIL_MS } from './events.js'
+import { EVENT_TAIL_MS, listPastEvents, removeEvent } from './events.js'
+import { findPerson, personCard, projectStats } from './admin.js'
 import {
   claimLoanByToken,
   createLoan,
@@ -225,6 +226,36 @@ bot.command('start', async (ctx) => {
   )
 })
 
+/**
+ * Админский раздел справки.
+ *
+ * До 4 августа 2026 админских команд не было ВИДНО нигде: ни в /help, ни в меню
+ * бота. Человек с правами не знал, что у него есть /queue, /moderation и всё
+ * остальное, и пользовался только тем, что случайно увидел в переписке.
+ */
+const ADMIN_HELP = [
+  '',
+  '🛡 <b>Для администраторов</b>',
+  '/stats — что происходит в проекте прямо сейчас',
+  '/moderation — разбор: отзывы, книги, ограничения, блокировки',
+  '/queue — книги, ждущие проверки',
+  '/who <i>@ник</i> — карточка человека: полка, выдачи, ограничения',
+  '/whoami — свой числовой id',
+  '/admins — кто сейчас администратор',
+  '/restrict <i>@ник область дней причина</i> — закрыть одно действие',
+  '/unrestrict <i>@ник область причина</i> — вернуть',
+  '/ban <i>@ник причина</i> · /unban <i>@ник причина</i>',
+  '/market_remove <i>id причина</i> — снять объявление (или ответом на пост)',
+  '/events_past · /event_remove <i>id</i> — убрать прошедшую встречу',
+  '/addevent <i>Город | 2026-08-01 18:30 | Название | Место</i>',
+  '/addgroup <i>Город | Название | ссылка</i>',
+  '/onbehalf <i>@ник</i> — добавлять книги от имени библиотекаря',
+  '/sync · /notion · /notionpush — общая таблица Notion',
+  '/topics — видит ли бот чат проекта',
+  '',
+  'Подробное руководство: docs/ADMIN_GUIDE.md',
+]
+
 bot.command('help', (ctx) =>
   ctx.reply(
     [
@@ -247,8 +278,9 @@ bot.command('help', (ctx) =>
       'Несколько книг сразу — пришлите обложки <b>альбомом</b> или списком через /import.',
       '',
       'Можно просто написать сообщение — я пойму это как запрос к помощнику.',
+      ...(isAdmin(ctx.from!.id) ? ADMIN_HELP : []),
     ].join('\n'),
-    { parse_mode: 'HTML' },
+    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
   ),
 )
 
@@ -2156,19 +2188,48 @@ bot.callbackQuery(/^rs:(\w+):(\d+)$/, async (ctx) => {
   await flushNotices()
 })
 
-/** `/restrict tgId область дней причина` (0 дней — бессрочно). */
+/**
+ * Кого имел в виду админ: «@ник», числовой id или ответ на сообщение человека.
+ *
+ * Раньше команды принимали только числовой id, которого админу негде взять
+ * (в интерфейсе Telegram их нет, в карточках проекта мы их намеренно не
+ * показываем). Право было, а воспользоваться им было нельзя.
+ */
+async function whom(ctx: any, arg: string): Promise<bigint | null> {
+  const replyTo = ctx.message?.reply_to_message?.from
+  if (replyTo && !arg) return BigInt(replyTo.id)
+
+  const res = await findPerson(arg)
+  if (res.ok) return res.person.tgId
+
+  const texts: Record<string, string> = {
+    empty: 'Кого? Укажите @ник или числовой id, либо ответьте на сообщение человека.',
+    not_found: `Не нашёл «${esc(arg)}». Человек должен хотя бы раз открыть бота — ник берётся из его профиля.`,
+    known_but_no_tg:
+      `«${esc(res.ok === false ? (res.name ?? arg) : arg)}» есть в справочнике библиотекарей, ` +
+      'но бота ещё не открывал, поэтому в Telegram его не опознать. Попросите его написать боту.',
+  }
+  await ctx.reply(texts[res.ok === false ? res.code : 'not_found'], { parse_mode: 'HTML' })
+  return null
+}
+
+/** `/restrict @ник|tgId область дней причина` (0 дней — бессрочно). */
 bot.command('restrict', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
   const [id, scope, days, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
   const reason = rest.join(' ')
   if (!id || !scope || !isScope(scope) || !reason) {
     return ctx.reply(
-      `Формат: /restrict tgId область дней причина\nОбласти: ${Object.keys(SCOPE_TITLES).join(', ')}`,
+      `Формат: /restrict @ник область дней причина\n` +
+        `(вместо @ника можно числовой id; 0 дней — бессрочно)\n` +
+        `Области: ${Object.keys(SCOPE_TITLES).join(', ')}`,
     )
   }
+  const targetTg = await whom(ctx, id)
+  if (!targetTg) return
   const res = await restrictUser({
     actorTg: BigInt(ctx.from!.id),
-    targetTg: BigInt(id),
+    targetTg,
     scope,
     reason,
     days: Number(days) > 0 ? Number(days) : null,
@@ -2236,11 +2297,13 @@ bot.command('unrestrict', async (ctx) => {
   const [id, scope, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
   const reason = rest.join(' ')
   if (!id || !scope || !isScope(scope) || !reason) {
-    return ctx.reply('Формат: /unrestrict tgId область причина')
+    return ctx.reply('Формат: /unrestrict @ник область причина')
   }
+  const targetTg = await whom(ctx, id)
+  if (!targetTg) return
   const res = await unrestrictUser({
     actorTg: BigInt(ctx.from!.id),
-    targetTg: BigInt(id),
+    targetTg,
     scope,
     reason,
   })
@@ -2253,8 +2316,10 @@ bot.command('ban', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
   const [id, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
   const reason = rest.join(' ')
-  if (!id || !reason) return ctx.reply('Формат: /ban tgId причина')
-  const res = await banUser({ actorTg: BigInt(ctx.from!.id), targetTg: BigInt(id), reason })
+  if (!id || !reason) return ctx.reply('Формат: /ban @ник причина')
+  const targetTg = await whom(ctx, id)
+  if (!targetTg) return
+  const res = await banUser({ actorTg: BigInt(ctx.from!.id), targetTg, reason })
   if (!res.ok) {
     const texts: Record<string, string> = {
       admin: 'Админа заблокировать нельзя',
@@ -2273,11 +2338,183 @@ bot.command('unban', async (ctx) => {
   if (!isAdmin(ctx.from!.id)) return
   const [id, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
   const reason = rest.join(' ')
-  if (!id || !reason) return ctx.reply('Формат: /unban tgId причина')
-  const res = await unbanUser({ actorTg: BigInt(ctx.from!.id), targetTg: BigInt(id), reason })
+  if (!id || !reason) return ctx.reply('Формат: /unban @ник причина')
+  const targetTg = await whom(ctx, id)
+  if (!targetTg) return
+  const res = await unbanUser({ actorTg: BigInt(ctx.from!.id), targetTg, reason })
   if (!res.ok) return ctx.reply(`Не вышло: ${res.code}`)
   await flushNotices()
   await ctx.reply('Доступ восстановлен, человеку сообщили.')
+})
+
+/* ── кто есть кто ─────────────────────────────────────────── */
+
+/**
+ * Свой числовой id. Нужен всем: именно его просят прислать, когда человека
+ * добавляют в администраторы (список админов задаётся в настройках сервера,
+ * а не командой — иначе право раздавалось бы из переписки, см. ADMIN_GUIDE.md).
+ */
+bot.command('whoami', async (ctx) => {
+  const me = ctx.from!
+  await ctx.reply(
+    [
+      `Ваш числовой id: <code>${me.id}</code>`,
+      me.username ? `Ник: @${esc(me.username)}` : 'Ника в профиле нет',
+      isAdmin(me.id) ? '\n🛡 Вы администратор проекта.' : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    { parse_mode: 'HTML' },
+  )
+})
+
+/** Карточка человека: `/who @ник`, `/who id` или ответом на его сообщение. */
+bot.command('who', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const arg = (ctx.match?.toString() ?? '').trim()
+  const tgId = await whom(ctx, arg)
+  if (!tgId) return
+
+  const found = await findPerson(String(tgId))
+  if (!found.ok) return ctx.reply('Не нашёл такого человека.')
+  const card = await personCard(found.person)
+  const p = card.person
+
+  const lines = [
+    `👤 <b>${esc(p.firstName ?? 'без имени')}</b>${p.username ? ` @${esc(p.username)}` : ''}`,
+    `id: <code>${p.tgId}</code>`,
+    p.city ? `Город: ${esc(p.city)}` : '',
+    card.isAdmin ? '🛡 Администратор проекта' : '',
+    p.accountStatus === 'banned'
+      ? `⛔️ Заблокирован. Причина: ${esc(p.banReason ?? 'не указана')}`
+      : '',
+    '',
+    card.librarian
+      ? `📚 Библиотекарь «${esc(card.librarian.name)}», книг на полке: ${card.librarian.books}`
+      : '📚 Своей полки нет',
+    `Выдал книг: ${card.loansGiven} · взял: ${card.loansTaken} · отзывов: ${card.reviews}`,
+  ]
+
+  if (card.restrictions.length) {
+    lines.push('', '<b>Действующие ограничения</b>')
+    for (const r of card.restrictions) {
+      lines.push(
+        `• ${esc(r.title)} — ${esc(r.reason)}` +
+          (r.until ? ` (до ${r.until.toISOString().slice(0, 10)})` : ' (бессрочно)'),
+      )
+    }
+    lines.push('', `Снять: <code>/unrestrict @${esc(p.username ?? String(p.tgId))} область причина</code>`)
+  } else {
+    lines.push(
+      '',
+      'Ограничений нет.',
+      `Поставить: <code>/restrict @${esc(p.username ?? String(p.tgId))} область дней причина</code>`,
+    )
+  }
+
+  await ctx.reply(lines.filter((l) => l !== '').join('\n'), {
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+  })
+})
+
+/** Кто сейчас администратор: список берётся из настроек сервера. */
+bot.command('admins', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const rows = await prisma.user.findMany({
+    where: { tgId: { in: env.adminIds } },
+    select: { tgId: true, username: true, firstName: true },
+  })
+  const byId = new Map(rows.map((r) => [r.tgId.toString(), r]))
+  const lines = env.adminIds.map((id) => {
+    const u = byId.get(id.toString())
+    const who = u ? `${esc(u.firstName ?? 'без имени')}${u.username ? ` @${esc(u.username)}` : ''}` : 'бота ещё не открывал'
+    return `• <code>${id}</code> — ${who}`
+  })
+  await ctx.reply(
+    [
+      `🛡 <b>Администраторы</b> (${env.adminIds.length})`,
+      '',
+      ...lines,
+      '',
+      'Список задан в настройках сервера (ADMIN_IDS), командой его не изменить.',
+      'Как добавить человека — в руководстве администратора (docs/ADMIN_GUIDE.md).',
+    ].join('\n'),
+    { parse_mode: 'HTML' },
+  )
+})
+
+/** Короткая сводка проекта: что происходит и на что смотреть. */
+bot.command('stats', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const s = await projectStats()
+  const attention = [
+    s.pendingBooks ? `книг на проверке ${s.pendingBooks} (/queue)` : '',
+    s.hiddenReviews ? `скрытых отзывов ${s.hiddenReviews} (/moderation)` : '',
+    s.overdueLoans ? `просроченных выдач ${s.overdueLoans}` : '',
+    s.stuckNotices ? `не доставлено писем ${s.stuckNotices}` : '',
+  ].filter(Boolean)
+
+  await ctx.reply(
+    [
+      '📊 <b>Проект сейчас</b>',
+      '',
+      `Книг в каталоге: ${s.books} (за неделю прибавилось ${s.newBooksWeek})`,
+      `Библиотекарей: ${s.librarians}`,
+      `Книг на руках: ${s.activeLoans}, ждут в очереди: ${s.waiting}`,
+      `Оценок и отзывов: ${s.reviews}`,
+      `Предстоящих встреч: ${s.events} · объявлений в барахолке: ${s.market}`,
+      `Ограничений действует: ${s.restrictions} · заблокировано: ${s.banned}`,
+      '',
+      attention.length ? `⚠️ <b>Требует внимания:</b> ${attention.join(', ')}` : '✅ Разбирать нечего.',
+    ].join('\n'),
+    { parse_mode: 'HTML' },
+  )
+})
+
+/* ── встречи ──────────────────────────────────────────────── */
+
+/** Прошедшие встречи с их id — чтобы было что снимать командой. */
+bot.command('events_past', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const rows = await listPastEvents()
+  if (!rows.length) return ctx.reply('Прошедших встреч за последние 60 дней нет.')
+  const lines = rows.slice(0, 20).map(
+    (e) =>
+      `• <b>${esc(e.title)}</b> — ${esc(e.city)}, ${e.startsAt.toISOString().slice(0, 16).replace('T', ' ')}\n` +
+      `  убрать: <code>/event_remove ${e.id}</code>`,
+  )
+  await ctx.reply(
+    [
+      `📅 <b>Прошедшие встречи</b> (${rows.length})`,
+      '',
+      ...lines,
+      '',
+      'То же самое свайпом влево — в приложении, экран «Встречи».',
+    ].join('\n'),
+    { parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+  )
+})
+
+/** Убрать прошедшую встречу. Предстоящую эта команда не снимает — см. events.ts. */
+bot.command('event_remove', async (ctx) => {
+  if (!isAdmin(ctx.from!.id)) return
+  const [id, ...rest] = (ctx.match?.toString() ?? '').trim().split(/\s+/)
+  if (!id) return ctx.reply('Формат: /event_remove <id> [причина]. Список id — /events_past')
+  const res = await removeEvent({
+    actorTg: BigInt(ctx.from!.id),
+    id,
+    reason: rest.join(' ') || undefined,
+  })
+  if (!res.ok) {
+    const texts: Record<string, string> = {
+      not_found: 'Такой встречи нет. Список id — /events_past',
+      not_past: 'Эта встреча ещё не прошла. Предстоящие не убираем: их уже видят люди.',
+      already_removed: 'Эта встреча уже убрана.',
+    }
+    return ctx.reply(texts[res.code] ?? res.code)
+  }
+  await ctx.reply(`Убрал «${esc(res.event.title)}» из афиши.`, { parse_mode: 'HTML' })
 })
 
 /* ── админские команды ────────────────────────────────────── */
@@ -2630,11 +2867,33 @@ setPendingNotifier(async (book, reason) => {
   }
 })
 
+/**
+ * Личное меню админа: те же команды, что у всех, плюс админские.
+ *
+ * Telegram позволяет задать набор команд для конкретного чата
+ * (`BotCommandScopeChat`), и это единственный способ показать админские команды
+ * в подсказке — общий список видят все, а туда их класть нельзя.
+ * Раньше админ не видел своих команд нигде и знал только то, что ему сказали.
+ */
+const ADMIN_MENU = [
+  { command: 'stats', description: '🛡 Что происходит в проекте' },
+  { command: 'moderation', description: '🛡 Разбор: отзывы, книги, люди' },
+  { command: 'queue', description: '🛡 Книги на проверке' },
+  { command: 'who', description: '🛡 Карточка человека по @нику' },
+  { command: 'whoami', description: '🛡 Свой числовой id' },
+  { command: 'admins', description: '🛡 Кто сейчас администратор' },
+  { command: 'events_past', description: '🛡 Убрать прошедшую встречу' },
+  { command: 'addevent', description: '🛡 Завести встречу' },
+  { command: 'onbehalf', description: '🛡 Добавлять книги за библиотекаря' },
+  { command: 'sync', description: '🛡 Синхронизировать с Notion' },
+  { command: 'topics', description: '🛡 Видит ли бот чат проекта' },
+]
+
 export async function setupBotCommands() {
   const me = await bot.api.getMe().catch(() => null)
   if (me?.username) BOT_USERNAME = me.username
 
-  await bot.api.setMyCommands([
+  const common = [
     { command: 'start', description: 'Библиотека и меню' },
     { command: 'find', description: 'Поиск книги по названию или автору' },
     { command: 'ai', description: 'Подобрать книгу по настроению' },
@@ -2649,7 +2908,16 @@ export async function setupBotCommands() {
     { command: 'import', description: 'Добавить книги пачкой (альбом или список)' },
     { command: 'donate', description: 'Поддержать проект звёздами' },
     { command: 'help', description: 'Помощь' },
-  ])
+  ]
+  await bot.api.setMyCommands(common)
+
+  // у каждого админа своё меню; сбой одного не должен ронять запуск бота
+  for (const id of env.adminIds) {
+    await bot.api
+      .setMyCommands([...common, ...ADMIN_MENU], { scope: { type: 'chat', chat_id: Number(id) } })
+      .catch((e: any) => console.warn(`[bot] меню админа ${id} не поставилось:`, e?.message ?? e))
+  }
+
   // постоянная кнопка Mini App слева от поля ввода
   if (webAppUrl()) {
     await bot.api.setChatMenuButton({
