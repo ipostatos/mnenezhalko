@@ -37,6 +37,15 @@ const SCOPES: { key: string; title: string }[] = [
 
 const scopeTitle = (key: string) => SCOPES.find((s) => s.key === key)?.title ?? key
 
+/**
+ * «снято» одинаково называется у объявления и у встречи, поэтому подпись
+ * в журнале собирается вместе с типом: иначе строка читается как «remove».
+ */
+const REMOVED_TITLES: Record<string, string> = {
+  market: 'снято объявление',
+  event: 'убрана встреча',
+}
+
 /** «одобрил», «скрыл» — журнал должен читаться, а не расшифровываться. */
 const ACTION_TITLES: Record<string, string> = {
   approve: 'одобрена книга',
@@ -287,7 +296,11 @@ export function Admin() {
             <div key={a.id} className="log-row">
               <div className="log-when">{when(a.at)}</div>
               <div className="grow">
-                <b>{ACTION_TITLES[a.action] ?? a.action}</b>
+                <b>
+                  {a.action === 'remove'
+                    ? (REMOVED_TITLES[a.targetType] ?? 'снято')
+                    : (ACTION_TITLES[a.action] ?? a.action)}
+                </b>
                 {a.targetName ? ` · ${a.targetName}` : ''}
                 <div className="shelf-note">{a.reason}</div>
               </div>

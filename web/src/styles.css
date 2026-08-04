@@ -188,6 +188,71 @@ h1 {
   transform: scale(0.99);
 }
 
+/* свайп влево: корзина лежит под строкой справа и открывается жестом */
+.swipe-wrap {
+  position: relative;
+  margin-bottom: var(--sp-2);
+  /* по вертикали страница листается как обычно, по горизонтали жест наш */
+  touch-action: pan-y;
+  /* открытая строка не должна выезжать за колонку */
+  overflow: hidden;
+  border-radius: var(--r-md);
+}
+
+.swipe-wrap .row-card {
+  margin-bottom: 0;
+}
+
+.swipe-bg {
+  position: absolute;
+  inset: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--bad) 18%, var(--card));
+  color: var(--bad);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 30px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.swipe-bg:active {
+  background: color-mix(in srgb, var(--bad) 30%, var(--card));
+}
+
+/* блок уборки прошедших встреч — только у админа, поэтому неброский */
+.past-events {
+  margin-top: var(--sp-6);
+}
+
+.past-events > summary {
+  cursor: pointer;
+  color: var(--hint);
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) 0;
+  list-style: none;
+}
+
+.past-events > summary::-webkit-details-marker {
+  display: none;
+}
+
+.past-events > summary::before {
+  content: '▸ ';
+}
+
+.past-events[open] > summary::before {
+  content: '▾ ';
+}
+
+.past-hint {
+  color: var(--hint);
+  font-size: var(--fs-xs);
+  margin-bottom: var(--sp-3);
+}
+
 /* плашки главной — единый градиент персик→шалфей, как у баннера «Поделись книгой» */
 .row-card.tile {
   background: linear-gradient(135deg, var(--tone-peach), var(--tone-sage));

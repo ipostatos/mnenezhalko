@@ -96,7 +96,7 @@ export function App() {
     case 'cities':
       return <Cities city={city} onPick={setCity} />
     case 'events':
-      return <Events city={city} />
+      return <Events city={city} me={me} />
     case 'market':
       return <Market city={city} />
     case 'add':

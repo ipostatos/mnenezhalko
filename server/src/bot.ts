@@ -32,6 +32,7 @@ import {
   marketTopicUrl,
 } from './seed.js'
 import { parseOffer, removeMarketItem, saveOffer } from './market.js'
+import { EVENT_TAIL_MS } from './events.js'
 import { describePlace } from './agglomeration.js'
 import {
   claimLoanByToken,
@@ -1100,7 +1101,10 @@ bot.command('events', async (ctx) => {
   const user = await prisma.user.findUnique({ where: { tgId: BigInt(ctx.from!.id) } })
   const events = await prisma.event.findMany({
     where: {
-      startsAt: { gte: new Date(Date.now() - 6 * 3600_000) },
+      startsAt: { gte: new Date(Date.now() - EVENT_TAIL_MS) },
+      // снятая админом встреча пропадает и здесь: у бота и Mini App
+      // не должно быть двух разных представлений об афише
+      removedAt: null,
       ...(user?.city ? { city: user.city } : {}),
     },
     orderBy: { startsAt: 'asc' },
