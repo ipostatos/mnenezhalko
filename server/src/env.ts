@@ -129,6 +129,14 @@ export const env = {
    * Админы (ADMIN_IDS) всегда autoApprove. По умолчанию выкл — поведение как было.
    */
   moderation: process.env.MODERATION_ON === '1',
+
+  /**
+   * Рубильник антиспама. По умолчанию ВКЛЮЧЁН: выключенная защита от рекламы
+   * бесполезна, а включать её отдельным действием после каждого деплоя никто
+   * не будет. `ANTISPAM_OFF=1` гасит проверку целиком (пороги — ANTISPAM_HARD
+   * и ANTISPAM_SOFT, см. antispam.ts).
+   */
+  antispamOff: process.env.ANTISPAM_OFF === '1',
 }
 
 export const isAdmin = (tgId: bigint | number) =>
