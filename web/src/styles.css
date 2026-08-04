@@ -14,11 +14,11 @@
      Токены дизайн-системы платформы (Radix green). Прежние кремово-персиковые
      значения лежат в git-истории (ветка main, прод 1dc1530), откат простой:
      не мержить ветку feat/platform-reskin или git revert.
-       фон App Background  #FBFEFC     акцент/кнопки #30A46C
+       фон приложения      #F4FBF6     акцент/кнопки #30A46C
        заголовки           #193B2D     логотип/ссылки #218358
        текст               #1C2024     приглушённый  #60646C */
-  --bg: #fbfefc;
-  --bg-tint: #f3faf5;
+  --bg: #f4fbf6;
+  --bg-tint: #eef7f1;
   --text: #1c2024;
   /* заголовки идут отдельным тёмно-зелёным тоном платформы */
   --heading: #193b2d;
@@ -62,7 +62,7 @@
   --r-md: 16px;
   --r-lg: 22px;
   --r-pill: 999px;
-  --shadow: 0 2px 10px rgba(70, 55, 40, 0.06);
+  --shadow: 0 2px 10px rgba(25, 59, 45, 0.06);
 
   /* типографика */
   --fs-h1: 22px;
@@ -829,7 +829,7 @@ textarea.input {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgba(58, 42, 34, 0.4);
+  background: rgba(15, 30, 22, 0.45);
 }
 
 .sheet {
@@ -841,7 +841,7 @@ textarea.input {
   background: var(--bg);
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   padding: var(--sp-4) var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom));
-  box-shadow: 0 -8px 32px rgba(58, 42, 34, 0.18);
+  box-shadow: 0 -8px 32px rgba(15, 30, 22, 0.18);
 }
 
 .sheet-head {
@@ -1092,7 +1092,7 @@ textarea.input {
   height: 234px;
   object-fit: cover;
   border-radius: var(--r-md);
-  box-shadow: 0 8px 22px rgba(70, 55, 40, 0.22);
+  box-shadow: 0 8px 22px rgba(25, 59, 45, 0.22);
   display: block;
   pointer-events: none;
   background: var(--accent-soft);
@@ -1943,7 +1943,7 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   width: auto;
   object-fit: contain;
   pointer-events: none;
-  filter: drop-shadow(0 2px 6px rgba(74, 47, 40, 0.22));
+  filter: drop-shadow(0 2px 6px rgba(25, 59, 45, 0.22));
   z-index: 2;
 }
 

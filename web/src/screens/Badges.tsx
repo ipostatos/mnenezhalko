@@ -20,6 +20,13 @@ export function badgeImage(id: string): string {
   return `/ach/${id}.webp`
 }
 
+/**
+ * Подстройка под платформу (2026-08-04): рисованные значки заказчика тёплые и
+ * спорят с зелёной гаммой, поэтому на время перехода показываем эмодзи вместо
+ * картинки. Вернуть рисунки = поставить обратно false (или убрать флаг).
+ */
+const HIDE_BADGE_ART = true
+
 /** Карточка значка: картинка, а если она не дошла — запасной символ. */
 function BadgeCard({ badge, big }: { badge: Badge; big?: boolean }) {
   const [broken, setBroken] = useState(false)
@@ -27,7 +34,7 @@ function BadgeCard({ badge, big }: { badge: Badge; big?: boolean }) {
 
   return (
     <div className={`badge${badge.earned ? '' : ' locked'}${big ? ' big' : ''}`} title={label}>
-      {broken ? (
+      {broken || HIDE_BADGE_ART ? (
         <span className="badge-emoji" aria-hidden="true">
           {badge.emoji}
         </span>

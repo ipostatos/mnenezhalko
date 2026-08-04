@@ -19,7 +19,7 @@ const fmt = new Intl.DateTimeFormat('ru-RU', {
 function EventCard({ e }: { e: EventItem }) {
   return (
     <div className="row-card static">
-      <div className="ic-tile" style={{ ['--tone' as any]: '#e0a13a' }}>
+      <div className="ic-tile" style={{ ['--tone' as any]: '#E2A336' }}>
         📅
       </div>
       <div className="grow">
