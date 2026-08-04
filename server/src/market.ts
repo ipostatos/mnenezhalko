@@ -10,6 +10,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { env } from './env.js'
 import { prisma } from './db.js'
 import { logModeration, queueNotice } from './moderation.js'
+import { lookupPlace } from './agglomeration.js'
 import { CITIES } from './seed.js'
 
 const client = env.anthropicKey ? new Anthropic({ apiKey: env.anthropicKey }) : null
@@ -23,9 +24,15 @@ const SCHEMA = {
     description: { type: 'string', description: 'Одно-два предложения: состояние, детали, условия' },
     price: { type: 'string', description: 'Цена как в тексте («50 zł», «даром»); пустая строка, если не указана' },
     city: { type: 'string', description: 'Город из списка или пустая строка' },
-    district: { type: 'string', description: 'Район, если назван, иначе пустая строка' },
+    district: { type: 'string', description: 'Район ГОРОДА, если назван (Wola, Mokotów), иначе пустая строка' },
+    locality: {
+      type: 'string',
+      description:
+        'Отдельный населённый пункт, если он назван и его нет в списке городов проекта ' +
+        '(пригород, посёлок, город рядом) — как написано в тексте; иначе пустая строка',
+    },
   },
-  required: ['isOffer', 'kind', 'title', 'description', 'price', 'city', 'district'],
+  required: ['isOffer', 'kind', 'title', 'description', 'price', 'city', 'district', 'locality'],
   additionalProperties: false,
 } as const
 
@@ -36,9 +43,47 @@ export type ParsedOffer = {
   price: string | null
   city: string
   district: string | null
+  /** Населённый пункт, если это не сам город проекта: «Wieliczka» при городе Kraków. */
+  locality: string | null
 }
 
 const NO_CITY = 'Все города'
+
+/**
+ * Приводит место объявления к городу проекта по справочнику агломераций.
+ *
+ * Отдельная функция без сети — на ней и держится правило «привязку даёт только
+ * справочник»: модель называет населённый пункт, город назначаем мы.
+ *
+ * Разбор идёт по убыванию доверия: сначала поле города, потом населённый пункт,
+ * потом район. Район проверяется потому, что так это и случилось на живом
+ * объявлении 30 июля: «Величка» приехала именно в `district`.
+ */
+export function resolvePlace(p: { city?: string; district?: string | null; locality?: string | null }): {
+  city: string
+  district: string | null
+  locality: string | null
+} {
+  const district = p.district?.trim() || null
+
+  for (const source of ['city', 'locality', 'district'] as const) {
+    const raw = source === 'city' ? p.city : source === 'locality' ? p.locality : district
+    const hit = lookupPlace(raw)
+    if (!hit?.city) continue
+    return {
+      city: hit.city,
+      // название, по которому нашли город, из района убираем: иначе оно
+      // попадёт и в заголовок карточки, и в подпись «Kraków (Wieliczka)»
+      district: source === 'district' ? null : district,
+      locality: hit.locality === hit.city ? null : hit.locality,
+    }
+  }
+
+  // города в справочнике нет: не выдумываем ближайший, объявление живёт
+  // в разделе «Все города», а сам населённый пункт сохраняем как написали
+  const unknown = lookupPlace(p.locality) ?? lookupPlace(p.city)
+  return { city: NO_CITY, district, locality: unknown?.locality ?? null }
+}
 
 /** Разбирает пост барахолки. Пустой результат — значит не объявление. */
 export async function parseOffer(text: string): Promise<ParsedOffer | null> {
@@ -56,8 +101,10 @@ export async function parseOffer(text: string): Promise<ParsedOffer | null> {
       'Определи тип: give — отдают даром, sell — продают, search — ищут/куплю.\n' +
       'Заголовок пиши сам, коротко и по-человечески, без эмодзи и капса. ' +
       'Цену бери из текста как есть, ничего не выдумывай. ' +
-      'Город выбирай ТОЛЬКО из списка: ' + CITIES.join(', ') + ' ' +
-      '(Gdańsk, Gdynia, Sopot → Trójmiasto). Если города нет — пустая строка. ' +
+      'Город выбирай ТОЛЬКО из списка: ' + CITIES.join(', ') + '. ' +
+      'Если названный населённый пункт в списке не значится — оставь city пустым, ' +
+      'а название напиши в locality как есть. Ближайший город НЕ подбирай: ' +
+      'привязку к городу делаем не мы. Если места нет вовсе — обе строки пустые. ' +
       'Если это не объявление (вопрос, спасибо, обсуждение) — isOffer = false.',
     messages: [{ role: 'user', content: text.slice(0, 2000) }],
   })
@@ -76,15 +123,18 @@ export async function parseOffer(text: string): Promise<ParsedOffer | null> {
       price: string
       city: string
       district: string
+      locality: string
     }
     if (!p.isOffer || !p.title.trim()) return null
+    const place = resolvePlace({ city: p.city, district: p.district, locality: p.locality })
     return {
       kind: ['give', 'sell', 'search'].includes(p.kind) ? p.kind : 'give',
       title: p.title.trim().slice(0, 120),
       description: p.description?.trim().slice(0, 1000) || null,
       price: p.price?.trim().slice(0, 50) || null,
-      city: CITIES.includes(p.city as (typeof CITIES)[number]) ? p.city : NO_CITY,
-      district: p.district?.trim().slice(0, 80) || null,
+      city: place.city,
+      district: place.district?.slice(0, 80) || null,
+      locality: place.locality?.slice(0, 80) || null,
     }
   } catch {
     return null
@@ -142,6 +192,9 @@ export async function saveOffer(
   return prisma.marketItem.create({
     data: {
       city: offer.city,
+      // пригород — отдельным полем, а не приписью к заголовку: по нему
+      // объявление находится фильтром города и подписывается «Kraków (Wieliczka)»
+      locality: offer.locality,
       kind: offer.kind,
       title: offer.district ? `${offer.title} (${offer.district})` : offer.title,
       description: offer.description,

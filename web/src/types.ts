@@ -116,6 +116,8 @@ export type EventItem = {
 export type MarketItem = {
   id: string
   city: string
+  /** Пригород, если объявление не из самого города: «Kraków (Wieliczka)». */
+  locality: string | null
   kind: string
   title: string
   description: string | null

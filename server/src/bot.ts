@@ -32,6 +32,7 @@ import {
   marketTopicUrl,
 } from './seed.js'
 import { parseOffer, removeMarketItem, saveOffer } from './market.js'
+import { describePlace } from './agglomeration.js'
 import {
   claimLoanByToken,
   createLoan,
@@ -1169,11 +1170,16 @@ function marketCard(i: {
   title: string
   price: string | null
   city: string
+  locality: string | null
   description: string | null
   authorUsername: string | null
   authorTg: bigint
 }): string {
-  const meta = [i.price, i.city !== 'Все города' ? i.city : null].filter(Boolean).join(' · ')
+  // город неизвестен, а посёлок назван — показываем хотя бы посёлок:
+  // «Все города» рядом с вещью, которую человек уже как-то описал, ничего не говорит
+  const where =
+    i.city !== 'Все города' ? describePlace(i.city, i.locality) : (i.locality ?? null)
+  const meta = [i.price, where].filter(Boolean).join(' · ')
   const contact = i.authorUsername
     ? `<a href="https://t.me/${i.authorUsername}">@${esc(i.authorUsername)}</a>`
     : `<a href="tg://user?id=${i.authorTg}">написать автору</a>`
