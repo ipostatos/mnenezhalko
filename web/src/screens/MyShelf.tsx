@@ -11,12 +11,12 @@ import { TagPicker } from './TagPicker'
 /* Тона состояний берём из фирменной палитры (см. :root в styles.css), а не
    произвольные яркие — иначе бейджи выбиваются из нежного крем-персика. */
 const STATE: Record<ShelfState, { label: string; tone: string }> = {
-  active: { label: 'На полке', tone: '#5a9d6b' }, // --ok
-  onloan: { label: 'На руках', tone: '#d98a62' }, // --terracotta
-  pending: { label: 'На проверке', tone: '#6d8fb5' }, // приглушённый sky
+  active: { label: 'На полке', tone: '#30A46C' }, // --ok
+  onloan: { label: 'На руках', tone: '#EC9455' }, // --terracotta
+  pending: { label: 'На проверке', tone: '#8DA4EF' }, // приглушённый sky
   rejected: { label: 'Отклонена', tone: '#d9584b' }, // --bad
-  syncerror: { label: 'Ошибка синка', tone: '#e0a44a' }, // --honey
-  deleted: { label: 'Удалена', tone: '#8f8578' }, // --hint
+  syncerror: { label: 'Ошибка синка', tone: '#E2A336' }, // --honey
+  deleted: { label: 'Удалена', tone: '#60646C' }, // --hint
 }
 
 const ORDER: ShelfState[] = ['active', 'onloan', 'pending', 'rejected', 'syncerror', 'deleted']

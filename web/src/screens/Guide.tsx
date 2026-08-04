@@ -27,7 +27,7 @@ export function Guide({ go }: { go: (r: Route) => void }) {
   const steps: Step[] = [
     {
       icon: 'plus',
-      tone: '#46589e',
+      tone: '#8DA4EF',
       title: 'Поставьте книгу на полку',
       body:
         'Сфотографируйте обложку — приложение само распознает название и автора. ' +
@@ -38,7 +38,7 @@ export function Guide({ go }: { go: (r: Route) => void }) {
     },
     {
       icon: 'bookHeart',
-      tone: '#c2649a',
+      tone: '#DD93C2',
       title: 'Лениво или нет времени? Мы поможем',
       body:
         'Пришлите фотографию книг или список в чат проекта — админы внесут всё сами. ' +
@@ -47,7 +47,7 @@ export function Guide({ go }: { go: (r: Route) => void }) {
     },
     {
       icon: 'book',
-      tone: '#2f6db0',
+      tone: '#E2A336',
       title: 'Найдите, что почитать',
       body:
         'В библиотеке видно, у кого какая книга и в каком городе. Можно искать по названию, ' +
@@ -57,7 +57,7 @@ export function Guide({ go }: { go: (r: Route) => void }) {
     },
     {
       icon: 'chat',
-      tone: '#6d7bb5',
+      tone: '#5BB98B',
       title: 'Договоритесь напрямую',
       body:
         'В карточке книги есть контакт библиотекаря. Напишите, договоритесь, когда и где встретиться ' +
@@ -65,7 +65,7 @@ export function Guide({ go }: { go: (r: Route) => void }) {
     },
     {
       icon: 'refresh',
-      tone: '#d98a62',
+      tone: '#EC8E7B',
       title: 'Отдали книгу — отметьте это',
       body:
         'В разделе «У кого моя книга» отметьте, кому и когда отдали. Приложение само напомнит ' +
@@ -74,7 +74,7 @@ export function Guide({ go }: { go: (r: Route) => void }) {
     },
     {
       icon: 'crown',
-      tone: '#c98a2e',
+      tone: '#EC9455',
       title: 'Дочитали — оставьте пару слов',
       body:
         'После возврата можно поставить оценку и написать, о чём книга. Это видят все, кто её ищет: ' +

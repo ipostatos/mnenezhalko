@@ -183,7 +183,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
       )}
       <button
         className="row-card tile coffee-card"
-        style={{ ['--tone' as any]: '#b07a4a' }}
+        style={{ ['--tone' as any]: '#EC9455' }}
         onClick={() => {
           haptic()
           openTg(COFFEE)
@@ -200,7 +200,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
       </button>
 
       <div className="section-title">Куда идти дальше</div>
-      <button className="row-card tile" style={{ ['--tone' as any]: '#6d7bb5' }} onClick={() => openTg(MAIN_CHAT)}>
+      <button className="row-card tile" style={{ ['--tone' as any]: '#8DA4EF' }} onClick={() => openTg(MAIN_CHAT)}>
         <div className="ic-tile">
           <Icon name="chat" />
         </div>
@@ -210,7 +210,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card tile" style={{ ['--tone' as any]: '#d94a86' }} onClick={() => openTg(INSTAGRAM)}>
+      <button className="row-card tile" style={{ ['--tone' as any]: '#DD93C2' }} onClick={() => openTg(INSTAGRAM)}>
         <div className="ic-tile">
           <Icon name="instagram" />
         </div>
@@ -224,7 +224,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
           Notion, где предлагалось войти по почте и заполнять таблицы руками */}
       <button
         className="row-card tile"
-        style={{ ['--tone' as any]: '#e59429' }}
+        style={{ ['--tone' as any]: '#E2A336' }}
         onClick={() => {
           haptic()
           go({ name: 'guide' })
@@ -239,7 +239,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card tile" style={{ ['--tone' as any]: '#2f6db0' }} onClick={() => openTg(PROJECT)}>
+      <button className="row-card tile" style={{ ['--tone' as any]: '#EC8E7B' }} onClick={() => openTg(PROJECT)}>
         <div className="ic-tile">
           <Icon name="globe" />
         </div>
@@ -253,7 +253,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
           обещании: экран сразу с рабочими кнопками */}
       <button
         className="row-card tile"
-        style={{ ['--tone' as any]: '#5a9d6b' }}
+        style={{ ['--tone' as any]: '#5BB98B' }}
         onClick={() => {
           haptic()
           go({ name: 'mydata' })
@@ -268,7 +268,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         </div>
         <div className="chev">›</div>
       </button>
-      <button className="row-card tile" style={{ ['--tone' as any]: '#d99a2b' }} onClick={() => openTg(CURATOR)}>
+      <button className="row-card tile" style={{ ['--tone' as any]: '#30A46C' }} onClick={() => openTg(CURATOR)}>
         <div className="ic-tile">
           <Icon name="crown" />
         </div>

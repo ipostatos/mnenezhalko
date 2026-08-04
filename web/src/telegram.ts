@@ -42,9 +42,9 @@ export function initTelegram() {
   tg.disableVerticalSwipes?.()
   // шапка и фон Mini App — под фирменный кремовый, чтобы не выбивались из макета
   try {
-    tg.setBackgroundColor?.('#f7f1e8')
-    tg.setHeaderColor?.('#f7f1e8')
-    tg.setBottomBarColor?.('#f7f1e8')
+    tg.setBackgroundColor?.('#f4fbf6')
+    tg.setHeaderColor?.('#f4fbf6')
+    tg.setBottomBarColor?.('#f4fbf6')
   } catch {}
 }
 

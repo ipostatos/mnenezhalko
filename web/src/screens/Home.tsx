@@ -30,28 +30,28 @@ export function Home({
     // понять, куда попал, и только потом идти в каталог (просьба user 29.07.2026)
     {
       icon: 'leaf',
-      tone: '#5aa53f',
+      tone: '#30A46C',
       title: 'О проекте',
       sub: 'Как всё устроено и с чего начать',
       route: { name: 'about' },
     },
     {
       icon: 'book',
-      tone: '#2f6db0',
+      tone: '#8DA4EF',
       title: 'Библиотека',
       sub: health ? `${health.books} книг и игр у библиотекарей` : 'Поиск по полкам проекта',
       route: { name: 'library' },
     },
     {
       icon: 'wand',
-      tone: '#8b5fc9',
+      tone: '#DD93C2',
       title: 'Подобрать книгу',
       sub: 'Расскажите, чего хочется — найду',
       route: { name: 'ai' },
     },
     {
       icon: 'sparkle',
-      tone: '#e59429',
+      tone: '#E2A336',
       title: 'Новинки',
       sub: 'Что появилось за сутки и за месяц',
       route: { name: 'digest' },
@@ -62,7 +62,7 @@ export function Home({
     // в него ведут счётчики; выбор своего города — там же
     {
       icon: 'calendar',
-      tone: '#37a0c4',
+      tone: '#5BB98B',
       title: 'Ближайшие встречи',
       sub: 'Что и когда происходит рядом',
       route: { name: 'events' },
@@ -73,7 +73,7 @@ export function Home({
       ? ([
           {
             icon: 'flower',
-            tone: '#c2649a',
+            tone: '#DD93C2',
             title: 'Книжная Клумба',
             sub: 'Книжный клуб проекта — чат в Telegram',
             url: health.clubUrl,
@@ -82,14 +82,14 @@ export function Home({
       : []),
     {
       icon: 'tag',
-      tone: '#dd6f3c',
+      tone: '#EC8E7B',
       title: 'Барахолка',
       sub: 'Отдам, продам, ищу — по городам',
       route: { name: 'market' },
     },
     {
       icon: 'bookHeart',
-      tone: '#dd5c86',
+      tone: '#8DA4EF',
       title: 'У кого моя книга',
       sub: 'Кому отдали почитать и когда ждать назад',
       route: { name: 'loans' },
@@ -99,14 +99,14 @@ export function Home({
     // вход в него — лентой значков на «Моей полке» и из инструкции новичка
     {
       icon: 'shelf',
-      tone: '#4b82b8',
+      tone: '#5BB98B',
       title: 'Моя полка',
       sub: 'Мои книги, статусы, редактирование',
       route: { name: 'myshelf' },
     },
     {
       icon: 'plus',
-      tone: '#46589e',
+      tone: '#EC9455',
       title: 'Добавить книгу',
       sub: 'Поставить свою книгу на полку',
       route: { name: 'add' },
@@ -117,7 +117,7 @@ export function Home({
       ? ([
           {
             icon: 'shield',
-            tone: '#7a8b5a',
+            tone: '#5BB98B',
             title: 'Разбор',
             sub: 'Книги на проверке, жалобы, ограничения',
             route: { name: 'admin' },
@@ -126,14 +126,14 @@ export function Home({
       : []),
     {
       icon: 'chat',
-      tone: '#6d7bb5',
+      tone: '#8DA4EF',
       title: 'Чат проекта',
       sub: 'МнеНеЖалко в Польше',
       url: MAIN_CHAT,
     },
     {
       icon: 'instagram',
-      tone: '#d94a86',
+      tone: '#DD93C2',
       title: 'Инстаграм',
       sub: '@mne_ne_zhalko_pl',
       url: INSTAGRAM,

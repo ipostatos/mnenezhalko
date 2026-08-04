@@ -134,7 +134,7 @@ describe('польза сообщества', () => {
 })
 
 describe('значки библиотекаря', () => {
-  test('лента: заработанные, ближайшая цель бледной, у каждого своя картинка', async () => {
+  test('лента: заработанные, ближайшая цель бледной', async () => {
     vi.spyOn(api, 'badges').mockResolvedValue({
       badges: [
         badge(),
@@ -143,16 +143,16 @@ describe('значки библиотекаря', () => {
     })
     const { container } = render(<Badges />)
 
-    expect(await screen.findByAltText('Первая книга')).toBeTruthy()
+    await waitFor(() => expect(container.querySelectorAll('.badge').length).toBe(2))
     expect(screen.getByText('1 из 2')).toBeTruthy()
     expect(screen.getByText('7 из 10')).toBeTruthy()
     // у полученного значка не задание, а отметка «сделано»
     expect(screen.getByText('Получено')).toBeTruthy()
     expect(container.querySelectorAll('.badge.locked').length).toBe(1)
-    // название написано на самой картинке, поэтому проверяем её адрес
-    expect(container.querySelector('img.badge-img')?.getAttribute('src')).toBe(
-      '/ach/first-book.webp',
-    )
+    // на время подстройки под платформу рисунки значков спрятаны (HIDE_BADGE_ART),
+    // показываем эмодзи; когда картинки вернут — вернуть и проверку img.badge-img
+    expect(container.querySelectorAll('.badge-emoji').length).toBe(2)
+    expect(container.querySelector('img.badge-img')).toBeNull()
   })
 
   test('на «Моей полке» показываем не весь список, а достигнутое и ближайшую цель', async () => {
@@ -182,13 +182,14 @@ describe('значки библиотекаря', () => {
     expect(screen.getByText(/общего рейтинга библиотекарей в проекте нет/)).toBeTruthy()
   })
 
-  test('картинка не загрузилась — вместо неё запасной символ, карточка цела', async () => {
+  // пока рисунки значков спрятаны (HIDE_BADGE_ART), карточка показывает эмодзи.
+  // Когда картинки вернут, сюда вернётся проверка onError-фолбэка на img.
+  test('пока рисунки значков спрятаны, карточка показывает эмодзи', async () => {
     vi.spyOn(api, 'badges').mockResolvedValue({ badges: [badge()] })
     const { container } = render(<Badges />)
 
-    const img = (await screen.findByAltText('Первая книга')) as HTMLImageElement
-    fireEvent.error(img)
     await waitFor(() => expect(container.querySelector('.badge-emoji')?.textContent).toBe('📗'))
+    expect(container.querySelector('img.badge-img')).toBeNull()
   })
 
   test('новичку витрину серых кружков не показываем', async () => {

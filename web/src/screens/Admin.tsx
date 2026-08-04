@@ -233,7 +233,7 @@ export function Admin() {
           <div className="section-title">Действующие ограничения · {q.restrictions.length}</div>
           {!q.restrictions.length && <div className="empty">Никого не ограничивали.</div>}
           {q.restrictions.map((r) => (
-            <div key={r.id} className="shelf-card" style={{ ['--tone' as any]: '#e0a44a' }}>
+            <div key={r.id} className="shelf-card" style={{ ['--tone' as any]: '#E2A336' }}>
               <div>
                 {/* ник показываем с собачкой: без неё «noname» читается как имя */}
                 <div className="shelf-title">
@@ -350,7 +350,7 @@ function BookCard({
   const [reason, setReason] = useState('')
 
   return (
-    <div className="shelf-card" style={{ ['--tone' as any]: '#6d8fb5' }}>
+    <div className="shelf-card" style={{ ['--tone' as any]: '#8DA4EF' }}>
       <div className="shelf-top">
         <div className="cover">
           {book.coverUrl ? (
@@ -453,7 +453,7 @@ function ReviewCard({
   const hidden = review.status === 'hidden'
 
   return (
-    <div className="shelf-card" style={{ ['--tone' as any]: hidden ? '#8f8578' : '#d9584b' }}>
+    <div className="shelf-card" style={{ ['--tone' as any]: hidden ? '#60646C' : '#d9584b' }}>
       <div>
         <div className="shelf-title">{workTitle(review.workKey)}</div>
         <div className="shelf-meta">
