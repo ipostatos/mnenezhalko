@@ -6,37 +6,38 @@
 <title>МнеНеЖалко · дневник работ</title>
 <meta name="description" content="Дневник работ над ботом и приложением «МнеНеЖалко в Польше»: что сделано, зачем и почему именно так.">
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
-<meta name="theme-color" content="#f7f1e8" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#16110f" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23eba788'/><text x='32' y='45' font-family='Helvetica,Arial,sans-serif' font-size='36' font-weight='700' fill='%234a2f28' text-anchor='middle'>М</text></svg>">
+<meta name="theme-color" content="#f4fbf6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1613" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2330a46c'/><text x='32' y='45' font-family='Helvetica,Arial,sans-serif' font-size='36' font-weight='700' fill='%23ffffff' text-anchor='middle'>М</text></svg>">
 
 <style>
   html,body{max-width:100%;overflow-x:hidden}
   :root{
-    --bg:#f7f1e8;
-    --glow1:rgba(235,167,136,.30); --glow2:rgba(156,175,136,.20);
-    --card:rgba(255,255,255,.74); --card-solid:#fff; --cardline:rgba(255,255,255,.8);
-    --label:#4a2f28; --label2:rgba(74,47,40,.66); --label3:rgba(74,47,40,.4);
-    --sep:rgba(74,47,40,.16); --soft:rgba(235,167,136,.16);
-    --accent:#c9784f; --sage:#7f9468; --amber:#c08b2e; --rose:#c25c52;
-    --accentbg:rgba(235,167,136,.22); --sagebg:rgba(156,175,136,.24);
-    --amberbg:rgba(217,161,59,.20); --rosebg:rgba(194,92,82,.16); --graybg:rgba(74,47,40,.07);
+    /* дневник переведён на зелёную систему платформы (5.08.2026), как приложение */
+    --bg:#f4fbf6;
+    --glow1:rgba(48,164,108,.16); --glow2:rgba(91,185,139,.14);
+    --card:rgba(255,255,255,.78); --card-solid:#fff; --cardline:rgba(255,255,255,.85);
+    --label:#193b2d; --label2:rgba(25,59,45,.66); --label3:rgba(25,59,45,.4);
+    --sep:rgba(25,59,45,.14); --soft:rgba(48,164,108,.10);
+    --accent:#218358; --sage:#30a46c; --amber:#96631a; --rose:#c14a3d;
+    --accentbg:rgba(33,131,88,.14); --sagebg:rgba(48,164,108,.16);
+    --amberbg:rgba(226,163,54,.20); --rosebg:rgba(193,74,61,.14); --graybg:rgba(25,59,45,.07);
     --font:-apple-system,"SF Pro Text","SF Pro Display",system-ui,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif;
   }
   @media (prefers-color-scheme:dark){
     :root{
-      --bg:#16110f;
-      --glow1:rgba(235,167,136,.20); --glow2:rgba(156,175,136,.12);
-      --card:rgba(42,33,29,.66); --card-solid:#2a211d; --cardline:rgba(255,255,255,.07);
-      --label:#f6ece3; --label2:rgba(246,236,227,.62); --label3:rgba(246,236,227,.34);
-      --sep:rgba(246,236,227,.14); --soft:rgba(235,167,136,.12);
-      --accent:#eba788; --sage:#a8bd8f; --amber:#e0ae4e; --rose:#e08279;
-      --accentbg:rgba(235,167,136,.18); --sagebg:rgba(168,189,143,.18);
-      --amberbg:rgba(224,174,78,.18); --rosebg:rgba(224,130,121,.16); --graybg:rgba(246,236,227,.07);
+      --bg:#0f1613;
+      --glow1:rgba(48,164,108,.16); --glow2:rgba(79,190,136,.12);
+      --card:rgba(20,29,24,.62); --card-solid:#151e19; --cardline:rgba(255,255,255,.07);
+      --label:#e7efe9; --label2:rgba(231,239,233,.62); --label3:rgba(231,239,233,.34);
+      --sep:rgba(231,239,233,.14); --soft:rgba(79,190,136,.12);
+      --accent:#4fbe88; --sage:#46b983; --amber:#d7a54a; --rose:#e58572;
+      --accentbg:rgba(79,190,136,.16); --sagebg:rgba(70,185,131,.18);
+      --amberbg:rgba(215,165,74,.18); --rosebg:rgba(229,133,114,.16); --graybg:rgba(231,239,233,.07);
     }
   }
-  :root[data-theme="light"]{--bg:#f7f1e8;--glow1:rgba(235,167,136,.30);--glow2:rgba(156,175,136,.20);--card:rgba(255,255,255,.74);--card-solid:#fff;--cardline:rgba(255,255,255,.8);--label:#4a2f28;--label2:rgba(74,47,40,.66);--label3:rgba(74,47,40,.4);--sep:rgba(74,47,40,.16);--soft:rgba(235,167,136,.16);--accent:#c9784f;--sage:#7f9468;--amber:#c08b2e;--rose:#c25c52;--accentbg:rgba(235,167,136,.22);--sagebg:rgba(156,175,136,.24);--amberbg:rgba(217,161,59,.20);--rosebg:rgba(194,92,82,.16);--graybg:rgba(74,47,40,.07)}
-  :root[data-theme="dark"]{--bg:#16110f;--glow1:rgba(235,167,136,.20);--glow2:rgba(156,175,136,.12);--card:rgba(42,33,29,.66);--card-solid:#2a211d;--cardline:rgba(255,255,255,.07);--label:#f6ece3;--label2:rgba(246,236,227,.62);--label3:rgba(246,236,227,.34);--sep:rgba(246,236,227,.14);--soft:rgba(235,167,136,.12);--accent:#eba788;--sage:#a8bd8f;--amber:#e0ae4e;--rose:#e08279;--accentbg:rgba(235,167,136,.18);--sagebg:rgba(168,189,143,.18);--amberbg:rgba(224,174,78,.18);--rosebg:rgba(224,130,121,.16);--graybg:rgba(246,236,227,.07)}
+  :root[data-theme="light"]{--bg:#f4fbf6;--glow1:rgba(48,164,108,.16);--glow2:rgba(91,185,139,.14);--card:rgba(255,255,255,.78);--card-solid:#fff;--cardline:rgba(255,255,255,.85);--label:#193b2d;--label2:rgba(25,59,45,.66);--label3:rgba(25,59,45,.4);--sep:rgba(25,59,45,.14);--soft:rgba(48,164,108,.10);--accent:#218358;--sage:#30a46c;--amber:#96631a;--rose:#c14a3d;--accentbg:rgba(33,131,88,.14);--sagebg:rgba(48,164,108,.16);--amberbg:rgba(226,163,54,.20);--rosebg:rgba(193,74,61,.14);--graybg:rgba(25,59,45,.07)}
+  :root[data-theme="dark"]{--bg:#0f1613;--glow1:rgba(48,164,108,.16);--glow2:rgba(79,190,136,.12);--card:rgba(20,29,24,.62);--card-solid:#151e19;--cardline:rgba(255,255,255,.07);--label:#e7efe9;--label2:rgba(231,239,233,.62);--label3:rgba(231,239,233,.34);--sep:rgba(231,239,233,.14);--soft:rgba(79,190,136,.12);--accent:#4fbe88;--sage:#46b983;--amber:#d7a54a;--rose:#e58572;--accentbg:rgba(79,190,136,.16);--sagebg:rgba(70,185,131,.18);--amberbg:rgba(215,165,74,.18);--rosebg:rgba(229,133,114,.16);--graybg:rgba(231,239,233,.07)}
 
   *{box-sizing:border-box}
   body{margin:0;color:var(--label);font-family:var(--font);font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;
@@ -44,7 +45,7 @@
     background-repeat:no-repeat}
   .wrap{max-width:540px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 20px) 16px calc(env(safe-area-inset-bottom) + 48px)}
   .glass{background:var(--card);
-    border:0.5px solid var(--cardline);border-radius:22px;box-shadow:0 1px 1px rgba(74,47,40,.04),0 10px 26px -14px rgba(74,47,40,.24)}
+    border:0.5px solid var(--cardline);border-radius:22px;box-shadow:0 1px 1px rgba(25,59,45,.04),0 10px 26px -14px rgba(25,59,45,.24)}
 
   header{padding:10px 4px 18px}
   .eyebrow{font-size:12px;color:var(--label2);font-weight:600;letter-spacing:.02em;margin:0 0 7px}
