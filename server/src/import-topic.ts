@@ -14,6 +14,7 @@ import path from 'node:path'
 import { prisma } from './db.js'
 import { COVERS_DIR, coverUrlOf } from './covers.js'
 import { parseOffer, saveOffer } from './market.js'
+import { describePlace } from './agglomeration.js'
 import { parseAnnouncement, saveAnnouncement } from './announce.js'
 
 type Raw = {
@@ -142,7 +143,8 @@ for (const m of messages) {
   const photo = dry ? null : await importPhoto(m)
   const label = { give: '🎁 Отдам', sell: '💰 Продам', search: '🔎 Ищу' }[offer.kind]
   console.log(
-    `${label} ${offer.title} — ${offer.price ?? 'цена не указана'} · ${offer.city}` +
+    `${label} ${offer.title} — ${offer.price ?? 'цена не указана'} · ` +
+      `${describePlace(offer.city, offer.locality)}` +
       `${offer.district ? '/' + offer.district : ''} · ${who}${photo ? ' · с фото' : ''}`,
   )
 

@@ -13,6 +13,16 @@ const LABEL: Record<string, string> = {
 /** Барахолка — витрина темы чата: размещают объявления там. */
 const MARKET_TOPIC = 'https://t.me/c/1856176764/4547'
 
+/**
+ * Где вещь: «Kraków (Wieliczka)» у пригорода, просто город — у самого города.
+ * Если города проекта нет, но посёлок назван, показываем посёлок: «Все города»
+ * рядом с вещью человеку ничего не сообщает.
+ */
+function place(i: MarketItem): string | null {
+  if (i.city !== 'Все города') return i.locality ? `${i.city} (${i.locality})` : i.city
+  return i.locality || null
+}
+
 export function Market({ city }: { city?: string }) {
   const [items, setItems] = useState<MarketItem[] | null>(null)
   const [onlyMyCity, setOnlyMyCity] = useState(Boolean(city))
@@ -71,7 +81,7 @@ export function Market({ city }: { city?: string }) {
             <div className="market-meta">
               <span className={`tag ${i.kind}`}>{LABEL[i.kind] ?? '📦'}</span>
               {i.price && <span className="tag price">{i.price}</span>}
-              {i.city !== 'Все города' && <span className="tag">📍 {i.city}</span>}
+              {place(i) && <span className="tag">📍 {place(i)}</span>}
             </div>
             {i.description && <div className="d" style={{ marginTop: 4 }}>{i.description}</div>}
             {i.authorUsername && (
