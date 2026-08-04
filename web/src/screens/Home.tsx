@@ -62,7 +62,7 @@ export function Home({
     // в него ведут счётчики; выбор своего города — там же
     {
       icon: 'calendar',
-      tone: '#5BB98B',
+      tone: '#EC9455',
       title: 'Ближайшие встречи',
       sub: 'Что и когда происходит рядом',
       route: { name: 'events' },
@@ -99,7 +99,7 @@ export function Home({
     // вход в него — лентой значков на «Моей полке» и из инструкции новичка
     {
       icon: 'shelf',
-      tone: '#5BB98B',
+      tone: '#E2A336',
       title: 'Моя полка',
       sub: 'Мои книги, статусы, редактирование',
       route: { name: 'myshelf' },
@@ -117,7 +117,7 @@ export function Home({
       ? ([
           {
             icon: 'shield',
-            tone: '#5BB98B',
+            tone: '#DD93C2',
             title: 'Разбор',
             sub: 'Книги на проверке, жалобы, ограничения',
             route: { name: 'admin' },
