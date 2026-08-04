@@ -123,6 +123,10 @@ export const api = {
     req<DigestResult>('GET', `/api/digest${qs({ period, city })}`),
   cities: () => req<CityInfo[]>('GET', '/api/cities'),
   events: (city?: string) => req<EventItem[]>('GET', `/api/events${qs({ city })}`),
+  /** Прошедшие встречи — только админу, для блока уборки на экране «Встречи». */
+  pastEvents: (city?: string) => req<EventItem[]>('GET', `/api/admin/events/past${qs({ city })}`),
+  removeEvent: (id: string) =>
+    req<{ ok: true; id: string }>('POST', `/api/admin/events/${id}/remove`, {}),
   market: (city?: string) => req<MarketItem[]>('GET', `/api/market${qs({ city })}`),
   addBook: (data: {
     title: string

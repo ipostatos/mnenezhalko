@@ -21,6 +21,7 @@ import {
 } from './publish.js'
 import { digest } from './digest.js'
 import { removeMarketItem } from './market.js'
+import { EVENT_TAIL_MS, listPastEvents, removeEvent } from './events.js'
 import { getTaxonomy } from './taxonomy.js'
 import { deleteMyData, exportMyData } from './mydata.js'
 import {
@@ -494,6 +495,36 @@ export async function registerRoutes(app: FastifyInstance) {
     }
     void flushNotices()
     return json({ ok: true, id: res.item.id })
+  })
+
+  /**
+   * Прошедшие встречи — админский блок на экране «Встречи».
+   *
+   * Отдельной ручкой, а не флагом у публичной `/api/events`: та отвечает всем
+   * подряд, и любой недосмотр в проверке прав сразу открыл бы архив.
+   */
+  app.get('/api/admin/events/past', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const { city } = req.query as { city?: string }
+    const events = await listPastEvents(new Date(), city)
+    return json(events.map(redactEvent))
+  })
+
+  /** Снять прошедшую встречу. Предстоящую эта ручка не снимает — см. events.ts. */
+  app.post('/api/admin/events/:id/remove', async (req, reply) => {
+    const u = who(req)
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
+    const { id } = req.params as { id: string }
+    const b = (req.body ?? {}) as { reason?: string }
+    const res = await removeEvent({ actorTg: u.id, id, reason: b.reason })
+    if (!res.ok) {
+      const code = res.code === 'not_found' ? 404 : res.code === 'not_past' ? 400 : 409
+      return reply.code(code).send({ error: res.code })
+    }
+    return json({ ok: true, id: res.event.id })
   })
 
   app.post('/api/admin/users/:tgId/restrict', async (req, reply) => {
@@ -1165,7 +1196,9 @@ export async function registerRoutes(app: FastifyInstance) {
     const { city } = req.query as { city?: string }
     const events = await prisma.event.findMany({
       where: {
-        startsAt: { gte: new Date(Date.now() - 6 * 3600_000) },
+        startsAt: { gte: new Date(Date.now() - EVENT_TAIL_MS) },
+        // снятая админом встреча пропадает у всех, включая самого админа
+        removedAt: null,
         ...(city ? { city } : {}),
       },
       orderBy: { startsAt: 'asc' },

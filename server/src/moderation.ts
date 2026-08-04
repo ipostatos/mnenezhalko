@@ -153,7 +153,7 @@ export type ModerationResult<T extends string> =
 export type ModerationEntry = {
   actorTg: bigint
   targetUserTg?: bigint | null
-  targetType: 'user' | 'review' | 'book' | 'market'
+  targetType: 'user' | 'review' | 'book' | 'market' | 'event'
   targetId?: string | null
   action: string
   reason: string

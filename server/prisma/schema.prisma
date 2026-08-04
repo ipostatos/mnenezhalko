@@ -324,6 +324,10 @@ model Event {
   sourceEventIndex Int?
   createdAt        DateTime @default(now())
   createdBy        BigInt?
+  /// снята админом: строку НЕ удаляем физически, иначе повторный импорт темы
+  /// заведёт встречу заново (дедуп идёт по sourceMsgId), а в журнале модерации
+  /// останется ссылка в никуда. Кто и когда снял — в ModerationAction
+  removedAt        DateTime?
 
   author User? @relation(fields: [createdBy], references: [tgId])
 
