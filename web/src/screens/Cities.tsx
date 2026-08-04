@@ -29,7 +29,7 @@ export function Cities({
         <div key={c.city}>
           <button
             className="row-card tile"
-            style={{ ['--tone' as any]: c.city === city ? 'var(--accent)' : '#5BB98B' }}
+            style={{ ['--tone' as any]: c.city === city ? '#d96a6a' : '#EB8E90' }}
             onClick={() => {
               haptic()
               setOpen((v) => (v === c.city ? null : c.city))
