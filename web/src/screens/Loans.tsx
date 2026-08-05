@@ -23,8 +23,16 @@ const TERMS: { label: string; days: number | null }[] = [
   { label: 'без срока', days: null },
 ]
 
-/** Сколько книг с полки показываем разом: больше — и форма уезжает за экран. */
-const SUGGEST_LIMIT = 5
+/**
+ * Подсказка книг с полки (B1, ТЗ 5.08.2026).
+ *
+ * Раньше список раскрывался сразу и целиком, со строкой «и ещё 85»: под полем
+ * висел вечно открытый автокомплит, из-за которого формы почти не было видно.
+ * Теперь список — ответ на ввод: два символа и не больше шести совпадений,
+ * а вся полка живёт в отдельной шторке, где для выбора есть обложки и поиск.
+ */
+const SUGGEST_LIMIT = 6
+const SUGGEST_MIN_CHARS = 2
 
 /**
  * Сравнение «по-человечески»: регистр, ё/е и знаки препинания не должны мешать
@@ -41,6 +49,19 @@ export function norm(s: string): string {
 /** Ищем и по названию, и по автору: половину книг помнят именно по автору. */
 export function bookMatches(b: { title: string; author: string | null }, needle: string): boolean {
   return norm(`${b.title} ${b.author ?? ''}`).includes(needle)
+}
+
+/**
+ * Насколько совпадение похоже на то, что человек имел в виду: начало названия
+ * важнее середины, название важнее автора. Без этого шесть подсказок могли
+ * оказаться случайными — совпадение по автору стояло бы выше точного названия.
+ */
+export function matchRank(b: { title: string; author: string | null }, needle: string): number {
+  const title = norm(b.title)
+  if (title.startsWith(needle)) return 0
+  if (title.includes(needle)) return 1
+  if (norm(b.author ?? '').startsWith(needle)) return 2
+  return 3
 }
 
 /** «У кого моя книга сейчас»: список выданных книг и форма новой выдачи. */
@@ -160,22 +181,27 @@ export function Loans({ go }: { go: (r: Route) => void }) {
     }
   }
 
-  // Подсказка с полки. Раньше она молчала, пока не наберёшь две буквы, и человек
-  // просто не знал, что она есть (просьба user 29.07.2026). Теперь полка видна
-  // сразу, а ввод её сужает — и по названию, и по автору.
+  // Подсказка с полки: отвечает на ввод, а не висит открытой (B1).
+  // Занятые книги в подсказку не идут — выдать их нельзя.
   const needle = norm(title)
+  const searching = needle.length >= SUGGEST_MIN_CHARS
   const onShelf = myBooks.filter((b) => b.status !== 'busy')
-  const matched = needle ? onShelf.filter((b) => bookMatches(b, needle)) : onShelf
-  const suggestions = matched.slice(0, SUGGEST_LIMIT)
+  const matched = searching ? onShelf.filter((b) => bookMatches(b, needle)) : []
+  const suggestions = [...matched]
+    .sort((a, b) => matchRank(a, needle) - matchRank(b, needle))
+    .slice(0, SUGGEST_LIMIT)
   // занятые не предлагаем (выдать их нельзя), но если человек ищет именно такую —
   // честно говорим почему, иначе «моей книги нет в списке» выглядит поломкой
-  const busyMatch = needle
+  const busyMatch = searching
     ? myBooks.filter((b) => b.status === 'busy' && bookMatches(b, needle)).slice(0, 2)
     : []
 
   return (
     <>
-      <h1>Мои книги на руках</h1>
+      {/* «На руках» без уточнения читалось двусмысленно: у кого именно на руках
+          — у меня или у читателя? Экран теперь называется «Выдачи», а вкладки
+          говорят прямо (B2, ТЗ 5.08.2026). Пункт меню остался прежним. */}
+      <h1>Выдачи</h1>
       <div className="sub">Отметьте, кому отдали — напомню обоим, когда придёт время</div>
 
       <MoodBoard summary={summary} />
@@ -190,10 +216,12 @@ export function Loans({ go }: { go: (r: Route) => void }) {
             setBookId(null)
           }}
         />
-        {/* список полки показываем только когда человек начал вводить название:
-            большая плашка со всей полкой сразу загромождала форму
-            (просьба user 5.08.2026). Просмотреть всю полку — кнопкой ниже */}
-        {needle && suggestions.length > 0 && !bookId && (
+        {/* пока не начали вводить — подсказываем, что делать, а не вываливаем
+            полку целиком (B1, ТЗ 5.08.2026) */}
+        {!searching && !bookId && myBooks.length > 0 && (
+          <div className="muted">Начните вводить название или выберите книгу из своей полки.</div>
+        )}
+        {searching && suggestions.length > 0 && !bookId && (
           <div className="note" style={{ marginBottom: 0 }}>
             С вашей полки:
             {suggestions.map((b) => (
@@ -203,21 +231,19 @@ export function Loans({ go }: { go: (r: Route) => void }) {
                 onClick={() => {
                   haptic('light')
                   setTitle(b.title)
-                  setBookId(b.id)
+                  setBookId(b.id) // выдаём КОНКРЕТНУЮ книгу, а не строку с названием
                 }}
               >
                 {b.title}
                 {b.author ? ` — ${b.author}` : ''}
               </button>
             ))}
-            {matched.length > suggestions.length && (
-              <div className="muted">и ещё {matched.length - suggestions.length} на полке</div>
-            )}
           </div>
         )}
         {/* весь список полки: раньше сверх пяти подсказок оставалось только
             «впишите название точнее», то есть вспоминать книгу по памяти
-            (просьба user 29.07.2026) */}
+            (просьба user 29.07.2026). Кнопка на месте всегда — это и есть
+            замена вечно открытому списку */}
         {myBooks.length > 0 && (
           <button
             className="link-row"
@@ -319,14 +345,29 @@ export function Loans({ go }: { go: (r: Route) => void }) {
 
       {!loading && (given.length > 0 || taken.length > 0 || history.length > 0) && (
         <>
-          <div className="chips" style={{ margin: 'var(--sp-5) 0 var(--sp-4)' }}>
-            <button className={`chip ${tab === 'given' ? 'active' : ''}`} onClick={() => setTab('given')}>
-              На руках{given.length ? ` · ${given.length}` : ''}
+          <div className="chips" role="tablist" style={{ margin: 'var(--sp-5) 0 var(--sp-4)' }}>
+            <button
+              role="tab"
+              aria-selected={tab === 'given'}
+              aria-label="Мои книги у читателей"
+              className={`chip ${tab === 'given' ? 'active' : ''}`}
+              onClick={() => setTab('given')}
+            >
+              У читателей{given.length ? ` · ${given.length}` : ''}
             </button>
-            <button className={`chip ${tab === 'taken' ? 'active' : ''}`} onClick={() => setTab('taken')}>
+            <button
+              role="tab"
+              aria-selected={tab === 'taken'}
+              aria-label="Чужие книги у меня"
+              className={`chip ${tab === 'taken' ? 'active' : ''}`}
+              onClick={() => setTab('taken')}
+            >
               Я читаю{taken.length ? ` · ${taken.length}` : ''}
             </button>
             <button
+              role="tab"
+              aria-selected={tab === 'history'}
+              aria-label="История выдач"
               className={`chip ${tab === 'history' ? 'active' : ''}`}
               onClick={() => setTab('history')}
             >
