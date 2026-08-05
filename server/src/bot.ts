@@ -189,14 +189,13 @@ bot.command('start', async (ctx) => {
             `📗 У вас книга <b>${esc(loan.title)}</b>.`,
             loan.dueAt ? `Договорились вернуть к ${loanFmt.format(loan.dueAt)}.` : '',
             '',
-            'Как дочитаете — нажмите кнопку, и я закрою запись у владельца.',
+            // возврат отмечает владелец, когда получит книгу назад (A1): читателю
+            // кнопку возврата не даём
+            'Как дочитаете — верните книгу владельцу, он отметит возврат.',
           ]
             .filter(Boolean)
             .join('\n'),
-          {
-            parse_mode: 'HTML',
-            reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
-          },
+          { parse_mode: 'HTML' },
         )
       }
     } else if (result.status === 'username_mismatch') {
@@ -670,7 +669,7 @@ async function sendLoanCreated(ctx: any, loan: any) {
       `📕 Записал: «${esc(loan.title)}» у @${esc(loan.holderUsername)}.${due}`,
       '',
       reached
-        ? 'Читателю написал — он сможет отметить возврат сам.'
+        ? 'Читателю написал. Когда вернёт книгу — возврат отметите вы, кнопкой «Уже вернулась».'
         : 'Читатель ещё не знаком с ботом. Перешлите ему ссылку, чтобы он получал напоминания:',
       // без токена ссылку не строим: раньше сюда попадал буквальный «loan_null»
       reached ? '' : loan.claimToken ? loanLink(loan.claimToken) : 'Список выдач: /loans',
@@ -700,12 +699,10 @@ async function notifyHolder(loan: any): Promise<boolean> {
         `📗 ${esc(from)} отметил, что у вас его книга:`,
         `<b>${esc(loan.title)}</b>${due}`,
         '',
-        'Как дочитаете — верните и нажмите кнопку, я закрою запись.',
+        // возврат отмечает владелец (A1): читателю кнопку не даём
+        'Как дочитаете — верните книгу владельцу, он закроет запись.',
       ].join('\n'),
-      {
-        parse_mode: 'HTML',
-        reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
-      },
+      { parse_mode: 'HTML' },
     )
     .then(() => true)
     .catch(() => false)
@@ -735,7 +732,9 @@ bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
   try {
     loan = await markReturned(id, BigInt(ctx.from.id))
   } catch (e: any) {
-    if (e?.message === 'forbidden') return ctx.answerCallbackQuery({ text: 'Это не ваша выдача' })
+    // возврат подтверждает только владелец книги (A1): читателю мягкий отказ
+    if (e?.message === 'forbidden')
+      return ctx.answerCallbackQuery({ text: 'Возврат отмечает владелец книги, когда получит её назад' })
     throw e
   }
   if (!loan) return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })
@@ -1544,6 +1543,7 @@ async function handlePhotoBatch(ctx: any, fileIds: string[]) {
   const added: string[] = []
   const pending: string[] = []
   let failed = 0
+  let note: string | null = null // объяснение исхода модерации, одно на всю пачку
   for (const fileId of ids) {
     const saved = await saveCoverFromTelegram(fileId).catch(() => null)
     const rec = saved
@@ -1569,9 +1569,10 @@ async function handlePhotoBatch(ctx: any, fileIds: string[]) {
         ownerLibrarianId: ob?.id,
       })
       ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+      note = res.moderationNotice
     }
   }
-  await sendBatchSummary(ctx, added, pending, failed, ob?.name)
+  await sendBatchSummary(ctx, added, pending, failed, ob?.name, undefined, note)
 }
 
 /** Пакетное добавление списком: `/import` + строки «Название — Автор». */
@@ -1616,6 +1617,7 @@ async function handleListImport(ctx: any, raw: string) {
   const missedIsbn: string[] = []
   let quotaBlocked = false
   let failed = 0
+  let note: string | null = null // объяснение исхода модерации, одно на всю пачку
   for (const line of lines) {
     let book: { title: string; author: string | null; coverUrl: string | null } | null = null
     if (looksLikeIsbn(line)) {
@@ -1649,8 +1651,9 @@ async function handleListImport(ctx: any, raw: string) {
       ownerLibrarianId: ob?.id,
     })
     ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+    note = res.moderationNotice
   }
-  await sendBatchSummary(ctx, added, pending, failed, ob?.name, { missedIsbn, quotaBlocked })
+  await sendBatchSummary(ctx, added, pending, failed, ob?.name, { missedIsbn, quotaBlocked }, note)
 }
 
 /** Общая сводка после пакетного добавления. */
@@ -1661,11 +1664,14 @@ async function sendBatchSummary(
   failed: number,
   behalfName?: string,
   isbn?: { missedIsbn: string[]; quotaBlocked: boolean },
+  /** объяснение исхода модерации (см. publish.ts::moderationNotice) — один раз на пачку */
+  moderationNote?: string | null,
 ) {
   const blocks: string[] = []
   if (behalfName) blocks.push(`<i>От имени: ${esc(behalfName)}</i>`)
   if (added.length)
     blocks.push(`🎉 На полке (${added.length}):\n` + added.map((t) => `• ${esc(t)}`).join('\n'))
+  if (added.length && moderationNote) blocks.push(`<i>${esc(moderationNote)}</i>`)
   if (pending.length)
     blocks.push(
       `📖 На проверке модератора (${pending.length}):\n` +
@@ -1796,6 +1802,7 @@ async function saveShelfBatch(
   shelfBatches.delete(ctx.from.id)
   const added: string[] = []
   const pending: string[] = []
+  let note: string | null = null // объяснение исхода модерации, одно на всю пачку
   for (const b of books) {
     const res = await putOnShelf({
       tgId: BigInt(ctx.from.id),
@@ -1811,8 +1818,9 @@ async function saveShelfBatch(
       ownerLibrarianId: ob?.id,
     })
     ;(res.book.reviewStatus === 'pending' ? pending : added).push(res.book.title)
+    note = res.moderationNotice
   }
-  await sendBatchSummary(ctx, added, pending, 0, ob?.name)
+  await sendBatchSummary(ctx, added, pending, 0, ob?.name, undefined, note)
 }
 
 bot.callbackQuery(/^shelfcity:(.+)$/, async (ctx) => {
@@ -1859,20 +1867,24 @@ async function saveShelfDraft(
   })
   const behalf = ob ? ` (от имени ${esc(ob.name)})` : ''
 
-  if (res.book.reviewStatus === 'pending') {
-    return ctx.reply(
-      `📖 «${esc(res.book.title)}» отправил на проверку модератору. ` +
-        'Как одобрят — книга появится в библиотеке, и я вам сообщу.',
-      { parse_mode: 'HTML', reply_markup: mainKeyboard() },
-    )
+  // текст об исходе модерации берём с сервера (publish.ts::moderationNotice),
+  // чтобы бот и Mini App не разошлись формулировками одного и того же правила
+  if (res.moderation.state === 'pending') {
+    return ctx.reply(`📖 «${esc(res.book.title)}» — ${esc(res.moderationNotice ?? '')}`, {
+      parse_mode: 'HTML',
+      reply_markup: mainKeyboard(),
+    })
   }
 
   const inNotion =
     res.notionStatus === 'synced'
       ? 'Книга уже в общей таблице проекта.'
       : 'Книга видна в боте и поиске; в общую таблицу проекта уйдёт чуть позже.'
+  // при включённой модерации админ публикует сам — это его право, но молча это
+  // выглядит как «проверка не работает» (вопрос user 5.08.2026)
+  const why = res.moderationNotice ? `\n<i>${esc(res.moderationNotice)}</i>` : ''
 
-  await ctx.reply(`🎉 Готово! «${esc(res.book.title)}» на полке${behalf}.\n${inNotion}`, {
+  await ctx.reply(`🎉 Готово! «${esc(res.book.title)}» на полке${behalf}.\n${inNotion}${why}`, {
     parse_mode: 'HTML',
     reply_markup: mainKeyboard(),
   })

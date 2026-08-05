@@ -220,7 +220,9 @@ test('заблокированный не добавит книгу через A
   assert.equal(await prisma.user.count({ where: { tgId: PERSON } }), 0)
 })
 
-test('ограничение reviews не мешает вернуть чужую книгу', async () => {
+test('ограничение reviews не мешает владельцу закрыть выдачу', async () => {
+  // возврат подтверждает владелец (A1); проверяем, что reviews-ограничение на
+  // владельце не блокирует именно возврат книги
   const librarian = await prisma.librarian.create({ data: { name: 'Владелец', tgId: FRIEND } })
   const book = await prisma.book.create({
     data: { title: 'Чужая книга', ownerId: librarian.id, status: 'busy' },
@@ -235,12 +237,12 @@ test('ограничение reviews не мешает вернуть чужую
       activeBookId: book.id,
     },
   })
-  await restrict('reviews')
+  await restrict('reviews', null, FRIEND)
 
   const r = await app.inject({
     method: 'POST',
     url: `/api/loans/${loan.id}/return`,
-    headers: asUser(PERSON),
+    headers: asUser(FRIEND),
   })
   assert.equal(r.statusCode, 200, 'возврат закрывает обязательство и не наказывается')
   assert.equal(

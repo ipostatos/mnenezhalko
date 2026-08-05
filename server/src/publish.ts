@@ -39,10 +39,41 @@ export type ShelfDraft = {
   ownerLibrarianId?: string | null
 }
 
+/**
+ * Почему книга оказалась в том состоянии, в каком оказалась. Раньше об этом
+ * можно было только догадываться по `reviewStatus`: при включённой модерации
+ * админ сохранял книгу и она сразу появлялась в каталоге — со стороны это
+ * выглядело как «модерация не работает» (вопрос user 5.08.2026). Правило не
+ * менялось: свои книги админ публикует сам (это и есть право модератора), но
+ * теперь интерфейс обязан это сказать вслух.
+ */
+export type ModerationOutcome =
+  | { state: 'pending' }
+  | { state: 'published'; reason: 'admin' | 'moderation_off' }
+
 export type ShelfResult = {
   book: BookCard
   notionStatus: string
   notionError: string | null
+  moderation: ModerationOutcome
+  /** готовая человеческая фраза к этому исходу — одна на бота и Mini App */
+  moderationNotice: string | null
+}
+
+/**
+ * Текст об исходе модерации. Живёт на сервере ровно по той же причине, что и
+ * `bookDecisionNotice`: две похожие фразы про одно событие (одна в боте, другая
+ * в приложении) рано или поздно разъезжаются, а человеку важно, что это одно
+ * и то же правило.
+ */
+export function moderationNotice(m: ModerationOutcome): string | null {
+  if (m.state === 'pending') {
+    return 'Книга отправлена на проверку модератору. Как одобрят — она появится в библиотеке, и бот вам сообщит.'
+  }
+  if (m.reason === 'admin') {
+    return 'Книга опубликована сразу, потому что вы администратор. Книги обычных участников сначала уходят на проверку.'
+  }
+  return null // модерация выключена — объяснять нечего, это обычный порядок
 }
 
 /** Уведомление админам о карточке, которую не удалось положить в Notion. */
@@ -124,6 +155,11 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
 
   // модерация: свои книги (админ) и режим без модерации одобряются сразу
   const autoApprove = !env.moderation || isAdmin(d.tgId)
+  // «почему» отделено от «что»: у админа при включённой модерации это его право
+  // модератора, а не отключённая проверка — интерфейс должен назвать причину
+  const moderation: ModerationOutcome = !autoApprove
+    ? { state: 'pending' }
+    : { state: 'published', reason: env.moderation ? 'admin' : 'moderation_off' }
   const now = new Date()
 
   // карточка у нас — всегда, чтобы полка/поиск видели её сразу
@@ -159,7 +195,13 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
   if (!autoApprove) {
     const card = toCard({ ...book, owner: librarian })
     await Promise.resolve(moderationNotifier?.(card, librarian)).catch(() => {})
-    return { book: card, notionStatus: book.notionStatus, notionError: null }
+    return {
+      book: card,
+      notionStatus: book.notionStatus,
+      notionError: null,
+      moderation,
+      moderationNotice: moderationNotice(moderation),
+    }
   }
 
   // одобрено сразу — заводим владельца и льём книгу в общую таблицу
@@ -170,7 +212,13 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
       notifier?.(card, book.notionError ?? 'запись в Notion выключена'),
     ).catch(() => {})
   }
-  return { book: card, notionStatus: book.notionStatus, notionError: book.notionError }
+  return {
+    book: card,
+    notionStatus: book.notionStatus,
+    notionError: book.notionError,
+    moderation,
+    moderationNotice: moderationNotice(moderation),
+  }
 }
 
 export type ReviewResult = { card: BookCard; addedByTg: bigint | null }

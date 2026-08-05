@@ -202,9 +202,16 @@ export async function markReturned(id: string, byTg: bigint) {
     let promotedWaiting: { id: string; userTg: bigint } | null = null
     const loan = await tx.loan.findUnique({ where: { id } })
     if (!loan) return null
-    // закрыть выдачу может владелец или сам читатель; «не ваша» — отдельная
-    // ошибка, чтобы API отвечал 403, а не маскировал её под «не найдено»
-    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) throw new Error('forbidden')
+    // возврат подтверждает ТОЛЬКО владелец книги (политика продуктовой команды
+    // 5.08.2026): читатель не должен закрывать чужую выдачу ни кнопкой, ни
+    // прямым запросом. «не ваша» — 403, чтобы API не маскировал её под «не найдено»
+    if (loan.ownerTg !== byTg) throw new Error('forbidden')
+    // идемпотентность: повторное подтверждение уже закрытой выдачи — no-op.
+    // Не перетираем returnedAt и не запускаем повторно очередь/архивацию.
+    if (loan.status !== 'active') {
+      const current = await tx.loan.findUnique({ where: { id }, include: { book: true } })
+      return { updated: current!, archiveNotionId: null, promotedWaiting: null, noop: true }
+    }
 
     const updated = await tx.loan.update({
       where: { id },
@@ -250,9 +257,11 @@ export async function markReturned(id: string, byTg: bigint) {
         }
       }
     }
-    return { updated, archiveNotionId, promotedWaiting }
+    return { updated, archiveNotionId, promotedWaiting, noop: false }
   })
   if (!result) return null
+  // идемпотентный повтор: состояние уже закрыто, событий и архивации не плодим
+  if (result.noop) return result.updated
 
   await logLoanEvent(id, 'returned', byTg)
   if (result.archiveNotionId) {
@@ -363,7 +372,8 @@ export async function reopenLoan(id: string, byTg: bigint) {
   const result = await prisma.$transaction(async (tx) => {
     const loan = await tx.loan.findUnique({ where: { id }, include: { book: true } })
     if (!loan) return { error: 'not_found' as const }
-    if (loan.ownerTg !== byTg && loan.holderTg !== byTg) return { error: 'forbidden' as const }
+    // undo возврата — тоже только владелец (A1): жизненный цикл выдачи в его руках
+    if (loan.ownerTg !== byTg) return { error: 'forbidden' as const }
     if (loan.status !== 'returned') return { error: 'not_returned' as const }
     if (!loan.returnedAt || Date.now() - loan.returnedAt.getTime() > UNDO_WINDOW_MS) {
       return { error: 'too_late' as const }
@@ -479,12 +489,14 @@ export async function runOverdueReminders(opts: {
       : `https://t.me/${opts.botUsername}?start=loan_${await issueClaimToken(loan.id)}`
 
     if (loan.holderTg) {
+      // читателю кнопку возврата НЕ даём (A1): возврат отмечает владелец, когда
+      // получит книгу назад
       await track(
         opts.send(
           String(loan.holderTg),
           `📗 Напоминание: книга «${loan.title}» у вас уже ${days} дн. ` +
-            'Если дочитали — самое время вернуть её владельцу 🙂',
-          { reply_markup: kb },
+            'Если дочитали — верните её владельцу, он отметит возврат 🙂',
+          {},
         ),
       )
     }

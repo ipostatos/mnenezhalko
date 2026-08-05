@@ -1487,6 +1487,13 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
   margin: 3px 0 var(--sp-2);
 }
 
+/* информационная строка вместо кнопки: читатель не закрывает выдачу (A1) */
+.loan-info {
+  color: var(--hint);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
 .loan-card .market-meta {
   margin-top: 0;
 }

@@ -104,6 +104,28 @@ test('владельцу видно, что книгу ждут, но не кт�
   expect(raw).not.toContain(String(READER.id))
 })
 
+test('возврат чужой книги читателю недоступен даже прямым запросом', async ({ request }) => {
+  // право живёт на сервере, а не в спрятанной кнопке: вкладку «Я читаю» можно
+  // не открывать вовсе и постучаться в ручку напрямую (A1, ТЗ 5.08.2026)
+  const mine = await (
+    await request.get('/api/loans', { headers: { 'X-Init-Data': signInitData(OWNER) } })
+  ).json()
+  const loanId = mine.given.find((l: { title: string }) => l.title === TITLE).id
+
+  const byReader = await request.post(`/api/loans/${loanId}/return`, {
+    headers: { 'X-Init-Data': signInitData(READER) },
+    data: {},
+  })
+  expect(byReader.status()).toBe(403)
+
+  const byNobody = await request.post(`/api/loans/${loanId}/return`, { data: {} })
+  expect(byNobody.status()).toBe(401)
+
+  // и книга всё ещё на руках — отказ должен быть настоящим, а не косметическим
+  const card = await (await request.get('/api/books/' + bookId)).json()
+  expect(card.status).toBe('busy')
+})
+
 test('книга возвращается, и очередь двигается', async ({ page, request }) => {
   await asPerson(page, OWNER)
   await page.goto('/?screen=loans')

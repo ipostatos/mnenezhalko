@@ -70,6 +70,7 @@ import {
   proxyCover,
   warmShowcaseCovers,
 } from './imgcache.js'
+import { stubCoverUrls } from './cover-quality.js'
 import { fetchWithTimeout, isSafeCoverUrl, readBodyLimited } from './net.js'
 import {
   REVIEW_TEXT_MAX,
@@ -178,6 +179,14 @@ const SHOWCASE_LIMIT_DEFAULT = 12
 const SHOWCASE_LIMIT_MAX = 16
 const showcaseCache = new Map<string, { at: number; data: unknown }>()
 
+/**
+ * Сброс памяти витрины. Нужен тестам: подборка живёт 30 минут и переживает
+ * рестарт (это её смысл), поэтому без сброса соседний тест видит чужую витрину.
+ */
+export function resetShowcaseCache(): void {
+  showcaseCache.clear()
+}
+
 type ShowcaseRow = { id: string; title: string; coverUrl: string }
 
 /**
@@ -194,10 +203,16 @@ async function showcaseFor(city: string | undefined, limit: number) {
   const hit = showcaseCache.get(key)
   if (hit && Date.now() - hit.at < SHOWCASE_TTL) return hit.data
 
+  // адреса, по которым магазин отдаёт «нет фото» вместо обложки: такие книги
+  // витрине не годятся, а по коду ответа они неотличимы от нормальных (A3)
+  const stubs = await stubCoverUrls().catch(() => new Set<string>())
+
   const stored = await prisma.syncState.findUnique({ where: { key } }).catch(() => null)
   if (stored && Date.now() - stored.updatedAt.getTime() < SHOWCASE_TTL) {
     try {
-      const rows = JSON.parse(stored.value) as ShowcaseRow[]
+      const rows = (JSON.parse(stored.value) as ShowcaseRow[]).filter(
+        (r) => !stubs.has(r.coverUrl), // заглушку могли распознать уже ПОСЛЕ съёмки витрины
+      )
       const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, CAROUSEL_W) }))
       showcaseCache.set(key, { at: stored.updatedAt.getTime(), data })
       return data
@@ -206,14 +221,18 @@ async function showcaseFor(city: string | undefined, limit: number) {
     }
   }
 
-  const rows = city
+  // берём с запасом: часть выборки отсеется как заглушки, а витрина должна
+  // остаться полной — «показывать меньше карточек» это крайний случай, не норма
+  const take = Math.min(limit * 3, 64)
+  const picked = city
     ? await prisma.$queryRaw<ShowcaseRow[]>`SELECT id, title, coverUrl FROM Book
         WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
         AND city = ${city}
-        ORDER BY RANDOM() LIMIT ${limit}`
+        ORDER BY RANDOM() LIMIT ${take}`
     : await prisma.$queryRaw<ShowcaseRow[]>`SELECT id, title, coverUrl FROM Book
         WHERE active = 1 AND reviewStatus = 'approved' AND coverUrl IS NOT NULL AND coverUrl <> ''
-        ORDER BY RANDOM() LIMIT ${limit}`
+        ORDER BY RANDOM() LIMIT ${take}`
+  const rows = picked.filter((r) => !stubs.has(r.coverUrl)).slice(0, limit)
   // карусель показывает обложки на 156px — превью 320px (2× под retina) хватает
   const data = rows.map((r) => ({ ...r, coverUrl: proxyCover(r.coverUrl, CAROUSEL_W) }))
   showcaseCache.set(key, { at: Date.now(), data })
