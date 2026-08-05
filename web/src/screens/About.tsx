@@ -14,9 +14,12 @@ const DONATE_BOT = 'https://t.me/mnenezhalkobot?start=donate'
 // держать синхронно с DONATE_AMOUNTS на сервере (server/src/bot.ts)
 const DONATE_AMOUNTS = [50, 150, 500]
 
-// донаты временно убраны из Mini App (просьба user 5.08.2026). Вернуть = true.
-// В боте /donate по-прежнему работает.
-const SHOW_DONATE = false
+/**
+ * Донаты (звёзды и «кофе») выключены до отдельного продуктового решения
+ * (B5, ТЗ 5.08.2026). Решает СЕРВЕР — `DONATIONS_ENABLED=1`, флаг приезжает в
+ * /api/health: иначе приложение и бот могли бы разойтись в том, включён ли сбор.
+ * Платёжный код не удалён, его включает тот же флаг.
+ */
 
 /** О проекте: что это, как устроено и как участвовать. */
 export function About({ go, health }: { go: (r: Route) => void; health: Health | null }) {
@@ -164,7 +167,7 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         <div>Пишите библиотекарю по-человечески: кто вы, откуда узнали, когда удобно встретиться.</div>
       </div>
 
-      {SHOW_DONATE && (
+      {health?.donations && (
         <>
           <div className="section-title">Поддержать проект</div>
           <p className="lead">

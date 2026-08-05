@@ -4,7 +4,7 @@ import { env, isAdmin } from './env.js'
 import { upsertUser, verifyInitData, type TgUser } from './auth.js'
 import { bookById, facets, searchBooks, toCard } from './search.js'
 import { askAi, aiEnabled } from './ai.js'
-import { CITIES } from './seed.js'
+import { CITIES, eventSourceUrl } from './seed.js'
 import { decodeDataUrl, readCover, readCoverVariant, saveCover } from './covers.js'
 import { recognizePhoto, visionEnabled } from './vision.js'
 import { looksLikeIsbn, lookupIsbnDetailed } from './isbn.js'
@@ -71,6 +71,7 @@ import {
   warmShowcaseCovers,
 } from './imgcache.js'
 import { stubCoverUrls } from './cover-quality.js'
+import { activeClubs, primaryClubUrl } from './clubs.js'
 import { fetchWithTimeout, isSafeCoverUrl, readBodyLimited } from './net.js'
 import {
   REVIEW_TEXT_MAX,
@@ -329,7 +330,12 @@ export async function registerRoutes(app: FastifyInstance) {
       notionWrite: notionWriteEnabled(),
       // адрес книжного клуба живёт в настройке сервера (CLUB_URL): так он один
       // и для меню бота, и для плашки на главной Mini App
-      clubUrl: env.clubUrl,
+      // адрес клуба остаётся для совместимости; список клубов — /api/clubs (B7)
+      clubUrl: primaryClubUrl() || env.clubUrl,
+      clubs: activeClubs().length,
+      // донаты выключены до отдельного продуктового решения (B5): приложение не
+      // должно само решать, показывать ли их — правду знает сервер
+      donations: env.donations,
       // Что именно сейчас работает. Нужно выкладке: проверка живости без этого
       // подтверждает лишь «кто-то ответил» — если systemd почему-то не
       // перезапустил процесс, старый релиз ответил бы бодрым ok и выкладка
@@ -966,6 +972,9 @@ export async function registerRoutes(app: FastifyInstance) {
    * Только своим (подпись Telegram) и с лимитом — как у прочих пишущих ручек.
    */
   app.post('/api/donate/link', async (req, reply) => {
+    // рубильник проверяем ДО подписи и лимитов: выключенная функция не должна
+    // отличаться по поведению от несуществующей (B5)
+    if (!env.donations) return reply.code(403).send({ error: 'feature_disabled' })
     const u = who(req)
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     if (tooOften(`donate:${u.id}`, 20, 60_000)) return reply.code(429).send({ error: 'too_many' })
@@ -1300,6 +1309,25 @@ export async function registerRoutes(app: FastifyInstance) {
     return prisma.cityGroup.findMany({ where, orderBy: [{ sort: 'asc' }, { city: 'asc' }] })
   })
 
+  /**
+   * Книжные клубы проекта: в одном городе их может быть несколько (B7).
+   * Публичная ручка — данные и так висят ссылками в чате, личного здесь нет.
+   */
+  /**
+   * У встречи из афиши своего url обычно нет, но есть сообщение-первоисточник
+   * в теме чата — на него и ведём (B4). Ссылку собираем на сервере: адрес темы
+   * и id чата живут в seed.ts, приложению их знать незачем.
+   */
+  const withSourceUrl = <T extends { source: string; sourceMsgId: number | null }>(e: T) => ({
+    ...e,
+    sourceUrl: e.source === 'topic' ? eventSourceUrl(e.sourceMsgId) : null,
+  })
+
+  app.get('/api/clubs', async (_req, reply) => {
+    reply.header('Cache-Control', 'public, max-age=300')
+    return json(activeClubs())
+  })
+
   app.get('/api/events', async (req) => {
     const { city } = req.query as { city?: string }
     const events = await prisma.event.findMany({
@@ -1313,7 +1341,7 @@ export async function registerRoutes(app: FastifyInstance) {
       take: 50,
     })
     // createdBy — числовой tgId админа, клиенту не нужен (см. privacy.ts)
-    return json(events.map(redactEvent))
+    return json(events.map((e) => redactEvent(withSourceUrl(e))))
   })
 
   app.post('/api/events', async (req, reply) => {

@@ -10,7 +10,7 @@
  */
 import { describe, expect, test, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { Loans, norm, bookMatches } from './Loans'
+import { Loans, norm, bookMatches, matchRank } from './Loans'
 import { api } from '../api'
 import type { Book } from '../types'
 
@@ -101,17 +101,65 @@ describe('подсказка с полки в форме выдачи', () => {
     expect(screen.getByText(/уже на руках — сначала отметьте возврат/)).toBeTruthy()
   })
 
-  test('длинная полка не выпихивает форму за экран: показываем пять и счётчик', async () => {
+  test('длинная полка не выпихивает форму за экран: не больше шести и без «и ещё N»', async () => {
     vi.spyOn(api, 'myBooks').mockResolvedValue(
-      Array.from({ length: 9 }, (_, i) => book({ id: `b${i}`, title: `Книга ${i}` })),
+      Array.from({ length: 90 }, (_, i) => book({ id: `b${i}`, title: `Книга ${i}` })),
     )
     const { container } = render(<Loans go={() => {}} />)
     await screen.findByPlaceholderText('Название книги *')
 
     fireEvent.change(screen.getByPlaceholderText('Название книги *'), { target: { value: 'книга' } })
     await screen.findByText(/С вашей полки/)
-    expect(container.querySelectorAll('.note .link-row').length).toBe(5)
-    expect(screen.getByText(/и ещё 4 на полке/)).toBeTruthy()
+    expect(container.querySelectorAll('.note .link-row').length).toBe(6)
+    // «и ещё 84» внутри формы больше не пишем: за остальным — шторка со всей полкой
+    expect(screen.queryByText(/и ещё/)).toBeNull()
+  })
+
+  test('до двух символов подсказка молчит, а вместо неё — что делать', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue([book()])
+    render(<Loans go={() => {}} />)
+    await screen.findByPlaceholderText('Название книги *')
+
+    // пустое поле: списка нет, есть подсказка действия
+    expect(screen.queryByText(/С вашей полки/)).toBeNull()
+    expect(screen.getByText(/Начните вводить название или выберите книгу из своей полки/)).toBeTruthy()
+
+    fireEvent.change(screen.getByPlaceholderText('Название книги *'), { target: { value: 'м' } })
+    expect(screen.queryByText(/С вашей полки/)).toBeNull()
+
+    fireEvent.change(screen.getByPlaceholderText('Название книги *'), { target: { value: 'ма' } })
+    expect(await screen.findByText(/С вашей полки/)).toBeTruthy()
+  })
+
+  test('выбранная книга держится за bookId, а очистка поля его сбрасывает', async () => {
+    const calls: any[] = []
+    vi.spyOn(api, 'myBooks').mockResolvedValue([book()])
+    vi.spyOn(api, 'lend').mockImplementation(async (d: any) => {
+      calls.push(d)
+      return { loan: { id: 'l1' }, inviteUrl: null } as any
+    })
+    render(<Loans go={() => {}} />)
+    await screen.findByPlaceholderText('Название книги *')
+
+    const input = screen.getByPlaceholderText('Название книги *')
+    fireEvent.change(input, { target: { value: 'мастер' } })
+    fireEvent.click(await screen.findByText(/Мастер и Маргарита/))
+
+    // очистили поле — выбор снят, иначе выдали бы совсем не ту книгу
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.change(input, { target: { value: 'Мастер и Маргарита' } })
+    fireEvent.change(screen.getByPlaceholderText('@ник читателя *'), { target: { value: '@kto' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Записать выдачу' }))
+
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0].bookId).toBeUndefined()
+  })
+
+  test('подсказка сортируется по релевантности: начало названия выше автора', () => {
+    const n = norm('лем')
+    const byTitle = { title: 'Лемони Сникет', author: null }
+    const byAuthor = { title: 'Солярис', author: 'Лем' }
+    expect(matchRank(byTitle, n)).toBeLessThan(matchRank(byAuthor, n))
   })
 
   test('регистр, ё и знаки препинания не мешают найти свою книгу', () => {
@@ -211,5 +259,49 @@ describe('выбор книги из всей полки', () => {
     const row = container.querySelector('.sheet .pick-row')!
     expect(row.tagName).not.toBe('BUTTON')
     expect(row.textContent).toContain('сначала отметьте возврат')
+  })
+})
+
+/**
+ * B2 (ТЗ 5.08.2026): «На руках» не говорило, у кого именно на руках. Экран
+ * теперь называется «Выдачи», а вкладки различают стороны явно.
+ */
+describe('B2: однозначные названия вкладок', () => {
+  const mood = { level: 1, emoji: '📖', days: 3, label: 'читаю', overdueDays: 0 }
+
+  beforeEach(() => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue([])
+    vi.spyOn(api, 'loans').mockResolvedValue({
+      given: [
+        {
+          id: 'g1',
+          title: 'Дюна',
+          takenAt: '2026-08-01T00:00:00.000Z',
+          mood,
+          holderUsername: 'kto',
+        },
+      ],
+      taken: [{ id: 't1', title: 'Солярис', takenAt: '2026-08-01T00:00:00.000Z', mood }],
+      history: [],
+      summary: null,
+    } as any)
+  })
+
+  test('заголовок экрана — «Выдачи», вкладка — «У читателей»', async () => {
+    render(<Loans go={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Выдачи' })).toBeTruthy()
+    expect(await screen.findByRole('tab', { name: 'Мои книги у читателей' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Мои книги на руках' })).toBeNull()
+  })
+
+  test('у каждой вкладки есть роль и подпись для читалки экрана', async () => {
+    render(<Loans go={() => {}} />)
+    const tabs = await screen.findAllByRole('tab')
+    expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual([
+      'Мои книги у читателей',
+      'Чужие книги у меня',
+      'История выдач',
+    ])
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
   })
 })

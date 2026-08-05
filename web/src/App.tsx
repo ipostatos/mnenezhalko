@@ -19,6 +19,7 @@ import { Admin } from './screens/Admin'
 import { Digest } from './screens/Digest'
 import { Loans } from './screens/Loans'
 import { About } from './screens/About'
+import { Clubs } from './screens/Clubs'
 
 export type Route =
   | { name: 'home' }
@@ -26,6 +27,7 @@ export type Route =
   | { name: 'book'; id: string }
   | { name: 'ai' }
   | { name: 'cities' }
+  | { name: 'clubs' }
   | { name: 'events' }
   | { name: 'market' }
   | { name: 'add' }
@@ -49,7 +51,23 @@ function initialStack(): Route[] {
   const screen = params.get('screen')
   const id = params.get('id')
   if (screen === 'book' && id) return [{ name: 'home' }, { name: 'book', id }]
-  const known = ['add', 'loans', 'digest', 'about', 'myshelf', 'badges', 'guide', 'mydata', 'admin'] as const
+  // список экранов, на которые можно попасть по прямой ссылке из бота
+  const known = [
+    'add',
+    'loans',
+    'digest',
+    'about',
+    'myshelf',
+    'badges',
+    'guide',
+    'mydata',
+    'admin',
+    'clubs',
+    'events',
+    'cities',
+    'market',
+    'library',
+  ] as const
   return known.includes(screen as (typeof known)[number])
     ? [{ name: 'home' }, { name: screen } as Route]
     : [{ name: 'home' }]
@@ -105,6 +123,8 @@ export function App() {
       return <Assistant go={go} city={city} enabled={health?.ai ?? false} />
     case 'cities':
       return <Cities city={city} onPick={setCity} />
+    case 'clubs':
+      return <Clubs />
     case 'events':
       return <Events city={city} me={me} />
     case 'market':

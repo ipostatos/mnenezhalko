@@ -111,6 +111,8 @@ export type EventItem = {
   place: string | null
   description: string | null
   url: string | null
+  /** афиша-первоисточник в чате проекта: у разобранных встреч своего url обычно нет */
+  sourceUrl?: string | null
 }
 
 export type MarketItem = {
@@ -144,6 +146,10 @@ export type Health = {
   notionWrite: boolean
   /** страница книжного клуба «Книжная Клумба» (задаётся на сервере в CLUB_URL) */
   clubUrl?: string
+  /** сколько книжных клубов заведено (B7): плашку рисуем, только если есть куда вести */
+  clubs?: number
+  /** включён ли сбор пожертвований (DONATIONS_ENABLED на сервере) */
+  donations?: boolean
 }
 
 /** Ответ распознавания обложки по фото. */
@@ -390,4 +396,15 @@ export type ModerationQueue = {
   restrictions: QueueRestriction[]
   banned: QueueBanned[]
   recent: QueueAction[]
+}
+
+/** Книжный клуб проекта: в одном городе их может быть несколько (B7). */
+export type BookClub = {
+  id: string
+  name: string
+  city: string
+  description?: string
+  url: string
+  active: boolean
+  sortOrder?: number
 }

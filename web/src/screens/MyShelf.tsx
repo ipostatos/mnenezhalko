@@ -179,26 +179,46 @@ export function MyShelf({
       <div className="sub">Ваши книги, их состояние и правки — в одном месте</div>
 
       {/* город стоит здесь один раз — сразу видно, верно ли он выбран. В каждой
-          книге он повторялся без пользы (просьба user 29.07.2026) */}
-      <button
-        className="shelf-city"
-        onClick={() => {
-          haptic()
-          go({ name: 'cities' })
-        }}
-      >
-        <Icon name="pin" />
-        <span className="grow">
-          {city ? (
-            <>
-              Ваш город: <b>{city}</b>
-            </>
-          ) : (
-            'Выбрать свой город'
-          )}
-        </span>
-        <span className="chev">›</span>
-      </button>
+          книге он повторялся без пользы (просьба user 29.07.2026).
+          Когда города нет, вместо технической фразы «книги встанут без города»
+          объясняем пользу и даём действие (B3, ТЗ 5.08.2026). */}
+      {city ? (
+        <button
+          className="shelf-city"
+          onClick={() => {
+            haptic()
+            go({ name: 'cities' })
+          }}
+        >
+          <Icon name="pin" />
+          <span className="grow">
+            Ваш город: <b>{city}</b>
+          </span>
+          <span className="chev">›</span>
+        </button>
+      ) : (
+        <div className="warn-banner">
+          <div>
+            Укажите город, чтобы ваши книги появлялись в городском фильтре и их было проще забрать.
+          </div>
+          {/* честно про границы: город подставляется в НОВЫЕ книги, старые
+              сами не переезжают — обещать массовый перенос нельзя */}
+          <div className="muted" style={{ marginTop: 'var(--sp-2)' }}>
+            Город подставится в книги, которые вы добавите дальше. Уже добавленные останутся со
+            своим — его можно поменять в карточке книги.
+          </div>
+          <button
+            className="btn sm"
+            style={{ marginTop: 'var(--sp-3)' }}
+            onClick={() => {
+              haptic()
+              go({ name: 'cities' })
+            }}
+          >
+            <Icon name="pin" /> Указать город
+          </button>
+        </div>
+      )}
 
       {books.length > 0 && (
         <div className="stat-tiles">

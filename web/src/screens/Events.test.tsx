@@ -121,3 +121,59 @@ describe('уборка встречи', () => {
     expect(screen.getByText('Книжный обмен')).toBeTruthy()
   })
 })
+
+/**
+ * B4 (ТЗ 5.08.2026): карточка встречи должна быть понятной точкой входа.
+ * Раньше это была неподвижная плашка — человек видел дату и не понимал, куда
+ * нажать. Отдельно сторожим обещание «без мёртвых кнопок»: если у встречи нет
+ * ни своей страницы, ни афиши в чате, кнопки быть не должно.
+ */
+describe('B4: карточка встречи кликабельна', () => {
+  const upcoming = (over: Partial<EventItem> = {}) =>
+    event({ startsAt: new Date(Date.now() + 86_400_000).toISOString(), ...over })
+
+  test('карточка открывает подробности', async () => {
+    vi.spyOn(api, 'events').mockResolvedValue([upcoming()])
+    render(<Events city="Warszawa" me={me(false)} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Книжный обмен, подробнее/ }))
+    expect(await screen.findByRole('dialog', { name: /Встреча: Книжный обмен/ })).toBeTruthy()
+  })
+
+  test('есть своя ссылка — есть кнопка на страницу встречи', async () => {
+    vi.spyOn(api, 'events').mockResolvedValue([upcoming({ url: 'https://t.me/event' })])
+    render(<Events city="Warszawa" me={me(false)} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /подробнее/ }))
+    expect(await screen.findByRole('button', { name: 'Открыть страницу встречи' })).toBeTruthy()
+  })
+
+  test('своей ссылки нет, но есть афиша в чате — ведём туда', async () => {
+    vi.spyOn(api, 'events').mockResolvedValue([
+      upcoming({ sourceUrl: 'https://t.me/c/1856176764/14501/42' }),
+    ])
+    render(<Events city="Warszawa" me={me(false)} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /подробнее/ }))
+    expect(await screen.findByRole('button', { name: 'Открыть афишу в чате' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Открыть страницу встречи' })).toBeNull()
+  })
+
+  test('ссылок нет вовсе — мёртвой кнопки не рисуем', async () => {
+    vi.spyOn(api, 'events').mockResolvedValue([upcoming()])
+    render(<Events city="Warszawa" me={me(false)} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /подробнее/ }))
+    await screen.findByRole('dialog')
+    expect(screen.queryByRole('button', { name: /Открыть/ })).toBeNull()
+    expect(screen.getByText(/Подробности спросите в чате своего города/)).toBeTruthy()
+  })
+
+  test('фальшивой кнопки «Я пойду» на экране нет', async () => {
+    vi.spyOn(api, 'events').mockResolvedValue([upcoming()])
+    render(<Events city="Warszawa" me={me(false)} />)
+    fireEvent.click(await screen.findByRole('button', { name: /подробнее/ }))
+    await screen.findByRole('dialog')
+    expect(screen.queryByText(/Я пойду|Я приду/)).toBeNull()
+  })
+})

@@ -15,28 +15,112 @@ const fmt = new Intl.DateTimeFormat('ru-RU', {
   timeZone: 'Europe/Warsaw',
 })
 
+/**
+ * Подробности встречи (B4, ТЗ 5.08.2026). Раньше карточка была неподвижной
+ * плашкой: человек видел дату и описание, но не понимал, куда нажать и как
+ * присоединиться. Теперь карточка целиком — кнопка, а здесь всё, что о встрече
+ * известно, и ТОЛЬКО те действия, которые действительно работают. Кнопки
+ * «Я пойду» нет намеренно: пока участие негде хранить, она бы ничего не
+ * сохраняла (модель EventAttendance вынесена отдельной задачей).
+ */
+function EventSheet({ e, onClose }: { e: EventItem; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => ev.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="sheet-overlay" onClick={onClose}>
+      <div
+        className="sheet"
+        role="dialog"
+        aria-label={`Встреча: ${e.title}`}
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <div className="t">{e.title}</div>
+          <button className="sheet-close" aria-label="Закрыть" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <div className="sheet-body">
+          <div className="d">{fmt.format(new Date(e.startsAt))}</div>
+          <div className="d">
+            {e.city}
+            {e.place ? `, ${e.place}` : ''}
+          </div>
+          {e.description && (
+            <p className="lead" style={{ marginTop: 'var(--sp-3)' }}>
+              {e.description}
+            </p>
+          )}
+
+          {e.url && (
+            <button
+              className="btn"
+              style={{ marginTop: 'var(--sp-4)' }}
+              onClick={() => openTg(e.url!)}
+            >
+              Открыть страницу встречи
+            </button>
+          )}
+          {e.sourceUrl && (
+            <button
+              className={`btn ${e.url ? 'ghost' : ''}`}
+              style={{ marginTop: 'var(--sp-3)' }}
+              onClick={() => openTg(e.sourceUrl!)}
+            >
+              Открыть афишу в чате
+            </button>
+          )}
+          {/* ни своей страницы, ни афиши — молчим, а не рисуем мёртвую кнопку */}
+          {!e.url && !e.sourceUrl && (
+            <div className="muted" style={{ marginTop: 'var(--sp-4)' }}>
+              Подробности спросите в чате своего города — там же договариваются о месте.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Одна встреча: карточка одинаковая и в афише, и в блоке прошедших. */
 function EventCard({ e }: { e: EventItem }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="row-card static">
-      <div className="ic-tile" style={{ ['--tone' as any]: '#E2A336' }}>
-        📅
-      </div>
-      <div className="grow">
-        <div className="t-sm">{e.title}</div>
-        <div className="d">{fmt.format(new Date(e.startsAt))}</div>
-        <div className="d">
-          {e.city}
-          {e.place ? `, ${e.place}` : ''}
+    <>
+      <button
+        className="row-card"
+        aria-label={`${e.title}, подробнее`}
+        onClick={() => {
+          haptic()
+          setOpen(true)
+        }}
+      >
+        <div className="ic-tile" style={{ ['--tone' as any]: '#E2A336' }}>
+          📅
         </div>
-        {e.description && <div className="d" style={{ marginTop: 4 }}>{e.description}</div>}
-      </div>
-      {e.url && (
-        <button className="btn ghost sm" onClick={() => openTg(e.url!)}>
-          →
-        </button>
-      )}
-    </div>
+        <div className="grow">
+          <div className="t-sm">{e.title}</div>
+          <div className="d">{fmt.format(new Date(e.startsAt))}</div>
+          <div className="d">
+            {e.city}
+            {e.place ? `, ${e.place}` : ''}
+          </div>
+          {e.description && (
+            <div className="d" style={{ marginTop: 4 }}>
+              {e.description}
+            </div>
+          )}
+          <div className="d">Подробнее</div>
+        </div>
+        <div className="chev">›</div>
+      </button>
+      {open && <EventSheet e={e} onClose={() => setOpen(false)} />}
+    </>
   )
 }
 

@@ -23,6 +23,7 @@ import {
   type Scope,
 } from './moderation.js'
 import { plural } from './plural.js'
+import { activeClubs, primaryClubUrl } from './clubs.js'
 import {
   CITIES,
   EVENTS_TOPIC_ID,
@@ -123,14 +124,16 @@ const webAppUrl = () => env.publicUrl || ''
 let BOT_USERNAME = 'mnenezhalkobot'
 export const botUsername = () => BOT_USERNAME
 
+/**
+ * Меню бота (B6, ТЗ 5.08.2026). Продукт живёт в Mini App, поэтому бот — это
+ * вход, уведомления и ссылки наружу, а не второй интерфейс с теми же функциями.
+ * Раньше здесь дублировались библиотека, «О проекте» и донат; сами команды
+ * никуда не делись (см. /help), но кнопками их больше не размножаем.
+ */
 const mainKeyboard = () => {
   const kb = new InlineKeyboard()
-  if (webAppUrl()) {
-    kb.webApp('📚 Открыть библиотеку', webAppUrl()).row()
-    kb.webApp('🌿 О проекте', `${webAppUrl()}/?screen=about`).row()
-  }
-  kb.url('🌸 Книжная Клумба', env.clubUrl).row()
-  kb.text('💛 Поддержать проект', 'donate:menu').row()
+  if (webAppUrl()) kb.webApp('📚 Открыть приложение', webAppUrl()).row()
+  kb.url('🌸 Книжные клубы', primaryClubUrl() || env.clubUrl).row()
   kb.url('💬 Чат проекта', env.mainChatUrl).row()
   kb.url('📸 Инстаграм', INSTAGRAM_URL)
   return kb
@@ -272,8 +275,8 @@ bot.command('help', (ctx) =>
       '/events — ближайшие встречи',
       '/alerts — анонсы новых встреч: включить или выключить',
       '/baraholka — барахолка города',
-      '/club — книжный клуб «Книжная Клумба»',
-      '/donate — поддержать проект звёздами Telegram',
+      '/club — книжные клубы проекта',
+      ...(env.donations ? ['/donate — поддержать проект звёздами Telegram'] : []),
       '',
       'Пришлите <b>фото книги или настолки</b> — распознаю название, автора, язык и жанр,',
       'заведу вас библиотекарем и добавлю книгу в общую таблицу проекта.',
@@ -339,31 +342,55 @@ async function showDonateMenu(ctx: any) {
   )
 }
 
-bot.command('donate', showDonateMenu)
+/**
+ * Донаты выключены до отдельного продуктового решения (B5): пользовательских
+ * входов нет ни одного, но обработчики остаются — иначе старая кнопка из
+ * истории чата вела бы в пустоту, а не получала внятный ответ.
+ */
+const donationsOff = (ctx: any) =>
+  ctx.reply('Сбор пожертвований сейчас выключен. Спасибо за желание поддержать проект 🌿')
+
+bot.command('donate', (ctx: any) => (env.donations ? showDonateMenu(ctx) : donationsOff(ctx)))
 
 // кнопка «Поддержать проект» из главного меню (суммы — отдельные donate:<число>)
 bot.callbackQuery('donate:menu', async (ctx) => {
   await ctx.answerCallbackQuery()
+  if (!env.donations) return donationsOff(ctx)
   await showDonateMenu(ctx)
 })
 
 /* ── книжный клуб «Книжная Клумба» ────────────────────────── */
 
-const clubKeyboard = () => new InlineKeyboard().url('🌸 Перейти в чат клуба', env.clubUrl)
+/**
+ * Клубов может быть несколько, в том числе в одном городе (B7, ТЗ 5.08.2026):
+ * поэтому не одна зашитая кнопка, а список из настройки (clubs.ts). Город стоит
+ * в подписи, но не в логике: выбирать клуб «по городу» нельзя — их там больше одного.
+ */
+const clubKeyboard = () => {
+  const kb = new InlineKeyboard()
+  for (const c of activeClubs()) kb.url(`🌸 ${c.city ? `${c.city}: ` : ''}${c.name}`, c.url).row()
+  return kb
+}
 
-bot.command('club', (ctx) =>
-  ctx.reply(
-    [
-      '🌸 <b>Книжная Клумба МнеНеЖалко</b>',
-      '',
-      'Книжный клуб проекта: что читаем, когда встречаемся и как присоединиться.',
-      'Заходите в чат клуба:',
-    ].join('\n'),
-    { parse_mode: 'HTML', reply_markup: clubKeyboard() },
-  ),
-)
+bot.command('club', (ctx) => {
+  const clubs = activeClubs()
+  if (!clubs.length) return ctx.reply('Список книжных клубов пока пуст.')
+  const lines = ['🌸 <b>Книжные клубы проекта</b>', '']
+  for (const c of clubs) {
+    lines.push(`<b>${esc(c.name)}</b>${c.city ? ` · ${esc(c.city)}` : ''}`)
+    if (c.description) lines.push(`<i>${esc(c.description)}</i>`)
+    lines.push('')
+  }
+  lines.push('Выберите клуб — открою его чат:')
+  return ctx.reply(lines.join('\n'), { parse_mode: 'HTML', reply_markup: clubKeyboard() })
+})
 
 bot.callbackQuery(/^donate:(\d+)$/, async (ctx) => {
+  // старая кнопка из истории чата не должна выставлять счёт при выключенном сборе
+  if (!env.donations) {
+    await ctx.answerCallbackQuery({ text: 'Сбор пожертвований выключен' })
+    return
+  }
   const amount = Number(ctx.match![1])
   if (!isDonateAmount(amount)) return ctx.answerCallbackQuery({ text: 'Такой суммы нет' })
   await ctx.answerCallbackQuery()
@@ -3090,9 +3117,10 @@ export async function setupBotCommands() {
     { command: 'events', description: 'Ближайшие встречи' },
     { command: 'alerts', description: 'Анонсы новых встреч' },
     { command: 'baraholka', description: 'Барахолка по городам' },
-    { command: 'club', description: 'Книжный клуб «Книжная Клумба»' },
+    { command: 'club', description: 'Книжные клубы проекта' },
     { command: 'import', description: 'Добавить книги пачкой (альбом или список)' },
-    { command: 'donate', description: 'Поддержать проект звёздами' },
+    // донат в меню не показываем, пока сбор выключен (B5)
+    ...(env.donations ? [{ command: 'donate', description: 'Поддержать проект звёздами' }] : []),
     { command: 'help', description: 'Помощь' },
   ]
   await bot.api.setMyCommands(common)

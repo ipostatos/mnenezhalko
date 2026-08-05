@@ -130,3 +130,45 @@ describe('счётчики на «Моей полке»', () => {
     await waitFor(() => expect(screen.getByText('На полке раз')).toBeTruthy())
   })
 })
+
+/**
+ * B3 (ТЗ 5.08.2026): баннер города. Раньше он писал «Город не выбран — книги
+ * встанут на полку без города»: техническая фраза без пользы и без действия.
+ * Теперь объясняет выгоду, ведёт в существующий выбор города и честно говорит,
+ * что старые книги сами не переедут.
+ */
+describe('B3: баннер города', () => {
+  test('без города объясняем пользу и даём действие', async () => {
+    render(<MyShelf go={() => {}} />)
+    await screen.findByText('На полке раз')
+
+    expect(screen.getByText(/чтобы ваши книги появлялись в городском фильтре/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Указать город/ })).toBeTruthy()
+    // старой технической фразы больше нет
+    expect(screen.queryByText(/встанут на полку без города/)).toBeNull()
+    expect(screen.queryByText(/Город не выбран/)).toBeNull()
+  })
+
+  test('обещаем только то, что делаем: старые книги не переезжают', async () => {
+    render(<MyShelf go={() => {}} />)
+    await screen.findByText('На полке раз')
+    expect(screen.getByText(/Уже добавленные останутся со своим/)).toBeTruthy()
+  })
+
+  test('действие ведёт на существующий выбор города, второго экрана не заводим', async () => {
+    const routes: any[] = []
+    render(<MyShelf go={(r) => routes.push(r)} />)
+    await screen.findByText('На полке раз')
+
+    fireEvent.click(screen.getByRole('button', { name: /Указать город/ }))
+    expect(routes).toEqual([{ name: 'cities' }])
+  })
+
+  test('город выбран — баннера нет, есть строка с городом', async () => {
+    const { container } = render(<MyShelf go={() => {}} city="Warszawa" />)
+    await screen.findByText('На полке раз')
+
+    expect(container.querySelectorAll('.shelf-city').length).toBe(1)
+    expect(screen.queryByRole('button', { name: /Указать город/ })).toBeNull()
+  })
+})
