@@ -243,10 +243,22 @@ export type DigestResult = {
   byCity: { city: string; count: number }[]
 }
 
+/**
+ * Исход модерации сервер называет явно (см. server/src/publish.ts): раньше о
+ * нём можно было судить только по reviewStatus, и мгновенная публикация книги
+ * админом выглядела как «модерация выключена».
+ */
+export type ModerationOutcome =
+  | { state: 'pending' }
+  | { state: 'published'; reason: 'admin' | 'moderation_off' }
+
 export type ShelfResult = {
   book: Book
   notionStatus: string
   notionError: string | null
+  moderation: ModerationOutcome
+  /** готовая фраза к этому исходу — своих формулировок здесь не пишем */
+  moderationNotice: string | null
 }
 
 /** Значок библиотекаря: заработанный или с прогрессом (issue #11). */

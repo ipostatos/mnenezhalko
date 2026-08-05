@@ -64,6 +64,8 @@ export function AddBook({
     pending: boolean
     /** имя библиотекаря, если книгу вносили за него */
     owner: string | null
+    /** объяснение исхода модерации — текст приходит с сервера, своего не пишем */
+    moderationNotice: string | null
   } | null>(null)
 
   const [cover, setCover] = useState<string | null>(null)
@@ -237,8 +239,9 @@ export function AddBook({
       setSaved({
         id: res.book.id,
         inNotion: res.notionStatus === 'synced',
-        pending: res.book.reviewStatus === 'pending',
+        pending: res.moderation?.state === 'pending',
         owner: owner?.name ?? null,
+        moderationNotice: res.moderationNotice ?? null,
       })
     } catch (e: any) {
       showAlert(e.message === 'unauthorized' ? 'Откройте приложение через бота' : e.message)
@@ -252,10 +255,9 @@ export function AddBook({
       <div className="empty">
         <div className="big">{saved.pending ? '📖' : '🎉'}</div>
         {saved.pending ? (
-          <>
-            Книга отправлена на проверку модератору. Как одобрят — она появится в библиотеке, и бот
-            вам сообщит.
-          </>
+          /* формулировку даёт сервер (publish.ts::moderationNotice): одно правило —
+             один текст и в боте, и здесь */
+          <>{saved.moderationNotice}</>
         ) : (
           <>
             {saved.owner ? (
@@ -271,6 +273,13 @@ export function AddBook({
                 ? 'Карточка уже в общей таблице проекта.'
                 : 'В общую таблицу проекта карточка уйдёт чуть позже — админы получили уведомление.'}
             </div>
+            {/* при включённой модерации админ публикует книгу сам — молча это
+                выглядит как «проверка не работает» (вопрос user 5.08.2026) */}
+            {saved.moderationNotice && (
+              <div className="sub" style={{ marginTop: 'var(--sp-2)' }}>
+                {saved.moderationNotice}
+              </div>
+            )}
           </>
         )}
         <div style={{ height: 'var(--sp-5)' }} />
