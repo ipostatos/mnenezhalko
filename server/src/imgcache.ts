@@ -19,6 +19,7 @@ import sharp from 'sharp'
 import { Agent, fetch as undiciFetch } from 'undici'
 import { env } from './env.js'
 import { assertPublicUrl, type ResolvedAddr } from './net.js'
+import { looksLikeStubCover, rememberStubCover } from './cover-quality.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const CACHE_DIR = path.resolve(here, '../data/imgcache')
@@ -169,6 +170,8 @@ export function negativeTtlMs(category: ImgErrorCategory, status?: number): numb
       return 6 * 3600_000 // DNS/соединение: даём шанс, но не каждый час
     case 'host_cooldown':
       return 10 * 60_000 // короткий: пауза хоста сама истечёт
+    case 'stub_image':
+      return 24 * 3600_000 // «нет фото» у магазина само не появится
     default:
       return 24 * 3600_000 // bad_content_type, too_large, empty, private_host, редиректы
   }
@@ -282,6 +285,7 @@ export type ImgErrorCategory =
   | 'timeout' // не уложились в TIMEOUT_MS
   | 'network' // сеть/DNS/прочее
   | 'host_cooldown' // хост на паузе после серии таймаутов — origin не трогали
+  | 'stub_image' // origin отдал 200 и картинку, но это его «нет фото» (см. cover-quality.ts)
 
 type FetchOutcome =
   | { ok: true; body: Buffer; type: string; inputBytes: number; resizeMs: number }
@@ -314,6 +318,12 @@ async function fetchAndResize(url: string, w: number): Promise<FetchOutcome> {
         .resize({ width: w, withoutEnlargement: true })
         .webp({ quality: 78 })
         .toBuffer()
+      // «нет фото» магазина приходит как обычная картинка с кодом 200 — от
+      // битой ссылки это не отличить ничем, кроме содержимого (cover-quality.ts)
+      if (await looksLikeStubCover(body)) {
+        await rememberStubCover(url).catch(() => {})
+        return { ok: false, category: 'stub_image' }
+      }
       return { ok: true, body, type: 'image/webp', inputBytes: orig.length, resizeMs: Date.now() - t1 }
     } catch {
       return { ok: true, body: orig, type, inputBytes: orig.length, resizeMs: Date.now() - t1 }
