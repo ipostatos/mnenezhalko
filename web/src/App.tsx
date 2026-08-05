@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { backButton, onAppShow } from './telegram'
 import type { Health, LoanSummary, Me } from './types'
@@ -19,6 +19,7 @@ import { Admin } from './screens/Admin'
 import { Digest } from './screens/Digest'
 import { Loans } from './screens/Loans'
 import { About } from './screens/About'
+import { Clubs } from './screens/Clubs'
 
 export type Route =
   | { name: 'home' }
@@ -26,6 +27,7 @@ export type Route =
   | { name: 'book'; id: string }
   | { name: 'ai' }
   | { name: 'cities' }
+  | { name: 'clubs' }
   | { name: 'events' }
   | { name: 'market' }
   | { name: 'add' }
@@ -49,7 +51,23 @@ function initialStack(): Route[] {
   const screen = params.get('screen')
   const id = params.get('id')
   if (screen === 'book' && id) return [{ name: 'home' }, { name: 'book', id }]
-  const known = ['add', 'loans', 'digest', 'about', 'myshelf', 'badges', 'guide', 'mydata', 'admin'] as const
+  // список экранов, на которые можно попасть по прямой ссылке из бота
+  const known = [
+    'add',
+    'loans',
+    'digest',
+    'about',
+    'myshelf',
+    'badges',
+    'guide',
+    'mydata',
+    'admin',
+    'clubs',
+    'events',
+    'cities',
+    'market',
+    'library',
+  ] as const
   return known.includes(screen as (typeof known)[number])
     ? [{ name: 'home' }, { name: screen } as Route]
     : [{ name: 'home' }]
@@ -63,7 +81,17 @@ export function App() {
   const route = stack[stack.length - 1]
 
   const go = (r: Route) => setStack((s) => [...s, r])
-  const back = () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
+  // экран может перехватить «Назад» под своё под-состояние (напр. правка книги
+  // в «Моей полке» — тогда «Назад» отменяет правку, а не уводит на главную,
+  // жалоба user 5.08.2026). Вернул true — обработал сам, стек не трогаем.
+  const backRef = useRef<(() => boolean) | null>(null)
+  const registerBack = (fn: (() => boolean) | null) => {
+    backRef.current = fn
+  }
+  const back = () => {
+    if (backRef.current?.()) return
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
+  }
 
   useEffect(() => {
     const refresh = () => {
@@ -95,6 +123,8 @@ export function App() {
       return <Assistant go={go} city={city} enabled={health?.ai ?? false} />
     case 'cities':
       return <Cities city={city} onPick={setCity} />
+    case 'clubs':
+      return <Clubs />
     case 'events':
       return <Events city={city} me={me} />
     case 'market':
@@ -110,7 +140,7 @@ export function App() {
     case 'shelf':
       return <Shelf id={route.id} go={go} />
     case 'myshelf':
-      return <MyShelf go={go} city={city} />
+      return <MyShelf go={go} city={city} registerBack={registerBack} />
     case 'badges':
       return <BadgesScreen />
     case 'guide':

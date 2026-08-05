@@ -1,5 +1,6 @@
 import { tg } from './telegram'
 import type {
+  BookClub,
   Book,
   CityInfo,
   EventItem,
@@ -130,6 +131,8 @@ export const api = {
   removeEvent: (id: string) =>
     req<{ ok: true; id: string }>('POST', `/api/admin/events/${id}/remove`, {}),
   market: (city?: string) => req<MarketItem[]>('GET', `/api/market${qs({ city })}`),
+  /** Книжные клубы проекта (в городе их может быть несколько). */
+  clubs: () => req<BookClub[]>('GET', '/api/clubs'),
   addBook: (data: {
     title: string
     author?: string

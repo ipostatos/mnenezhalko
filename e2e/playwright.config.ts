@@ -57,6 +57,20 @@ export default defineConfig({
       // книги публикуются сразу; книга обычного участника уходит на проверку
       MODERATION_ON: '1',
       ADMIN_IDS: '9000001',
+      // два клуба в ОДНОМ городе: главный случай B7, который легко сломать
+      CLUBS_JSON: JSON.stringify([
+        {
+          id: 'wwa-morning',
+          name: 'Утренний клуб',
+          city: 'Warszawa',
+          url: 'https://t.me/wwa_morning',
+          sortOrder: 1,
+        },
+        { id: 'wwa-evening', name: 'Вечерний клуб', city: 'Warszawa', url: 'https://t.me/wwa_evening' },
+        { id: 'krk', name: 'Краковский клуб', city: 'Kraków', url: 'https://t.me/krk_club' },
+      ]),
+      // донаты выключены — как и должно быть по умолчанию (B5)
+      DONATIONS_ENABLED: '',
     },
   },
   globalSetup: './global-setup.mts',

@@ -14,6 +14,13 @@ const DONATE_BOT = 'https://t.me/mnenezhalkobot?start=donate'
 // держать синхронно с DONATE_AMOUNTS на сервере (server/src/bot.ts)
 const DONATE_AMOUNTS = [50, 150, 500]
 
+/**
+ * Донаты (звёзды и «кофе») выключены до отдельного продуктового решения
+ * (B5, ТЗ 5.08.2026). Решает СЕРВЕР — `DONATIONS_ENABLED=1`, флаг приезжает в
+ * /api/health: иначе приложение и бот могли бы разойтись в том, включён ли сбор.
+ * Платёжный код не удалён, его включает тот же флаг.
+ */
+
 /** О проекте: что это, как устроено и как участвовать. */
 export function About({ go, health }: { go: (r: Route) => void; health: Health | null }) {
   const [donating, setDonating] = useState(0)
@@ -160,44 +167,48 @@ export function About({ go, health }: { go: (r: Route) => void; health: Health |
         <div>Пишите библиотекарю по-человечески: кто вы, откуда узнали, когда удобно встретиться.</div>
       </div>
 
-      <div className="section-title">Поддержать проект</div>
-      <p className="lead">
-        «МнеНеЖалко» некоммерческий и держится на энтузиазме. Если приложение пригодилось — можно
-        сказать спасибо звёздами Telegram: они идут на домен, сервер и ИИ-подбор книг 🌿
-      </p>
-      {thanked ? (
-        <div className="donate-thanks">🌿 Спасибо за поддержку! Вы очень помогаете проекту.</div>
-      ) : (
-        <div className="donate-row">
-          {DONATE_AMOUNTS.map((a) => (
-            <button
-              key={a}
-              className="btn ghost donate-btn"
-              disabled={donating !== 0}
-              onClick={() => donate(a)}
-            >
-              {donating === a ? '…' : `${a} ⭐`}
-            </button>
-          ))}
-        </div>
+      {health?.donations && (
+        <>
+          <div className="section-title">Поддержать проект</div>
+          <p className="lead">
+            «МнеНеЖалко» некоммерческий и держится на энтузиазме. Если приложение пригодилось — можно
+            сказать спасибо звёздами Telegram: они идут на домен, сервер и ИИ-подбор книг 🌿
+          </p>
+          {thanked ? (
+            <div className="donate-thanks">🌿 Спасибо за поддержку! Вы очень помогаете проекту.</div>
+          ) : (
+            <div className="donate-row">
+              {DONATE_AMOUNTS.map((a) => (
+                <button
+                  key={a}
+                  className="btn ghost donate-btn"
+                  disabled={donating !== 0}
+                  onClick={() => donate(a)}
+                >
+                  {donating === a ? '…' : `${a} ⭐`}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            className="row-card tile coffee-card"
+            style={{ ['--tone' as any]: '#EC9455' }}
+            onClick={() => {
+              haptic()
+              openTg(COFFEE)
+            }}
+          >
+            <div className="ic-tile">
+              <Icon name="coffee" />
+            </div>
+            <div className="grow">
+              <div className="t">Угостить кофе</div>
+              <div className="d">Разовая поддержка картой на buycoffee.to</div>
+            </div>
+            <div className="chev">›</div>
+          </button>
+        </>
       )}
-      <button
-        className="row-card tile coffee-card"
-        style={{ ['--tone' as any]: '#EC9455' }}
-        onClick={() => {
-          haptic()
-          openTg(COFFEE)
-        }}
-      >
-        <div className="ic-tile">
-          <Icon name="coffee" />
-        </div>
-        <div className="grow">
-          <div className="t">Угостить кофе</div>
-          <div className="d">Разовая поддержка картой на buycoffee.to</div>
-        </div>
-        <div className="chev">›</div>
-      </button>
 
       <div className="section-title">Куда идти дальше</div>
       <button className="row-card tile" style={{ ['--tone' as any]: '#8DA4EF' }} onClick={() => openTg(MAIN_CHAT)}>

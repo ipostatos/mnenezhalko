@@ -46,6 +46,15 @@ export const INSTAGRAM_URL = 'https://www.instagram.com/mne_ne_zhalko_pl'
 const topicUrl = (topic: number) => `https://t.me/c/${String(MAIN_CHAT_ID).replace('-100', '')}/${topic}`
 
 export const eventsTopicUrl = () => topicUrl(EVENTS_TOPIC_ID)
+
+/**
+ * Ссылка на САМО сообщение-афишу в теме встреч. Нужна карточке встречи: у
+ * разобранных из чата встреч своего `url` обычно нет вовсе (на проде — ни у
+ * одной), и нажимать было некуда, хотя первоисточник всегда существует
+ * (B4, ТЗ 5.08.2026).
+ */
+export const eventSourceUrl = (msgId: number | null | undefined): string | null =>
+  msgId ? `${topicUrl(EVENTS_TOPIC_ID)}/${msgId}` : null
 export const marketTopicUrl = () => topicUrl(MARKET_TOPIC_ID)
 
 /**
