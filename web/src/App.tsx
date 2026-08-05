@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { backButton, onAppShow } from './telegram'
 import type { Health, LoanSummary, Me } from './types'
@@ -63,7 +63,17 @@ export function App() {
   const route = stack[stack.length - 1]
 
   const go = (r: Route) => setStack((s) => [...s, r])
-  const back = () => setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
+  // экран может перехватить «Назад» под своё под-состояние (напр. правка книги
+  // в «Моей полке» — тогда «Назад» отменяет правку, а не уводит на главную,
+  // жалоба user 5.08.2026). Вернул true — обработал сам, стек не трогаем.
+  const backRef = useRef<(() => boolean) | null>(null)
+  const registerBack = (fn: (() => boolean) | null) => {
+    backRef.current = fn
+  }
+  const back = () => {
+    if (backRef.current?.()) return
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
+  }
 
   useEffect(() => {
     const refresh = () => {
@@ -110,7 +120,7 @@ export function App() {
     case 'shelf':
       return <Shelf id={route.id} go={go} />
     case 'myshelf':
-      return <MyShelf go={go} city={city} />
+      return <MyShelf go={go} city={city} registerBack={registerBack} />
     case 'badges':
       return <BadgesScreen />
     case 'guide':

@@ -190,9 +190,12 @@ export function Loans({ go }: { go: (r: Route) => void }) {
             setBookId(null)
           }}
         />
-        {suggestions.length > 0 && !bookId && (
+        {/* список полки показываем только когда человек начал вводить название:
+            большая плашка со всей полкой сразу загромождала форму
+            (просьба user 5.08.2026). Просмотреть всю полку — кнопкой ниже */}
+        {needle && suggestions.length > 0 && !bookId && (
           <div className="note" style={{ marginBottom: 0 }}>
-            {needle ? 'С вашей полки:' : 'С вашей полки — выберите или начните вводить название:'}
+            С вашей полки:
             {suggestions.map((b) => (
               <button
                 key={b.id}

@@ -21,7 +21,16 @@ const STATE: Record<ShelfState, { label: string; tone: string }> = {
 
 const ORDER: ShelfState[] = ['active', 'onloan', 'pending', 'rejected', 'syncerror', 'deleted']
 
-export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string }) {
+export function MyShelf({
+  go,
+  city,
+  registerBack,
+}: {
+  go: (r: Route) => void
+  city?: string
+  /** пока открыта правка книги, «Назад» должен отменять её, а не уходить на главную */
+  registerBack?: (fn: (() => boolean) | null) => void
+}) {
   const [books, setBooks] = useState<ShelfBook[] | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
@@ -62,6 +71,17 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
     load()
     return onAppShow(load)
   }, [])
+
+  // пока открыта правка книги, перехватываем «Назад»: закрываем правку и
+  // возвращаемся к списку полки, а не на главную (жалоба user 5.08.2026)
+  useEffect(() => {
+    if (!editing || !registerBack) return
+    registerBack(() => {
+      setEditing(null)
+      return true
+    })
+    return () => registerBack(null)
+  }, [editing, registerBack])
 
   if (error && !books) {
     return (
@@ -174,7 +194,7 @@ export function MyShelf({ go, city }: { go: (r: Route) => void; city?: string })
               Ваш город: <b>{city}</b>
             </>
           ) : (
-            'Город не выбран — книги встанут на полку без города'
+            'Выбрать свой город'
           )}
         </span>
         <span className="chev">›</span>

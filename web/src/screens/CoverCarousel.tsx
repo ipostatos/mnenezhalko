@@ -36,7 +36,9 @@ export function CoverCarousel({
   const progTimer = useRef(0)
   // обложки, которые не загрузились (битая ссылка) — убираем из карусели
   const [broken, setBroken] = useState<Set<string>>(new Set())
-  const shown = books.filter((b) => !broken.has(b.id))
+  // в карусель только книги С обложкой (просьба user 5.08.2026): книга без
+  // coverUrl не должна занимать место пустой карточкой
+  const shown = books.filter((b) => b.coverUrl && !broken.has(b.id))
 
   // индекс, который окажется в центре на старте — по нему грузим приоритетные обложки
   const initialCenter =

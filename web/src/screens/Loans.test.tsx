@@ -44,15 +44,20 @@ beforeEach(() => {
 })
 
 describe('подсказка с полки в форме выдачи', () => {
-  test('полка видна сразу, до ввода: раньше подсказка молчала до двух букв', async () => {
+  test('список полки скрыт до ввода и появляется, когда начинаешь печатать', async () => {
+    // просьба user 5.08.2026: большая плашка со всей полкой сразу загромождала
+    // форму — теперь список появляется только при вводе названия
     vi.spyOn(api, 'myBooks').mockResolvedValue([
       book(),
       book({ id: 'b2', title: 'Солярис', author: 'Станислав Лем' }),
     ])
     render(<Loans go={() => {}} />)
 
+    await screen.findByPlaceholderText('Название книги *')
+    expect(screen.queryByText(/С вашей полки/)).toBeNull()
+
+    fireEvent.change(screen.getByPlaceholderText('Название книги *'), { target: { value: 'сол' } })
     expect(await screen.findByText(/С вашей полки/)).toBeTruthy()
-    expect(screen.getByText(/Мастер и Маргарита/)).toBeTruthy()
     expect(screen.getByText(/Солярис/)).toBeTruthy()
   })
 
@@ -62,12 +67,12 @@ describe('подсказка с полки в форме выдачи', () => {
       book({ id: 'b2', title: 'Солярис', author: 'Станислав Лем' }),
     ])
     render(<Loans go={() => {}} />)
-    await screen.findByText(/С вашей полки/)
+    await screen.findByPlaceholderText('Название книги *')
 
     fireEvent.change(screen.getByPlaceholderText('Название книги *'), {
       target: { value: 'лем' },
     })
-    expect(screen.getByText(/Солярис/)).toBeTruthy()
+    expect(await screen.findByText(/Солярис/)).toBeTruthy()
     expect(screen.queryByText(/Мастер и Маргарита/)).toBeNull()
   })
 
@@ -75,6 +80,8 @@ describe('подсказка с полки в форме выдачи', () => {
     vi.spyOn(api, 'myBooks').mockResolvedValue([book()])
     render(<Loans go={() => {}} />)
 
+    await screen.findByPlaceholderText('Название книги *')
+    fireEvent.change(screen.getByPlaceholderText('Название книги *'), { target: { value: 'мастер' } })
     fireEvent.click(await screen.findByText(/Мастер и Маргарита/))
     const input = screen.getByPlaceholderText('Название книги *') as HTMLInputElement
     expect(input.value).toBe('Мастер и Маргарита')
@@ -99,8 +106,10 @@ describe('подсказка с полки в форме выдачи', () => {
       Array.from({ length: 9 }, (_, i) => book({ id: `b${i}`, title: `Книга ${i}` })),
     )
     const { container } = render(<Loans go={() => {}} />)
-    await screen.findByText(/С вашей полки/)
+    await screen.findByPlaceholderText('Название книги *')
 
+    fireEvent.change(screen.getByPlaceholderText('Название книги *'), { target: { value: 'книга' } })
+    await screen.findByText(/С вашей полки/)
     expect(container.querySelectorAll('.note .link-row').length).toBe(5)
     expect(screen.getByText(/и ещё 4 на полке/)).toBeTruthy()
   })
