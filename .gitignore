@@ -16,3 +16,4 @@ test-results/
 playwright-report/
 # файл с sha релиза кладёт выкладка на сервере
 .release-env
+e2e/shots/
