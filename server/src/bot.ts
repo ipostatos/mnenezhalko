@@ -189,14 +189,13 @@ bot.command('start', async (ctx) => {
             `📗 У вас книга <b>${esc(loan.title)}</b>.`,
             loan.dueAt ? `Договорились вернуть к ${loanFmt.format(loan.dueAt)}.` : '',
             '',
-            'Как дочитаете — нажмите кнопку, и я закрою запись у владельца.',
+            // возврат отмечает владелец, когда получит книгу назад (A1): читателю
+            // кнопку возврата не даём
+            'Как дочитаете — верните книгу владельцу, он отметит возврат.',
           ]
             .filter(Boolean)
             .join('\n'),
-          {
-            parse_mode: 'HTML',
-            reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
-          },
+          { parse_mode: 'HTML' },
         )
       }
     } else if (result.status === 'username_mismatch') {
@@ -670,7 +669,7 @@ async function sendLoanCreated(ctx: any, loan: any) {
       `📕 Записал: «${esc(loan.title)}» у @${esc(loan.holderUsername)}.${due}`,
       '',
       reached
-        ? 'Читателю написал — он сможет отметить возврат сам.'
+        ? 'Читателю написал. Когда вернёт книгу — возврат отметите вы, кнопкой «Уже вернулась».'
         : 'Читатель ещё не знаком с ботом. Перешлите ему ссылку, чтобы он получал напоминания:',
       // без токена ссылку не строим: раньше сюда попадал буквальный «loan_null»
       reached ? '' : loan.claimToken ? loanLink(loan.claimToken) : 'Список выдач: /loans',
@@ -700,12 +699,10 @@ async function notifyHolder(loan: any): Promise<boolean> {
         `📗 ${esc(from)} отметил, что у вас его книга:`,
         `<b>${esc(loan.title)}</b>${due}`,
         '',
-        'Как дочитаете — верните и нажмите кнопку, я закрою запись.',
+        // возврат отмечает владелец (A1): читателю кнопку не даём
+        'Как дочитаете — верните книгу владельцу, он закроет запись.',
       ].join('\n'),
-      {
-        parse_mode: 'HTML',
-        reply_markup: new InlineKeyboard().text('✅ Вернул(а) книгу', `loan:back:${loan.id}`),
-      },
+      { parse_mode: 'HTML' },
     )
     .then(() => true)
     .catch(() => false)
@@ -735,7 +732,9 @@ bot.callbackQuery(/^loan:yes:(.+)$/, async (ctx) => {
   try {
     loan = await markReturned(id, BigInt(ctx.from.id))
   } catch (e: any) {
-    if (e?.message === 'forbidden') return ctx.answerCallbackQuery({ text: 'Это не ваша выдача' })
+    // возврат подтверждает только владелец книги (A1): читателю мягкий отказ
+    if (e?.message === 'forbidden')
+      return ctx.answerCallbackQuery({ text: 'Возврат отмечает владелец книги, когда получит её назад' })
     throw e
   }
   if (!loan) return ctx.answerCallbackQuery({ text: 'Эта запись уже закрыта' })

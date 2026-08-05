@@ -114,6 +114,44 @@ describe('подсказка с полки в форме выдачи', () => {
 })
 
 /**
+ * A1 (продуктовая команда 5.08.2026): читатель не закрывает выдачу. Во вкладке
+ * «Я читаю» у него только информационное состояние, кнопки возврата нет.
+ * Право проверяет сервер (см. loan-return-auth.test.ts), тут — что интерфейс
+ * не показывает читателю действие.
+ */
+describe('A1: читатель не подтверждает возврат', () => {
+  const mood = { level: 1, emoji: '📖', days: 3, label: 'читаю', overdueDays: 0 }
+
+  test('во вкладке «Я читаю» нет кнопки возврата, только пояснение', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue([])
+    vi.spyOn(api, 'loans').mockResolvedValue({
+      given: [],
+      taken: [{ id: 'l1', title: 'Дюна', takenAt: '2026-08-01T00:00:00.000Z', mood }],
+      history: [],
+      summary: { given: 0, taken: 1, overdue: 0, mood: 'ok' as const, worst: null },
+    } as any)
+    render(<Loans go={() => {}} />)
+
+    fireEvent.click(await screen.findByText(/Я читаю/))
+    expect(await screen.findByText(/возврат отметит владелец/i)).toBeTruthy()
+    expect(screen.queryByText(/Вернул\(а\) книгу/)).toBeNull()
+  })
+
+  test('у владельца во вкладке «На руках» действие возврата остаётся', async () => {
+    vi.spyOn(api, 'myBooks').mockResolvedValue([])
+    vi.spyOn(api, 'loans').mockResolvedValue({
+      given: [{ id: 'g1', title: 'Солярис', holderUsername: 'reader', takenAt: '2026-08-01T00:00:00.000Z', mood }],
+      taken: [],
+      history: [],
+      summary: { given: 1, taken: 0, overdue: 0, mood: 'ok' as const, worst: null },
+    } as any)
+    render(<Loans go={() => {}} />)
+
+    expect(await screen.findByText(/Книга вернулась/)).toBeTruthy()
+  })
+})
+
+/**
  * Просьба user 29.07.2026: «хочется иметь доступ ко всему списку, чтобы любую
  * книгу можно было выбрать, а не вводить вручную по памяти».
  */
