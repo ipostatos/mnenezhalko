@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
+import { LoadError } from './LoadError'
 import type { Route } from '../App'
 import type { Book, Facets } from '../types'
 import { useSeqGuard } from '../useSeqGuard'
@@ -57,6 +58,11 @@ export function Library({
   const [onlyMyCity, setOnlyMyCity] = useState(restore?.onlyMyCity ?? Boolean(city))
   const [facets, setFacets] = useState<Facets | null>(null)
   const [items, setItems] = useState<Book[]>(restore?.items ?? [])
+  // отказ поиска и «ничего не нашлось» — разные ответы человеку
+  const [error, setError] = useState('')
+  // счётчик ручных повторов: тот же запрос надо уметь повторить, а фильтры при
+  // этом не менялись, поэтому без отдельного триггера эффект бы не перезапустился
+  const [retry, setRetry] = useState(0)
   const [total, setTotal] = useState(restore?.total ?? 0)
   const [loading, setLoading] = useState(!restore)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -129,13 +135,27 @@ export function Library({
   )
 
   useEffect(() => {
-    // сразу после восстановления состояния список уже на руках — не перезапрашиваем
+    // Снимок списка нужен, чтобы «Назад» из карточки вернул экран как был — со
+    // скроллом и подгруженными страницами. Но выдавать его за свежие данные
+    // нельзя: книгу могли за это время удалить со своей полки, и тап по ней
+    // давал ошибку (аудит 14.08.2026). Поэтому показываем снимок сразу и тихо
+    // перезапрашиваем первую страницу — без спиннера поверх готового списка.
     if (skipFirstLoad.current) {
       skipFirstLoad.current = false
+      const id = ++seq.current
+      api
+        .books(params)
+        .then((r) => {
+          if (id !== seq.current) return
+          setItems(r.items)
+          setTotal(r.total)
+        })
+        .catch(() => {}) // молча: на экране уже есть что показать
       return
     }
     const id = ++seq.current
     setLoading(true)
+    setError('')
     const timer = setTimeout(() => {
       api
         .books(params)
@@ -145,11 +165,11 @@ export function Library({
           setItems(r.items)
           setTotal(r.total)
         })
-        .catch(() => {})
+        .catch((e: any) => id === seq.current && setError(e?.message || 'error'))
         .finally(() => id === seq.current && setLoading(false))
     }, 250)
     return () => clearTimeout(timer)
-  }, [params])
+  }, [params, retry])
 
   // «в моём городе пусто» — подсказываем, есть ли книга в других городах
   useEffect(() => {
@@ -276,7 +296,13 @@ export function Library({
         </>
       )}
 
-      {!loading && items.length === 0 && (
+      {/* «поиск не ответил» ≠ «такой книги нет»: раньше обрыв связи выглядел
+          как честный пустой результат, и человек уходил ни с чем */}
+      {!loading && error && items.length === 0 && (
+        <LoadError message={error} onRetry={() => setRetry((n) => n + 1)} />
+      )}
+
+      {!loading && !error && items.length === 0 && (
         <div className="empty">
           <img className="illus sm" src="/il/stack.jpg" alt="" loading="lazy" />
           {onlyMyCity && city

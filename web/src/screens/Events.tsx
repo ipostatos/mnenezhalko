@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { LoadError } from './LoadError'
 import type { EventItem, Me } from '../types'
 import { openTg, showConfirm, haptic } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
@@ -128,17 +129,22 @@ export function Events({ city, me }: { city?: string; me?: Me | null }) {
   const [events, setEvents] = useState<EventItem[] | null>(null)
   const [past, setPast] = useState<EventItem[] | null>(null)
   const [onlyMyCity, setOnlyMyCity] = useState(Boolean(city))
+  const [error, setError] = useState('')
   const guard = useSeqGuard()
   const isAdmin = Boolean(me?.user.isAdmin)
 
-  useEffect(() => {
+  const load = () => {
     // тумблер города: старый медленный ответ не перетирает новый фильтр
     const id = guard.next()
+    setError('')
     api
       .events(onlyMyCity ? city : undefined)
       .then((r) => guard.isCurrent(id) && setEvents(r))
-      .catch(() => guard.isCurrent(id) && setEvents([]))
-  }, [city, onlyMyCity])
+      // раньше при обрыве связи экран уверял, что встреч нет вовсе
+      .catch((e: any) => guard.isCurrent(id) && setError(e?.message || 'error'))
+  }
+
+  useEffect(load, [city, onlyMyCity])
 
   useEffect(() => {
     // блок уборки: спрятанные кнопки защитой не считаются, права проверяет
@@ -182,9 +188,11 @@ export function Events({ city, me }: { city?: string; me?: Me | null }) {
         </div>
       )}
 
-      {events === null && <div className="spinner">Загружаю…</div>}
+      {error && <LoadError message={error} onRetry={load} />}
 
-      {events?.length === 0 && (
+      {!error && events === null && <div className="spinner">Загружаю…</div>}
+
+      {!error && events?.length === 0 && (
         <div className="empty">
           <div className="big">📅</div>
           Ближайших встреч пока нет.

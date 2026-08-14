@@ -132,6 +132,14 @@ export type MarketItem = {
 export type Me = {
   user: { tgId: string; username: string | null; firstName: string | null; city: string | null; isAdmin: boolean }
   librarian: { id: string; name: string; city: string | null } | null
+  /**
+   * Что человеку сейчас закрыто. Сервер отдавал это с самого начала, а клиент
+   * отбрасывал: заблокированному приложение выглядело полностью рабочим, и он
+   * узнавал о запрете, только упёршись в него (аудит 14.08.2026).
+   */
+  restrictions?: { scope: string; reason: string; until: string | null }[]
+  banned?: boolean
+  banReason?: string | null
 }
 
 export type Health = {

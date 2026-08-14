@@ -44,14 +44,36 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
-    let message = `HTTP ${res.status}`
+    let code = `HTTP ${res.status}`
+    let message = code
     try {
       const data = await res.json()
-      if (data?.error) message = data.error
+      if (data?.error) code = message = data.error
+      // Сервер умеет объяснять человеческим языком (ограничение, бан, срок).
+      // Раньше клиент читал только код и показывал «restricted» — человек не
+      // узнавал ни причину, ни срок и продолжал жать кнопку (аудит 14.08.2026).
+      if (data?.message) message = data.message
     } catch {}
-    throw new Error(message)
+    throw new ApiError(code, message, res.status)
   }
   return res.json()
+}
+
+/**
+ * Ошибка ручки: `code` — машинный код для словарей на экранах, `message` —
+ * готовая фраза (серверная, если она есть, иначе тот же код). Экраны, которые
+ * делают `MAP[e.message] ?? e.message`, продолжают работать: у кодов без
+ * серверного текста message остаётся кодом.
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
 }
 
 const qs = (params: Record<string, string | number | undefined>) => {

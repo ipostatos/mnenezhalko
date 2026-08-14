@@ -14,6 +14,51 @@ type Tile = {
   url?: string
 }
 
+/**
+ * Что человеку сейчас закрыто. Сервер отдаёт это в /api/me с самого начала, но
+ * приложение молчало: заблокированный видел полностью рабочий интерфейс и
+ * узнавал о запрете, только упёршись в него (аудит 14.08.2026). Текст берём
+ * с сервера — там же, где его собирает бот, чтобы формулировки не разъехались.
+ */
+function AccessNotice({ me }: { me: Me | null }) {
+  if (!me) return null
+  if (me.banned) {
+    return (
+      <div className="error-banner" role="status">
+        <b>Доступ к проекту закрыт</b>
+        {me.banReason ? <div>Причина: {me.banReason}</div> : null}
+        <div>Свои данные вы по-прежнему можете выгрузить и удалить на экране «Ваши данные».</div>
+      </div>
+    )
+  }
+  const limits = me.restrictions ?? []
+  if (!limits.length) return null
+  return (
+    <div className="warn-banner" role="status">
+      <b>Часть действий сейчас закрыта</b>
+      <ul>
+        {limits.map((r) => (
+          <li key={r.scope}>
+            {SCOPE_TITLES[r.scope] ?? r.scope}: {r.reason}
+            {r.until ? ` — до ${new Date(r.until).toLocaleDateString('ru-RU', { timeZone: 'Europe/Warsaw' })}` : ' — бессрочно'}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/** Названия ограничений — те же слова, что человек получает от бота. */
+const SCOPE_TITLES: Record<string, string> = {
+  add_books: 'Добавление книг',
+  reviews: 'Оценки и отзывы',
+  reports: 'Жалобы на отзывы',
+  waitlist: 'Очереди на книги',
+  market: 'Барахолка',
+  ai: 'Подбор книги',
+  all: 'Все действия в проекте',
+}
+
 export function Home({
   go,
   me,
@@ -143,6 +188,8 @@ export function Home({
         <h1>МнеНеЖалко</h1>
       </div>
       <div className="sub">Книжный обмен между своими — в Польше</div>
+
+      <AccessNotice me={me} />
 
       <button className="promo" onClick={() => { haptic(); go({ name: 'add' }) }}>
         <img src="/il/girl-book.jpg" alt="" loading="lazy" />

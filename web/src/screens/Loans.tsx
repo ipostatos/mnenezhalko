@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { LoadError } from './LoadError'
 import type { Route } from '../App'
 import type { Book, Loan, LoanSummary, HistoryLoan, Person } from '../types'
 import { haptic, openTg, showAlert, showConfirm, onAppShow } from '../telegram'
@@ -73,6 +74,8 @@ export function Loans({ go }: { go: (r: Route) => void }) {
   const [summary, setSummary] = useState<LoanSummary | null>(null)
   const [myBooks, setMyBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
+  // отказ сети и «выдач пока нет» — разные вещи, и человек должен видеть какая
+  const [error, setError] = useState('')
 
   const [title, setTitle] = useState('')
   const [bookId, setBookId] = useState<string | null>(null)
@@ -96,8 +99,9 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         setTaken(r.taken)
         setHistory(r.history)
         setSummary(r.summary)
+        setError('')
       })
-      .catch(() => {})
+      .catch((e: any) => setError(e?.message || 'error'))
       .finally(() => setLoading(false))
 
   useEffect(() => {
@@ -145,6 +149,9 @@ export function Loans({ go }: { go: (r: Route) => void }) {
       setHolder('')
       setBookId(null)
       await load()
+      // только что выданная книга больше не свободна — иначе она снова
+      // предлагалась в автокомплите и выбор упирался в «уже на руках»
+      api.myBooks().then(setMyBooks).catch(() => {})
     } catch (e: any) {
       const messages: Record<string, string> = {
         bad_holder: 'Ник не похож на телеграм — напишите @ник или ссылку t.me/ник.',
@@ -485,7 +492,13 @@ export function Loans({ go }: { go: (r: Route) => void }) {
         />
       )}
 
-      {!loading && given.length === 0 && taken.length === 0 && history.length === 0 && (
+      {/* «не смогли спросить» и «выдач нет» — разные экраны: раньше при обрыве
+          сети человек читал «Пока пусто» и думал, что его записи пропали */}
+      {!loading && error && given.length === 0 && taken.length === 0 && history.length === 0 && (
+        <LoadError message={error} onRetry={load} />
+      )}
+
+      {!loading && !error && given.length === 0 && taken.length === 0 && history.length === 0 && (
         <div className="empty">
           <img className="illus sm" src="/il/handoff.jpg" alt="" loading="lazy" />
           Пока пусто. Как отдадите книгу почитать — запишите здесь, чтобы не держать в голове.

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { LoadError } from './LoadError'
 import type { Route } from '../App'
 import type { Book } from '../types'
-import { haptic, openTg } from '../telegram'
+import { haptic, openTg, tg } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
 import { Reviews, Stars } from './Reviews'
 import { WaitBlock } from './WaitBlock'
@@ -25,7 +26,15 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
       .catch((e) => guard.isCurrent(seq) && setError(e.message))
   }, [id])
 
-  if (error) return <div className="error-banner">Не получилось открыть карточку: {error}</div>
+  // человек приходит сюда по ссылке из письма «книга освободилась», и книги к
+  // этому моменту может уже не быть — латинский код ему ничего не объясняет
+  if (error) {
+    const text =
+      error === 'not_found'
+        ? 'Этой книги больше нет в библиотеке — владелец убрал её с полки.'
+        : `Не удалось открыть карточку. ${error}`
+    return <LoadError message={text} onRetry={() => setError('')} />
+  }
   if (!book) return <div className="spinner">Загружаю…</div>
 
   const owner = book.owner
@@ -107,7 +116,12 @@ export function BookView({ id, go }: { id: string; go: (r: Route) => void }) {
             </button>
           ) : (
             <div className="warn-banner">
-              У библиотекаря не указан Telegram — спросите в чате проекта.
+              {/* без подписи Telegram сервер намеренно прячет контакты, и «не
+                  указан» было прямым враньём: ник есть, просто он не для
+                  анонимного браузера (аудит 14.08.2026) */}
+              {tg?.initData
+                ? 'У библиотекаря не указан Telegram — спросите в чате проекта.'
+                : 'Контакты видны в приложении: откройте каталог через бота в Telegram.'}
             </div>
           )}
 
