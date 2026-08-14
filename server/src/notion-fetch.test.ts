@@ -13,18 +13,29 @@ process.env.DISABLE_BOT = '1'
 
 const { fetchAll, isCompleteResponse } = await import('./notion.js')
 
-/** Ответ queryCollection: ids в результатах + payload только для payloadIds. */
-function response(ids: string[], payloadIds: string[], hasMore = false) {
+/**
+ * Ответ queryCollection: ids в результатах + payload только для payloadIds.
+ * `withSchema=false` — ответ БЕЗ записи коллекции: так Notion отвечает на
+ * большой limit с 2026-08-12, срезая payload вместе со схемой.
+ */
+function response(ids: string[], payloadIds: string[], hasMore = false, withSchema = true) {
   return {
     result: { reducerResults: { collection_group_results: { blockIds: ids, hasMore } } },
     recordMap: {
-      collection: {
-        c1: {
-          value: {
-            value: { schema: { dd: { name: 'Date added', type: 'date' }, tt: { name: 'Title', type: 'title' } } },
-          },
-        },
-      },
+      collection: withSchema
+        ? {
+            c1: {
+              value: {
+                value: {
+                  schema: {
+                    dd: { name: 'Date added', type: 'date' },
+                    tt: { name: 'Title', type: 'title' },
+                  },
+                },
+              },
+            },
+          }
+        : {},
       block: Object.fromEntries(
         payloadIds.map((id) => [
           id,
@@ -60,6 +71,37 @@ test('срезанный payload у коллекции с датой шарди�
   }
   const { rows } = await fetchAll('c1', 'v1', 'Date added', query as any)
   assert.equal(rows.length, 40, 'после шардирования должны прийти все строки')
+})
+
+test('срезанный ответ БЕЗ схемы: схема добирается маленьким запросом, шардирование идёт', async () => {
+  // прод-инцидент 12.08.2026: книги не синкались 44 ч, потому что в срезанном
+  // ответе не было записи коллекции → поле «Date added» не находилось,
+  // и шардирование даже не начиналось.
+  const all = ids(40)
+  const first = all.slice(0, 20)
+  const second = all.slice(20)
+  const limits: number[] = []
+  const query = async (_c: string, _v: string, filters: any[] | null, limit: number) => {
+    if (!filters?.length) {
+      limits.push(limit)
+      // маленький limit (проба схемы) — со схемой, большой — срезанный и без неё
+      return limit <= 10
+        ? response(all.slice(0, limit), all.slice(0, limit), true)
+        : response(all, all.slice(0, 10), false, false)
+    }
+    if (filters[0]?.filter?.operator === 'is_empty') return response([], [])
+    const start = filters[0].filter.value.value.start_date as string
+    const end = filters[1].filter.value.value.start_date as string
+    // широкий диапазон тоже срезан и тоже без схемы — заставляет делить дальше
+    if (start <= '2016-01-01' && end >= '2026-01-01') {
+      return response(all, all.slice(0, 10), false, false)
+    }
+    return start < '2020-01-01' ? response(first, first) : response(second, second)
+  }
+  const { rows, schema } = await fetchAll('c1', 'v1', 'Date added', query as any)
+  assert.equal(rows.length, 40, 'после шардирования должны прийти все строки')
+  assert.equal(schema.byName['Date added'], 'dd', 'схема добрана отдельным запросом')
+  assert.ok(limits.some((l) => l <= 10), 'должен быть маленький запрос за схемой')
 })
 
 test('срезанный payload у коллекции БЕЗ даты — громкая ошибка, не молчаливое усечение', async () => {
