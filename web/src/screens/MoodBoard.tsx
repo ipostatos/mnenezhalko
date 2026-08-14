@@ -16,14 +16,22 @@ export function MoodBoard({
   if (!summary?.active || !summary.mood) return null
   const { mood } = summary
 
+  // кликается — значит кнопка: для клавиатуры и скринридера прежний div был
+  // просто текстом, хотя вёл в «Выдачи» (аудит 14.08.2026)
+  const Tag = onOpen ? 'button' : 'div'
   return (
-    <div
+    <Tag
       className={`mood-board level-${mood.level}${onOpen ? ' tappable' : ''}`}
-      onClick={() => {
-        if (!onOpen) return
-        haptic()
-        onOpen()
-      }}
+      {...(onOpen
+        ? {
+            type: 'button' as const,
+            'aria-label': `Открыть выдачи: книг у читателей ${summary.active}`,
+            onClick: () => {
+              haptic()
+              onOpen()
+            },
+          }
+        : {})}
     >
       <div className="face">{mood.emoji}</div>
       <div className="grow">
@@ -39,6 +47,6 @@ export function MoodBoard({
         <div className="n">{summary.longestDays}</div>
         <div className="c">дн.</div>
       </div>
-    </div>
+    </Tag>
   )
 }

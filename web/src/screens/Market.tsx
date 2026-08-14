@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { LoadError } from './LoadError'
 import type { MarketItem } from '../types'
 import { openTg } from '../telegram'
 import { useSeqGuard } from '../useSeqGuard'
@@ -25,17 +26,22 @@ function place(i: MarketItem): string | null {
 
 export function Market({ city }: { city?: string }) {
   const [items, setItems] = useState<MarketItem[] | null>(null)
+  const [error, setError] = useState('')
   const [onlyMyCity, setOnlyMyCity] = useState(Boolean(city))
   const guard = useSeqGuard()
 
-  useEffect(() => {
+  const load = () => {
     // тумблер города: старый медленный ответ не перетирает новый фильтр
     const id = guard.next()
+    setError('')
     api
       .market(onlyMyCity ? city : undefined)
       .then((r) => guard.isCurrent(id) && setItems(r))
-      .catch(() => guard.isCurrent(id) && setItems([]))
-  }, [city, onlyMyCity])
+      // раньше отказ сети превращался в «Пока пусто — будьте первым»
+      .catch((e: any) => guard.isCurrent(id) && setError(e?.message || 'error'))
+  }
+
+  useEffect(load, [city, onlyMyCity])
 
   return (
     <>
@@ -53,9 +59,11 @@ export function Market({ city }: { city?: string }) {
         </div>
       )}
 
-      {items === null && <div className="spinner">Загружаю…</div>}
+      {error && <LoadError message={error} onRetry={load} />}
 
-      {items?.length === 0 && (
+      {!error && items === null && <div className="spinner">Загружаю…</div>}
+
+      {!error && items?.length === 0 && (
         <div className="empty">
           <div className="big">🛍</div>
           Пока пусто — будьте первым.

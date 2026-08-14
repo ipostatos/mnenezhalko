@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { LoadError } from './LoadError'
 import type { Route } from '../App'
 import type { DigestResult } from '../types'
 import { useSeqGuard } from '../useSeqGuard'
@@ -12,19 +13,24 @@ export function Digest({ city, go }: { city?: string; go: (r: Route) => void }) 
   const [period, setPeriod] = useState<'day' | 'month'>('day')
   const [data, setData] = useState<DigestResult | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const guard = useSeqGuard()
 
-  useEffect(() => {
+  const load = () => {
     // быстрое переключение 24ч↔месяц: медленный старый ответ не должен
     // перезаписать данные уже выбранного периода
     const id = guard.next()
     setLoading(true)
+    setError('')
     api
       .digest(period, city)
       .then((r) => guard.isCurrent(id) && setData(r))
-      .catch(() => guard.isCurrent(id) && setData(null))
+      // отказ сети раньше давал пустоту под переключателем — без единого слова
+      .catch((e: any) => guard.isCurrent(id) && setError(e?.message || 'error'))
       .finally(() => guard.isCurrent(id) && setLoading(false))
-  }, [period, city])
+  }
+
+  useEffect(load, [period, city])
 
   return (
     <>
@@ -43,6 +49,8 @@ export function Digest({ city, go }: { city?: string; go: (r: Route) => void }) 
       </div>
 
       {loading && <div className="muted">Загружаю…</div>}
+
+      {!loading && error && <LoadError message={error} onRetry={load} />}
 
       {!loading && data && data.total === 0 && (
         <div className="empty">

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { CityInfo } from '../types'
-import { haptic, openTg } from '../telegram'
+import { haptic, openTg, showAlert } from '../telegram'
 import { Icon } from './Icon'
+import { LoadError } from './LoadError'
 
 export function Cities({
   city,
@@ -11,12 +12,22 @@ export function Cities({
   city?: string
   onPick: (value: string | null) => void
 }) {
-  const [cities, setCities] = useState<CityInfo[]>([])
+  const [cities, setCities] = useState<CityInfo[] | null>(null)
+  const [error, setError] = useState('')
   const [open, setOpen] = useState<string | null>(city ?? null)
 
-  useEffect(() => {
-    api.cities().then(setCities).catch(() => {})
-  }, [])
+  const load = () => {
+    setError('')
+    api
+      .cities()
+      .then(setCities)
+      .catch((e: any) => setError(e?.message || 'error'))
+  }
+
+  useEffect(load, [])
+
+  if (error && !cities) return <LoadError message={error} onRetry={load} />
+  if (!cities) return <div className="muted">Загружаю города…</div>
 
   return (
     <>
@@ -73,11 +84,20 @@ export function Cities({
               )}
               <button
                 className={`btn ${c.city === city ? 'ghost' : ''}`}
-                onClick={() => {
+                onClick={async () => {
                   haptic('success')
+                  const prev = city ?? null
                   const next = c.city === city ? null : c.city
+                  // показываем сразу, но отказ сервера откатываем и говорим о нём:
+                  // раньше человек закрывал приложение уверенным, что город
+                  // сохранён, а он не сохранялся (аудит 14.08.2026)
                   onPick(next)
-                  api.setCity(next).catch(() => {})
+                  try {
+                    await api.setCity(next)
+                  } catch (e: any) {
+                    onPick(prev)
+                    showAlert(e?.message || 'Не удалось сохранить город. Попробуйте ещё раз.')
+                  }
                 }}
               >
                 {c.city === city ? 'Убрать мой город' : `Это мой город`}

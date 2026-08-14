@@ -26,6 +26,14 @@
   --hint: #60646c;
   --card: #ffffff;
   --accent: #30a46c;
+  /**
+   * Та же зелёная шкала платформы, ступень темнее (Radix green 11). Нужна там,
+   * где на заливке лежит БЕЛЫЙ текст: белое на #30a46c даёт контраст 3,1:1 при
+   * норме 4,5 — мелкие подписи кнопок и активных чипов читались плохо на солнце
+   * (аудит 14.08.2026). На #218358 — 4,7:1. Обводки, иконки и тонкие заливки
+   * остаются на прежнем --accent: там белого текста нет.
+   */
+  --accent-solid: #218358;
   --accent-soft: #e6f6eb;
   /* на сплошной зелёной заливке кнопок и активных чипов текст белый */
   --accent-text: #ffffff;
@@ -393,7 +401,7 @@ h1 {
   font-family: inherit;
   border: none;
   border-radius: var(--r-md);
-  background: var(--accent);
+  background: var(--accent-solid);
   color: var(--accent-text);
   cursor: pointer;
   transition: transform 0.12s;
@@ -443,8 +451,8 @@ h1 {
 }
 
 .segmented button.active {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
   color: var(--accent-text);
 }
 
@@ -472,14 +480,23 @@ h1 {
 }
 
 .chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
   color: var(--accent-text);
 }
 
 .chip.sm {
   padding: 5px 10px;
   font-size: var(--fs-xs);
+  /* сам чип остаётся мелким (их в ряду много), но палец попадает в 44px:
+     невидимая область растягивается вверх и вниз (аудит 14.08.2026) */
+  position: relative;
+}
+
+.chip.sm::after {
+  content: '';
+  position: absolute;
+  inset: -9px 0;
 }
 
 /* информационный чип (счётчики городов в «Новинках»): выглядит спокойнее и
@@ -1614,7 +1631,11 @@ input.input[type='date']::-webkit-calendar-picker-indicator {
 .link-btn {
   border: 0;
   background: none;
-  padding: 0;
+  /* «Пожаловаться» под отзывом было высотой ~14px — мимо такой цели
+     промахивается любой палец */
+  padding: 8px 6px;
+  margin: -8px -6px;
+  min-height: 32px;
   color: var(--hint);
   font-size: var(--fs-xs);
   font-family: inherit;

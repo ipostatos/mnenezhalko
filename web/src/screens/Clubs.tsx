@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { BookClub } from '../types'
 import { openTg, haptic } from '../telegram'
 import { Icon } from './Icon'
+import { LoadError } from './LoadError'
 
 /**
  * Книжные клубы проекта (B7, ТЗ 5.08.2026).
@@ -14,14 +15,19 @@ import { Icon } from './Icon'
  */
 export function Clubs() {
   const [clubs, setClubs] = useState<BookClub[] | null>(null)
+  const [error, setError] = useState('')
 
-  useEffect(() => {
+  const load = () => {
+    setError('')
     api
       .clubs()
       .then(setClubs)
-      .catch(() => setClubs([]))
-  }, [])
+      .catch((e: any) => setError(e?.message || 'error'))
+  }
 
+  useEffect(load, [])
+
+  if (error && !clubs) return <LoadError message={error} onRetry={load} />
   if (!clubs) return <div className="muted">Загружаю…</div>
 
   // клубы без города (общие для проекта) идут первыми — это «клуб проекта»,
