@@ -89,7 +89,13 @@ NEW="\$DIR/releases/\$REL"
 # каталог этого релиза точно не текущий (проверено выше) — можно начинать с чистого
 rm -rf "\$NEW"
 mkdir -p "\$NEW"
-tar -xzf "/tmp/release-$SHORT.tar.gz" -C "\$NEW"
+# --no-same-owner обязателен: архив собирает раннер CI под своим uid (1001), и
+# tar под root восстанавливал ЕГО владельца. На машине такого пользователя нет,
+# но следующая заведённая учётка получит первый свободный uid — и станет
+# владельцем кода прода (аудит 14.08.2026). Код прода принадлежит root:root,
+# служба его только читает.
+tar --no-same-owner -xzf "/tmp/release-$SHORT.tar.gz" -C "\$NEW"
+chown -R root:root "\$NEW"
 rm -f "/tmp/release-$SHORT.tar.gz"
 
 # данные и секреты живут в shared: релиз ссылается на них, а не носит копию
@@ -128,6 +134,8 @@ set -euo pipefail
 SNAP="$DIR/shared/data/predeploy-$SHORT.db"
 sqlite3 "$DIR/shared/data/mnenezhalko.db" ".backup '\$SNAP'"
 chown "$USER_NAME:$USER_NAME" "\$SNAP"
+# снимок — это копия всей базы с личными данными: права как у самой базы
+chmod 640 "\$SNAP"
 echo "  \$(du -h "\$SNAP" | cut -f1) → \$SNAP"
 # держим только два последних снимка: диск тесный
 ls -1t "$DIR/shared/data"/predeploy-*.db 2>/dev/null | tail -n +3 | xargs -r rm -f
