@@ -137,6 +137,12 @@ async function queryRaw(
   })
 }
 
+/**
+ * На маленьком limit ответ всегда несёт запись коллекции (то есть схему).
+ * Ровно этим и пользуемся, когда схемы нет в основном ответе (см. hasSchema).
+ */
+export const SCHEMA_PROBE_LIMIT = 1
+
 function schemaOf(res: Rec): Schema {
   const coll = unwrap(Object.values(res.recordMap?.collection || {})[0])
   const byName: Record<string, string> = {}
@@ -156,7 +162,12 @@ function schemaOf(res: Rec): Schema {
 
 /** Схема коллекции: id свойств по имени и их типы. Нужна и для записи. */
 export async function collectionSchema(collection: string, view: string): Promise<Schema> {
-  return schemaOf(await queryRaw(collection, view, null, 1))
+  return schemaOf(await queryRaw(collection, view, null, SCHEMA_PROBE_LIMIT))
+}
+
+/** Пришла ли схема вообще (у срезанного ответа её может не быть — см. fetchAll). */
+function hasSchema(s: Schema): boolean {
+  return Object.keys(s.byName).length > 0
 }
 
 export type NotionRow = {
@@ -215,7 +226,13 @@ export async function fetchAll(
   query: typeof queryRaw = queryRaw,
 ): Promise<{ rows: NotionRow[]; schema: Schema }> {
   const first = await query(collection, view, null, NOTION_FETCH_LIMIT)
-  const schema = schemaOf(first)
+  let schema = schemaOf(first)
+  // Срезая payload, Notion выкидывает из ответа и саму запись коллекции —
+  // то есть схему. Это ровно тот ответ, который надо шардировать, поэтому
+  // схему в таком случае добираем отдельным маленьким запросом.
+  if (!hasSchema(schema)) {
+    schema = schemaOf(await query(collection, view, null, SCHEMA_PROBE_LIMIT))
+  }
   if (isCompleteResponse(first)) return { rows: rowsOf(first), schema }
   if (!dateProp) {
     throw new Error(
@@ -228,7 +245,10 @@ export async function fetchAll(
   const pid = schema.byName[dateProp]
   if (!pid) {
     throw new Error(
-      `Notion: коллекция ${collection} отдала неполный ответ, а поле «${dateProp}» для шардирования не нашлось`,
+      `Notion: коллекция ${collection} отдала неполный ответ, а поле «${dateProp}» для шардирования не нашлось` +
+        (hasSchema(schema)
+          ? ` (в схеме есть: ${Object.keys(schema.byName).join(', ')})`
+          : ' — схема не пришла вовсе'),
     )
   }
 
