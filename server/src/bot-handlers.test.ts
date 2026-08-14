@@ -41,7 +41,9 @@ bot.api.config.use(async (_prev, method, payload) => {
   return { ok: true, result: true } as any
 })
 
-// grammY требует знать, кто он: иначе handleUpdate ждёт getMe по сети
+// grammY требует знать, кто он: иначе handleUpdate ждёт getMe по сети.
+// Приведение типа намеренное: Bot API дописывает в getMe новые поля, и тест не
+// должен краснеть от каждой такой правки — обработчикам нужны id и username.
 bot.botInfo = {
   id: 1,
   is_bot: true,
@@ -50,9 +52,7 @@ bot.botInfo = {
   can_join_groups: true,
   can_read_all_group_messages: true,
   supports_inline_queries: false,
-  can_connect_to_business: false,
-  has_main_web_app: false,
-}
+} as unknown as typeof bot.botInfo
 
 const SPAMMER = 555777n
 const SPAM_TEXT = 'Заработок на крипте от 500$ в день! Пиши в лс 💰💰💰 t.me/+abc123'
