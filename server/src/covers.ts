@@ -54,7 +54,22 @@ const STORE_QUALITY = 82
  * `{ animated: true }` молча схлопнул бы её до одного кадра.
  */
 export async function normalizeForStorage(d: Decoded): Promise<Decoded> {
-  if (d.mediaType === 'image/gif') return d
+  /**
+   * Формат определяем ПО БАЙТАМ, а не по заголовку `data:image/...`, который
+   * пишет отправитель. Аудит 14.08.2026: назвав свой JPEG «image/gif», можно
+   * было проехать мимо всей нормализации (GIF мы намеренно не трогаем) и
+   * сохранить фото с GPS-координатами дома под публичной ссылкой.
+   */
+  let real: string | undefined
+  try {
+    real = (await sharp(d.buffer, { failOn: 'none' }).metadata()).format
+  } catch {
+    real = undefined
+  }
+  // настоящий GIF пропускаем как есть: resize без `{ animated: true }` схлопнул
+  // бы анимацию в один кадр, а EXIF с координатами GIF не носит
+  if (real === 'gif') return { ...d, mediaType: 'image/gif' }
+
   try {
     const buffer = await sharp(d.buffer, { failOn: 'none' })
       .rotate()
@@ -63,7 +78,13 @@ export async function normalizeForStorage(d: Decoded): Promise<Decoded> {
       .toBuffer()
     return { buffer, mediaType: 'image/webp', data: buffer.toString('base64') }
   } catch {
-    return d // не осилили (битый/экзотический файл) — сохраняем как получили, не роняем загрузку
+    /**
+     * Раньше здесь возвращались исходные байты «чтобы не ронять загрузку» — то
+     * есть ровно тот файл, с которого не удалось снять метаданные. Обложкой он
+     * всё равно не станет (его не смог прочитать даже sharp), поэтому честный
+     * отказ на загрузке лучше, чем хранение непрошедшего нормализацию файла.
+     */
+    throw new Error('bad_image')
   }
 }
 

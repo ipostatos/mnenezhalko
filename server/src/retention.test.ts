@@ -239,6 +239,76 @@ test('старые решения модераторов уходят, свеж�
   assert.deepEqual(left.map((a) => a.reason), ['свежее решение'])
 })
 
+test('забаненный профиль не чистится по «давно не заходил» (аудит 14.08.2026)', async () => {
+  // Забаненный и не должен заходить — а уборка пустых профилей принимала это за
+  // «человек ушёл» и удаляла профиль вместе с баном (каскадом уносило и
+  // ограничения). Человек возвращался с чистым профилем.
+  await prisma.user.update({
+    where: { tgId: IDLE },
+    data: { accountStatus: 'banned', banReason: 'реклама', bannedAt: daysAgo(400) },
+  })
+  const r = await applyRetention(NOW)
+  assert.equal(r.профилей_удалено, 0)
+  const left = await prisma.user.findUnique({ where: { tgId: IDLE } })
+  assert.equal(left?.accountStatus, 'banned', 'бан обязан пережить уборку')
+})
+
+test('профиль с действующим ограничением не чистится', async () => {
+  await prisma.userRestriction.create({
+    data: { userTg: IDLE, scope: 'reviews', reason: 'спам', createdByTg: ACTIVE },
+  })
+  const r = await applyRetention(NOW)
+  assert.equal(r.профилей_удалено, 0)
+  assert.equal(await prisma.userRestriction.count({ where: { userTg: IDLE } }), 1)
+})
+
+test('журнал по ДЕЙСТВУЮЩЕМУ ограничению не удаляется по сроку (аудит 14.08.2026)', async () => {
+  // Срок считался от даты решения, а не от «перестало действовать»: у
+  // бессрочного ограничения через год пропадала запись о том, кто и за что его
+  // поставил — ответить человеку было бы нечем.
+  await prisma.userRestriction.create({
+    data: { userTg: IDLE, scope: 'all', reason: 'бессрочное', createdByTg: ACTIVE, createdAt: daysAgo(400) },
+  })
+  await prisma.moderationAction.create({
+    data: {
+      actorTg: ACTIVE,
+      targetUserTg: IDLE,
+      targetType: 'user',
+      action: 'restrict',
+      reason: 'причина действующего ограничения',
+      createdAt: daysAgo(RETENTION.moderationLogDays + 1),
+    },
+  })
+  const r = await applyRetention(NOW)
+  assert.equal(r.решений_модерации_удалено, 0)
+  assert.equal(await prisma.moderationAction.count(), 1)
+})
+
+test('журнал по СНЯТОМУ ограничению уходит по сроку', async () => {
+  await prisma.userRestriction.create({
+    data: {
+      userTg: IDLE,
+      scope: 'all',
+      reason: 'снятое',
+      createdByTg: ACTIVE,
+      createdAt: daysAgo(400),
+      liftedAt: daysAgo(399),
+    },
+  })
+  await prisma.moderationAction.create({
+    data: {
+      actorTg: ACTIVE,
+      targetUserTg: IDLE,
+      targetType: 'user',
+      action: 'restrict',
+      reason: 'давнее и уже неактуальное',
+      createdAt: daysAgo(RETENTION.moderationLogDays + 1),
+    },
+  })
+  const r = await applyRetention(NOW)
+  assert.equal(r.решений_модерации_удалено, 1)
+})
+
 test('отправленные письма чистятся, неотправленные ждут', async () => {
   await prisma.notificationOutbox.create({
     data: {

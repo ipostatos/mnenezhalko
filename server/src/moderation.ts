@@ -23,6 +23,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from './db.js'
 import { CARD_W, proxyCover } from './imgcache.js'
 import { split } from './search.js'
+import { recountWork } from './reviews.js'
 import { isAdmin } from './env.js'
 
 /** Действия, которые можно закрыть человеку по отдельности. */
@@ -671,6 +672,11 @@ export async function decideReview(opts: {
       if (!changed.count) return { code: 'already_visible' as const }
       await tx.reviewReport.deleteMany({ where: { reviewId: opts.reviewId } })
     }
+
+    // Решение модератора меняет видимость отзыва — значит, и среднюю оценку
+    // книги. Без этого пересчёта скрытый спам-отзыв тянул оценку дальше, пока
+    // кто-нибудь случайно не трогал ту же книгу своим отзывом (аудит 14.08.2026).
+    await recountWork(tx, review.workKey)
 
     await logModeration(tx, {
       actorTg: opts.actorTg,

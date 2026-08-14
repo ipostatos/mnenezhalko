@@ -125,6 +125,67 @@ test('право оценивать: закрытая выдача даёт, о�
   assert.equal(await canReview(STRANGER, key), false)
 })
 
+test('книга на проверке не даёт права оценивать произведение (аудит 14.08.2026)', async () => {
+  // Найдено аудитом: право «это моя книга» проверялось только по признаку
+  // «карточка жива», а карточка жива и на модерации, и после отказа. Значит
+  // оценку каталожной книге можно было поставить, просто заявив её у себя.
+  const book = await seedBook({ read: false })
+  const key = workKeyOf(book)
+  const librarian = await prisma.librarian.create({ data: { name: 'Новичок', tgId: STRANGER } })
+  const pending = await prisma.book.create({
+    data: {
+      title: book.title,
+      author: book.author,
+      kind: 'book',
+      active: true,
+      reviewStatus: 'pending',
+      ownerId: librarian.id,
+    },
+  })
+  assert.equal(await canReview(STRANGER, key), false, 'книга на проверке права не даёт')
+
+  await prisma.book.update({ where: { id: pending.id }, data: { reviewStatus: 'rejected' } })
+  assert.equal(await canReview(STRANGER, key), false, 'отклонённая книга права не даёт')
+
+  await prisma.book.update({ where: { id: pending.id }, data: { reviewStatus: 'approved' } })
+  assert.equal(await canReview(STRANGER, key), true, 'одобренная — даёт')
+})
+
+test('решение модератора по отзыву пересчитывает среднюю оценку книги (аудит 14.08.2026)', async () => {
+  // Найдено аудитом: скрытие и удаление отзыва модератором меняли сам отзыв,
+  // но не агрегат — спам-единица продолжала тянуть среднюю вниз, пока кто-нибудь
+  // случайно не трогал ту же книгу своим отзывом.
+  const { decideReview } = await import('./moderation.js')
+  const book = await seedBook()
+  const key = workKeyOf(book)
+  await prisma.loan.create({
+    data: {
+      title: book.title,
+      bookId: book.id,
+      ownerTg: OWNER,
+      holderTg: READER2,
+      status: 'returned',
+      returnedAt: new Date(),
+    },
+  })
+  await upsertReview({ authorTg: READER, book, rating: 5, text: null })
+  const spam = (await upsertReview({ authorTg: READER2, book, rating: 1, text: null })).review
+  assert.equal((await ratingFor(key)).count, 2)
+
+  await decideReview({ reviewId: spam.id, decision: 'hide', actorTg: 1n, reason: 'спам' })
+  const afterHide = await ratingFor(key)
+  assert.equal(afterHide.count, 1, 'скрытый отзыв не должен считаться')
+  assert.equal(afterHide.avg, 5, 'средняя обязана пересчитаться')
+
+  await decideReview({ reviewId: spam.id, decision: 'restore', actorTg: 1n, reason: 'вернули' })
+  assert.equal((await ratingFor(key)).count, 2, 'возврат отзыва тоже пересчитывает')
+
+  await decideReview({ reviewId: spam.id, decision: 'delete', actorTg: 1n, reason: 'спам' })
+  const afterDelete = await ratingFor(key)
+  assert.equal(afterDelete.count, 1, 'удалённый отзыв не должен считаться')
+  assert.equal(afterDelete.avg, 5)
+})
+
 test('активная выдача ещё не даёт права: книга не дочитана и не вернулась', async () => {
   const book = await seedBook({ read: false })
   await prisma.loan.create({
