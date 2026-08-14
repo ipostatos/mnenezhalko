@@ -172,3 +172,27 @@ test('возврат с hideAfterReturn: мягкое удаление книг�
   assert.equal(freshBook.hideAfterReturn, false)
   assert.ok(freshBook.deletedAt)
 })
+
+test('отмена возврата у СКРЫТОЙ книги отказывает честно, а не оживляет выдачу на удалённую карточку (аудит 14.08.2026)', async () => {
+  // Владелец попросил «скрыть после возврата», отметил возврат (книга удалена,
+  // очередь закрыта, строка в Notion заархивирована) и через час передумал.
+  // Отмена возвращала выдачу в активные и указывала activeBookId на книгу с
+  // reviewStatus='deleted': карточки на полке нет, очередь не восстановлена,
+  // а следующий «возврат» ещё и переводил удалённую книгу в status='free'.
+  const { book, ownerTg } = await seedBook()
+  const holderTg = nextTg++
+  await prisma.user.create({ data: { tgId: holderTg, username: `holder${holderTg}` } })
+  const loan = await createLoan({ ownerTg, title: book.title, bookId: book.id, holder: `@holder${holderTg}` })
+  await prisma.book.update({ where: { id: book.id }, data: { hideAfterReturn: true } })
+  await markReturned(loan.id, ownerTg)
+
+  const hidden = await prisma.book.findUniqueOrThrow({ where: { id: book.id } })
+  assert.equal(hidden.active, false, 'книга действительно скрыта после возврата')
+
+  const r = await reopenLoan(loan.id, ownerTg)
+  assert.deepEqual(r, { error: 'book_hidden' }, 'отмена должна честно отказать')
+
+  const after = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } })
+  assert.equal(after.status, 'returned', 'выдача остаётся закрытой')
+  assert.equal(after.activeBookId, null, 'ссылка на удалённую книгу не воскресает')
+})

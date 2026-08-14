@@ -69,57 +69,78 @@ export async function joinWaitlist(
   bookId: string,
   now = new Date(),
 ): Promise<JoinResult> {
-  const book = await prisma.book.findUnique({
-    where: { id: bookId },
-    select: { id: true, status: true, active: true, reviewStatus: true, owner: { select: { tgId: true } } },
-  })
-  if (!book || !book.active || book.reviewStatus !== 'approved') {
-    return { ok: false, error: 'book_unavailable' }
-  }
-  if (book.owner?.tgId === userTg) return { ok: false, error: 'own_book' }
-  if (book.status !== 'busy') return { ok: false, error: 'not_busy' }
-
-  const existing = await prisma.waiting.findUnique({
-    where: { bookId_userTg: { bookId, userTg } },
-    select: { id: true, status: true },
-  })
-
-  // лимит считаем только по чужим книгам сверх этой: повторное нажатие на ту,
-  // в очереди на которую человек уже стоит, не должно упираться в потолок
-  if (!existing || !LIVE.includes(existing.status as (typeof LIVE)[number])) {
-    const active = await prisma.waiting.count({
-      where: { userTg, status: { in: [...LIVE] }, expiresAt: { gt: now } },
+  /**
+   * Проверка книги, лимита и сама запись — ОДНА транзакция. Раньше это были три
+   * отдельных запроса, и человек, нажавший «сообщите, когда освободится» ровно
+   * в момент возврата, вставал в очередь на уже свободную книгу: проверка
+   * `busy` прошла до транзакции возврата, запись легла после неё. Позвать его
+   * было бы уже некому — очередь двигается только при возврате
+   * (аудит 14.08.2026).
+   */
+  const outcome = await prisma.$transaction(async (tx) => {
+    const book = await tx.book.findUnique({
+      where: { id: bookId },
+      select: { id: true, status: true, active: true, reviewStatus: true, owner: { select: { tgId: true } } },
     })
-    if (active >= MAX_WAITING_PER_USER) return { ok: false, error: 'too_many' }
-  }
+    if (!book || !book.active || book.reviewStatus !== 'approved') {
+      return { ok: false as const, error: 'book_unavailable' as const }
+    }
+    if (book.owner?.tgId === userTg) return { ok: false as const, error: 'own_book' as const }
+    if (book.status !== 'busy') return { ok: false as const, error: 'not_busy' as const }
 
-  await prisma.waiting.upsert({
-    where: { bookId_userTg: { bookId, userTg } },
-    create: { bookId, userTg, expiresAt: ttlFrom(now), createdAt: now },
-    // вернувшийся в очередь встаёт в конец: иначе человек, которого уже звали и
-    // который книгу не забрал, вечно оставался бы первым
-    update: {
-      status: 'waiting',
-      createdAt: now,
-      expiresAt: ttlFrom(now),
-      readyAt: null,
-      notifiedAt: null,
-      leftAt: null,
-      attempts: 0,
-    },
+    const existing = await tx.waiting.findUnique({
+      where: { bookId_userTg: { bookId, userTg } },
+      select: { id: true, status: true },
+    })
+
+    // лимит считаем только по чужим книгам сверх этой: повторное нажатие на ту,
+    // в очереди на которую человек уже стоит, не должно упираться в потолок
+    if (!existing || !LIVE.includes(existing.status as (typeof LIVE)[number])) {
+      const active = await tx.waiting.count({
+        where: { userTg, status: { in: [...LIVE] }, expiresAt: { gt: now } },
+      })
+      if (active >= MAX_WAITING_PER_USER) return { ok: false as const, error: 'too_many' as const }
+    }
+
+    await tx.waiting.upsert({
+      where: { bookId_userTg: { bookId, userTg } },
+      create: { bookId, userTg, expiresAt: ttlFrom(now), createdAt: now },
+      // вернувшийся в очередь встаёт в конец: иначе человек, которого уже звали и
+      // который книгу не забрал, вечно оставался бы первым
+      update: {
+        status: 'waiting',
+        createdAt: now,
+        expiresAt: ttlFrom(now),
+        readyAt: null,
+        notifiedAt: null,
+        leftAt: null,
+        attempts: 0,
+      },
+    })
+    return { ok: true as const }
   })
+  if (!outcome.ok) return outcome
 
   const view = await waitlistFor(bookId, userTg, now)
   return { ok: true, position: view.mine?.position ?? 1, count: view.count }
 }
 
-/** Уйти из очереди. Возвращает false, если человека в ней и не было. */
+/**
+ * Уйти из очереди. Возвращает false, если человека в ней и не было.
+ *
+ * Если ушёл ПОЗВАННЫЙ, очередь обязана двинуться дальше в той же транзакции:
+ * иначе книга свободна, а остальные ждут обещанного письма до конца TTL —
+ * передача очереди жила только в возврате и в эскалации (аудит 14.08.2026).
+ */
 export async function leaveWaitlist(userTg: bigint, bookId: string, now = new Date()) {
-  const r = await prisma.waiting.updateMany({
-    where: { bookId, userTg, status: { in: [...LIVE] } },
-    data: { status: 'left', leftAt: now },
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.waiting.updateMany({
+      where: { bookId, userTg, status: { in: [...LIVE] } },
+      data: { status: 'left', leftAt: now },
+    })
+    if (r.count) await promoteNextWaiting(tx, bookId, now)
+    return { left: r.count > 0 }
   })
-  return { left: r.count > 0 }
 }
 
 export type WaitlistView = {
@@ -295,23 +316,41 @@ export async function markNotified(id: string, now = new Date()) {
  * книгу «обещанной» нечестно к остальным.
  */
 export async function markNotifyFailed(id: string, now = new Date()) {
-  const row = await prisma.waiting.update({
-    where: { id },
-    data: { attempts: { increment: 1 } },
-    select: { attempts: true, bookId: true },
+  // Инкремент, закрытие и передача очереди — одна транзакция: обрыв между
+  // ними оставлял бы запись в ready с исчерпанными попытками, невидимую и для
+  // рассылки, и для эскалации, — а `alreadyReady` держал бы всю книгу
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.waiting.update({
+      where: { id },
+      data: { attempts: { increment: 1 } },
+      select: { attempts: true, bookId: true },
+    })
+    if (row.attempts >= NOTIFY_MAX_ATTEMPTS) {
+      await tx.waiting.update({ where: { id }, data: { status: 'left', leftAt: now } })
+      // не доставили этому — зовём следующего, книга-то свободна
+      await promoteNextWaiting(tx, row.bookId, now)
+    }
+    return row
   })
-  if (row.attempts >= NOTIFY_MAX_ATTEMPTS) {
-    await prisma.waiting.update({ where: { id }, data: { status: 'left', leftAt: now } })
-  }
-  return row
 }
 
 /** Протухшие записи: очередь, о которой все забыли, не живёт вечно. */
 export async function expireWaitings(now = new Date()) {
+  // книги, у которых истекал ПОЗВАННЫЙ: после закрытия его записи очередь на
+  // такую книгу больше никто не двигал — она замирала до следующей выдачи
+  const readyExpiring = await prisma.waiting.findMany({
+    where: { status: 'ready', expiresAt: { lte: now } },
+    select: { bookId: true },
+  })
   const r = await prisma.waiting.updateMany({
     where: { status: { in: [...LIVE] }, expiresAt: { lte: now } },
     data: { status: 'left', leftAt: now },
   })
+  for (const bookId of new Set(readyExpiring.map((w) => w.bookId))) {
+    // книга могла за это время снова уйти на руки — promoteNextWaiting сам
+    // проверит, есть ли кого звать, и не тронет уже позванного
+    await prisma.$transaction((tx) => promoteNextWaiting(tx, bookId, now))
+  }
   return r.count
 }
 
@@ -396,6 +435,20 @@ export async function runWaitlistNotices(opts: {
       ...(url ? [[{ text: '📖 Открыть карточку', web_app: { url } }]] : []),
       [{ text: '🔕 Больше не жду', callback_data: `wait:stop:${n.book.id}` }],
     ]
+    /**
+     * Захватываем строку ДО отправки. Рассылку зовут три разных места (кнопка
+     * возврата в боте, ручка Mini App, часовая джоба), а между чтением списка и
+     * пометкой «отправлено» лежит сетевой вызов — за это время второй вызов
+     * успевал прочитать ту же строку и отправить человеку второе письмо
+     * (аудит 14.08.2026). Захват — единственный `updateMany` с условием
+     * `notifiedAt: null`: выиграет ровно один.
+     */
+    const claimed = await prisma.waiting.updateMany({
+      where: { id: n.id, notifiedAt: null },
+      data: { notifiedAt: now },
+    })
+    if (!claimed.count) continue
+
     try {
       await opts.send(String(n.userTg), noticeText(n), {
         reply_markup: { inline_keyboard: keyboard },
@@ -403,6 +456,9 @@ export async function runWaitlistNotices(opts: {
       await markNotified(n.id, now)
       sent++
     } catch {
+      // отправка не удалась — снимаем захват, иначе запись стала бы невидимой
+      // для следующих попыток (их считает markNotifyFailed)
+      await prisma.waiting.update({ where: { id: n.id }, data: { notifiedAt: null } })
       await markNotifyFailed(n.id, now)
       failed++
     }

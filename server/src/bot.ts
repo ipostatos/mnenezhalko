@@ -969,6 +969,7 @@ bot.callbackQuery(/^loan:undo:(.+)$/, async (ctx) => {
     const msg: Record<string, string> = {
       too_late: 'Отменить уже нельзя — прошло больше суток',
       book_relent: 'Книга уже выдана другому',
+      book_hidden: 'Книга убрана с полки при возврате — верните её на полку в приложении',
       not_returned: 'Эта выдача снова активна',
       forbidden: 'Это не ваша выдача',
       not_found: 'Не нашёл выдачу',

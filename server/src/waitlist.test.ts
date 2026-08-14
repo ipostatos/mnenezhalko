@@ -256,6 +256,87 @@ test('заблокировавший бота не держит очередь �
   assert.equal((await runWaitlistNotices(failing)).pending, 0)
 })
 
+/* ── очередь не должна замерзать (аудит 14.08.2026) ───────── */
+
+test('позванный ушёл сам — очередь идёт дальше, а не замерзает', async () => {
+  // Передача очереди жила ровно в двух местах: транзакция возврата и эскалация
+  // «позвали и не отреагировал сутки». Все остальные выходы из ready (ушёл сам,
+  // не доставили, истёк срок) закрывали запись молча, и остальные ждали
+  // обещанного письма до конца 60-дневного TTL.
+  const { book, loan } = await seedBusyBook()
+  await joinWaitlist(ANNA, book.id, new Date('2026-07-29T10:00:00Z'))
+  await joinWaitlist(BORIS, book.id, new Date('2026-07-29T10:01:00Z'))
+  await markReturned(loan!.id, OWNER)
+
+  await leaveWaitlist(ANNA, book.id)
+
+  const rows = await prisma.waiting.findMany({ where: { bookId: book.id }, orderBy: { createdAt: 'asc' } })
+  assert.deepEqual(
+    rows.map((r) => [r.userTg, r.status]),
+    [
+      [ANNA, 'left'],
+      [BORIS, 'ready'],
+    ],
+    'следующего обязаны позвать сразу',
+  )
+})
+
+test('заблокировавший бота не морозит очередь: после трёх неудач зовут следующего', async () => {
+  const { book, loan } = await seedBusyBook()
+  await joinWaitlist(ANNA, book.id, new Date('2026-07-29T10:00:00Z'))
+  await joinWaitlist(BORIS, book.id, new Date('2026-07-29T10:01:00Z'))
+  await markReturned(loan!.id, OWNER)
+
+  // первому доставить не выходит; второму — выходит
+  const sent: string[] = []
+  const flaky = {
+    send: async (chatId: string) => {
+      if (chatId === String(ANNA)) throw new Error('bot was blocked by the user')
+      sent.push(chatId)
+    },
+  }
+  for (let i = 0; i < 4; i++) await runWaitlistNotices(flaky)
+
+  assert.deepEqual(sent, [String(BORIS)], 'обещание должно дойти до следующего в очереди')
+})
+
+test('истёкшая запись позванного тоже передаёт очередь дальше', async () => {
+  const { book, loan } = await seedBusyBook()
+  await joinWaitlist(ANNA, book.id, new Date('2026-07-29T10:00:00Z'))
+  await joinWaitlist(BORIS, book.id, new Date('2026-07-29T10:01:00Z'))
+  await markReturned(loan!.id, OWNER)
+
+  // у позванного истёк срок ожидания
+  await prisma.waiting.updateMany({
+    where: { bookId: book.id, userTg: ANNA },
+    data: { expiresAt: new Date('2026-07-30T10:00:00Z') },
+  })
+  await expireWaitings(new Date('2026-08-01T10:00:00Z'))
+
+  const boris = await prisma.waiting.findFirst({ where: { bookId: book.id, userTg: BORIS } })
+  assert.equal(boris?.status, 'ready', 'очередь не должна замирать на истёкшем')
+})
+
+test('две одновременные рассылки не шлют человеку два письма', async () => {
+  // Рассылку зовут три разных места: кнопка возврата в боте, ручка Mini App и
+  // часовая джоба. Между чтением строки и пометкой «отправлено» лежит сетевой
+  // вызов — за это время второй вызов успевал прочитать ту же строку.
+  const { book, loan } = await seedBusyBook()
+  await joinWaitlist(ANNA, book.id)
+  await markReturned(loan!.id, OWNER)
+
+  const sent: string[] = []
+  const slow = {
+    send: async (chatId: string) => {
+      await new Promise((r) => setTimeout(r, 30))
+      sent.push(chatId)
+    },
+  }
+  await Promise.all([runWaitlistNotices(slow), runWaitlistNotices(slow)])
+
+  assert.equal(sent.length, 1, 'письмо должно уйти ровно одно')
+})
+
 test('отмена возврата возвращает неотправленное обещание в очередь', async () => {
   const { book, loan } = await seedBusyBook()
   await joinWaitlist(ANNA, book.id)

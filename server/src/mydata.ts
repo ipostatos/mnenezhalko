@@ -398,6 +398,14 @@ export async function deleteMyData(
           district: null,
           tgId: null,
           telegramSyncPending: false,
+          /**
+           * Надгробие. Без него сорвавшаяся архивация строки в Notion
+           * (протухшая cookie — событие штатное) заканчивалась тем, что
+           * ближайший синк возвращал имя, инстаграм и город обратно, а поймать
+           * это было уже нечем: tgId стёрт, и reapplyDeletions такую запись не
+           * находит. Синк записи с erasedAt пропускает (аудит 14.08.2026).
+           */
+          erasedAt: new Date(),
         },
       })
     }
@@ -468,9 +476,14 @@ export async function deleteMyData(
       await updateOwnerTelegram(librarian.notionId, null).catch((e: any) =>
         console.error('[mydata] контакт в Notion не очистился:', e?.message ?? e),
       )
-      await archiveRow(librarian.notionId).catch((e: any) =>
-        console.error('[mydata] строку владельца не удалось заархивировать:', e?.message ?? e),
-      )
+      await archiveRow(librarian.notionId).catch(async (e: any) => {
+        console.error('[mydata] строку владельца не удалось заархивировать:', e?.message ?? e)
+        // дожмёт flushPending; до тех пор строка живёт в Notion, но синк её
+        // игнорирует по erasedAt — удаление в любом случае не отменяется
+        await prisma.librarian
+          .update({ where: { id: librarian.id }, data: { notionArchivePending: true } })
+          .catch(() => {})
+      })
     }
   }
 

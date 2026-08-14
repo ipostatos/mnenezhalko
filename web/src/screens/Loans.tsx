@@ -11,6 +11,7 @@ import { ShelfPicker } from './ShelfPicker'
 const UNDO_ERRORS: Record<string, string> = {
   too_late: 'Отменить уже нельзя — прошло больше суток.',
   book_relent: 'Книга уже выдана другому человеку.',
+  book_hidden: 'Книга убрана с полки при возврате. Верните её на полку в «Моей полке» — и выдачу можно будет записать заново.',
   not_returned: 'Эта выдача снова активна.',
   forbidden: 'Это не ваша выдача.',
 }

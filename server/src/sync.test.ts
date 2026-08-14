@@ -206,6 +206,117 @@ test('уведомление администратору вызывается �
   assert.equal(calls, 1)
 })
 
+test('обезличенного библиотекаря синк НЕ воскрешает (аудит 14.08.2026)', async () => {
+  // Человек удалил свои данные, но архивация строки в Notion сорвалась —
+  // например, протухла cookie. Notion продолжает отдавать его строку, и синк
+  // возвращал в обезличенную запись имя, инстаграм и город. Отменить это уже
+  // нечем: tgId стёрт, повторное применение удалений такую запись не находит.
+  const notionId = randomUUID()
+  await prisma.librarian.create({
+    data: {
+      notionId,
+      name: 'Удалённый участник',
+      telegram: null,
+      instagram: null,
+      city: null,
+      erasedAt: new Date(),
+    },
+  })
+
+  await syncFromNotion(
+    silentLog,
+    deps([], [], [{ notionId, name: 'Лизавета', telegram: '@liza', instagram: 'liza_insta', city: 'Warszawa', district: null }]),
+  )
+
+  const after = await prisma.librarian.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(after.name, 'Удалённый участник', 'имя не должно вернуться из Notion')
+  assert.equal(after.telegram, null, 'контакт не должен вернуться')
+  assert.equal(after.instagram, null)
+  assert.equal(after.city, null)
+})
+
+test('обычного библиотекаря синк по-прежнему обновляет', async () => {
+  const notionId = randomUUID()
+  await prisma.librarian.create({ data: { notionId, name: 'Старое имя' } })
+  await syncFromNotion(
+    silentLog,
+    deps([], [], [{ notionId, name: 'Новое имя', telegram: '@liza', instagram: null, city: 'Kraków', district: null }]),
+  )
+  const after = await prisma.librarian.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(after.name, 'Новое имя')
+  assert.equal(after.telegram, '@liza')
+})
+
+test('книгу с неотправленной правкой синк не затирает старыми значениями', async () => {
+  // Владелец поправил название, отправка в Notion упала (ошибка ушла в лог), а
+  // ближайший синк возвращал старое значение — правка исчезала молча.
+  const notionId = randomUUID()
+  await prisma.book.create({
+    data: {
+      notionId,
+      title: 'Новое название от владельца',
+      author: 'Новый автор',
+      kind: 'book',
+      source: 'notion',
+      active: true,
+      reviewStatus: 'approved',
+      editSyncPending: true,
+    },
+  })
+
+  await syncFromNotion(silentLog, deps([fakeBook(notionId, { title: 'Старое название из Notion' })]))
+
+  const after = await prisma.book.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(after.title, 'Новое название от владельца', 'локальная правка сильнее Notion, пока не отправлена')
+  assert.equal(after.author, 'Новый автор')
+  assert.equal(after.active, true, 'книга остаётся в каталоге')
+})
+
+test('после успешной отправки правки синк снова главный', async () => {
+  const notionId = randomUUID()
+  await prisma.book.create({
+    data: {
+      notionId,
+      title: 'Локальное название',
+      kind: 'book',
+      source: 'notion',
+      active: true,
+      reviewStatus: 'approved',
+      editSyncPending: false,
+    },
+  })
+  await syncFromNotion(silentLog, deps([fakeBook(notionId, { title: 'Название из Notion' })]))
+  const after = await prisma.book.findUniqueOrThrow({ where: { notionId } })
+  assert.equal(after.title, 'Название из Notion')
+})
+
+test('сбой чтения владельцев не срывает синк книг (аудит 14.08.2026)', async () => {
+  // «Независимость источников» была сделана для книг и настолок, а владельцы
+  // читались в общем прологе без try: их сбой убивал весь прогон целиком —
+  // ровно как в инциденте 12–14 августа, только по другой причине.
+  const ids = await seedExistingBooks(25)
+  const books = ids.map((id) => fakeBook(id))
+  const d = {
+    ...deps(books),
+    fetchLibrarians: async () => {
+      throw new Error('Owners: коллекция отдала неполный ответ')
+    },
+  }
+
+  const r = await syncFromNotion(silentLog, d)
+  assert.equal(r.books, 25, 'книги должны прочитаться и без владельцев')
+  assert.ok(r.librariansFailed, 'сбой владельцев отмечен в отчёте')
+})
+
+test('маленький источник: деактивация ДО НУЛЯ считается подозрительной', async () => {
+  // Настолок всего 12, а порог предохранителя — 20 строк: сломанный фильтр в
+  // Notion молча деактивировал бы их все.
+  await seedExistingBooks(12, 'game')
+  const r = await syncFromNotion(silentLog, deps([], []))
+  assert.equal(r.deactivated, 0, 'обнуление маленького источника не должно проходить молча')
+  assert.ok(r.suspicious, 'прогон обязан быть помечен подозрительным')
+})
+
 test('bot-added книги не затрагиваются синком вообще', async () => {
   const bot = await prisma.book.create({
     data: { title: 'Добавлена ботом', source: 'bot', active: true, reviewStatus: 'approved' },

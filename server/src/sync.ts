@@ -37,6 +37,8 @@ export type SyncReport = {
   deactivated: number
   /** массовое исчезновение книг из Notion — деактивация пропущена (см. deactivationGuard) */
   suspicious: boolean
+  /** владельцы не прочитались: книги синкались на прежних связях */
+  librariansFailed: boolean
   ms: number
 }
 
@@ -52,6 +54,11 @@ export function deactivationGuard(
   minVolume = env.notion.guardMinVolume,
   pct = env.notion.guardPercent,
 ): { skip: boolean } {
+  // Источник, пропавший ЦЕЛИКОМ, подозрителен независимо от объёма: настолок
+  // всего двенадцать при пороге в двадцать строк, и сломанный фильтр в Notion
+  // деактивировал бы их все молча (аудит 14.08.2026). «Пусто» — это почти
+  // всегда сломанный ответ, а не разом опустевшая полка.
+  if (activeBefore > 0 && goneCount >= activeBefore) return { skip: true }
   return { skip: activeBefore >= minVolume && goneCount > Math.ceil(activeBefore * pct) }
 }
 
@@ -100,9 +107,19 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
     log(`[sync] контактов обновлено: ${contacts.ok}, с ошибкой: ${contacts.failed}`)
   }
 
-  log('[sync] тяну библиотекарей…')
-  const librarians = await deps.fetchLibrarians()
-  log(`[sync] библиотекарей: ${librarians.length}`)
+  // Владельцы читаются в своём try: их сбой не должен срывать чтение книг.
+  // Раньше это был общий пролог без обработки — одна ошибка в Owners убивала
+  // весь прогон целиком, включая уже готовые книги (аудит 14.08.2026).
+  let librarians: NotionLibrarian[] = []
+  let librariansOk = true
+  try {
+    log('[sync] тяну библиотекарей…')
+    librarians = await deps.fetchLibrarians()
+    log(`[sync] библиотекарей: ${librarians.length}`)
+  } catch (e: any) {
+    librariansOk = false
+    log(`[sync] библиотекари не загрузились: ${e?.message ?? e} — книги синкаем на прежних связях`)
+  }
 
   // контакты, чьё локальное изменение ещё не уехало в Notion: их telegram синком
   // НЕ перезаписываем, иначе откатим свежий ник старым значением из Notion
@@ -115,7 +132,21 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
     ).map((l) => l.notionId!),
   )
 
+  // Человек удалил свои данные — его запись обезличена НАВСЕГДА. Notion может
+  // продолжать отдавать строку (архивация могла сорваться, её дожмёт
+  // flushPending), но возвращать из неё имя и контакты нельзя: это отмена
+  // удаления, и откатить её уже нечем — tgId стёрт (аудит 14.08.2026).
+  const erased = new Set(
+    (
+      await prisma.librarian.findMany({
+        where: { erasedAt: { not: null }, notionId: { not: null } },
+        select: { notionId: true },
+      })
+    ).map((l) => l.notionId!),
+  )
+
   for (const l of librarians) {
+    if (erased.has(l.notionId)) continue
     const contact = { telegram: l.telegram, telegramNorm: normHandle(l.telegram) }
     const common: Record<string, unknown> = { name: l.name, instagram: l.instagram }
     // Город из Notion применяем, только если он там ЗАПОЛНЕН: пустое City не
@@ -199,6 +230,7 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
           addedAt: true,
           reviewStatus: true,
           deletedAt: true,
+          editSyncPending: true,
         },
       })
     : []
@@ -222,6 +254,11 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
     // tombstone: удалённую у нас книгу синк не воскрешает, даже если строка
     // осталась в Notion (архивирование могло упасть — его дожмёт flushPending)
     if (existing && (existing.reviewStatus === 'deleted' || existing.deletedAt)) continue
+
+    // правка владельца ещё не уехала в Notion: перезаписать её оттуда — значит
+    // молча откатить то, что человек только что сохранил. Ждём отправки
+    // (flushPending снимет флаг), и только потом Notion снова главный
+    if (existing?.editSyncPending) continue
 
     const owner = b.ownerNotionId ? ownerByNotion.get(b.ownerNotionId) : undefined
     const cityIncoming = b.city ?? owner?.city ?? null
@@ -299,7 +336,9 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
   // сработал. Иначе /api/health продолжал бы честно показывать «недоверенные»
   // данные как последний успешный синк — подозрительный или частично упавший
   // прогон не должен маскироваться под штатный.
-  const trusted = booksOk && gamesOk && !suspicious
+  // сбой владельцев тоже делает прогон недоверенным: связи книг с полками
+  // могли остаться неполными, а значит «последним успешным» это назвать нельзя
+  const trusted = booksOk && gamesOk && librariansOk && !suspicious
   if (trusted) {
     await prisma.syncState.upsert({
       where: { key: 'notion' },
@@ -328,6 +367,7 @@ async function runSync(log: typeof console.log, deps: SyncDeps): Promise<SyncRep
     games: games.length,
     deactivated,
     suspicious,
+    librariansFailed: !librariansOk,
     ms: Date.now() - started,
   }
   log(`[sync] готово за ${(report.ms / 1000).toFixed(1)}с, скрыто ${deactivated}${trusted ? '' : ' (baseline не обновлён)'}`)

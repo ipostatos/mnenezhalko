@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 
 process.env.DISABLE_BOT = '1'
 
-const { fetchAll, isCompleteResponse } = await import('./notion.js')
+const { assertSchemaHas, fetchAll, isCompleteResponse } = await import('./notion.js')
 
 /**
  * Ответ queryCollection: ids в результатах + payload только для payloadIds.
@@ -115,4 +115,22 @@ test('полный ответ без даты проходит как есть',
   const query = async () => response(all, all)
   const { rows } = await fetchAll('c1', 'v1', undefined, query as any)
   assert.equal(rows.length, 142)
+})
+
+test('переименованная колонка — громкая ошибка, а не пустое поле у всего каталога', () => {
+  // Аудит 14.08.2026: `get()` по отсутствующему имени молча отдаёт пустоту.
+  // Строки при этом на месте, предохранитель деактивации спокоен — и у трёх
+  // тысяч книг разом исчезает жанр, автор или владелец.
+  const schema = { byName: { Title: 't', Author: 'a' }, typeById: {}, optionsByName: {} }
+  assert.throws(
+    () => assertSchemaHas(schema as any, 'All Books', ['Title', 'Genre', 'Cover']),
+    /не хватает колонок: Genre, Cover/,
+  )
+  // полный набор проходит молча
+  assertSchemaHas(schema as any, 'All Books', ['Title', 'Author'])
+})
+
+test('пустая схема тоже останавливает синк, а не считается «колонок нет»', () => {
+  const empty = { byName: {}, typeById: {}, optionsByName: {} }
+  assert.throws(() => assertSchemaHas(empty as any, 'Owners', ['@Telegram']), /схема не пришла вовсе/)
 })

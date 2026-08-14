@@ -40,23 +40,36 @@ model User {
 
 /// Библиотекарь — владелец книг. Приходит из Notion либо создаётся ботом.
 model Librarian {
-  id                  String    @id @default(cuid())
-  notionId            String?   @unique
-  name                String
-  telegram            String? // @handle без ссылки
+  id                   String    @id @default(cuid())
+  notionId             String?   @unique
+  name                 String
+  telegram             String? // @handle без ссылки
   /// нормализованный ник для матчинга: lower-case, без @/ссылки (см. normHandle)
-  telegramNorm        String?
-  instagram           String?
-  city                String?
-  district            String?
-  tgId                BigInt?   @unique
+  telegramNorm         String?
+  instagram            String?
+  city                 String?
+  district             String?
+  tgId                 BigInt?   @unique
   /// куда объединён дубль; непусто — запись архивная, книги перенесены на главную
-  mergedIntoId        String?
+  mergedIntoId         String?
   /// когда последний раз сверяли Telegram-контакт с этой записью
-  lastTelegramSyncAt  DateTime?
+  lastTelegramSyncAt   DateTime?
   /// локальный telegram изменился, но ещё не отправлен в Notion (дожать flushTelegramUpdates)
-  telegramSyncPending Boolean   @default(false)
-  createdAt           DateTime  @default(now())
+  telegramSyncPending  Boolean   @default(false)
+  /**
+   * Человек удалил свои данные — запись обезличена НАВСЕГДА.
+   * Надгробие, а не флаг удаления: строка нужна книгам и закрытым выдачам,
+   * поэтому она живёт дальше пустой. Синк обязан такие записи пропускать:
+   * пока этого поля не было, сорвавшаяся архивация строки в Notion (например,
+   * протухла cookie) приводила к тому, что ближайший синк возвращал в
+   * обезличенную запись имя, инстаграм и город — то есть отменял удаление,
+   * а `tgId` уже стёрт, и повторное применение удалений это не находило
+   * (аудит 14.08.2026).
+   */
+  erasedAt             DateTime?
+  /// строку в Notion не удалось заархивировать при удалении — дожать (flushPending)
+  notionArchivePending Boolean   @default(false)
+  createdAt            DateTime  @default(now())
 
   user  User?  @relation(fields: [tgId], references: [tgId])
   books Book[]
@@ -101,6 +114,14 @@ model Book {
   hideAfterReturn      Boolean   @default(false)
   /// строку в Notion не удалось заархивировать при удалении — дожать (flushPending)
   notionArchivePending Boolean   @default(false)
+  /**
+   * Правку полей книги не удалось отправить в Notion — дожать (flushPending).
+   * Без этого флага правка молча пропадала: локально сохранилась, отправка
+   * упала (в лог), а ближайший синк перезаписывал поля старыми значениями из
+   * Notion. Синк такие книги не трогает, пока отправка не пройдёт — ровно как
+   * с контактом библиотекаря (аудит 14.08.2026).
+   */
+  editSyncPending      Boolean   @default(false)
   addedByTg            BigInt?
   search               String    @default("") // нормализованная строка для поиска
   active               Boolean   @default(true)
@@ -309,7 +330,7 @@ model CityGroup {
 
 /// Ближайшие встречи по городам
 model Event {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   city             String
   title            String
   startsAt         DateTime
@@ -317,12 +338,12 @@ model Event {
   description      String?
   url              String?
   /// откуда встреча: admin | topic (афиша из чата проекта)
-  source           String   @default("admin")
+  source           String    @default("admin")
   /// id сообщения-афиши + порядковый номер встречи в нём: одно сообщение может
   /// нести несколько встреч, дедуп только по msgId терял все, кроме первой
   sourceMsgId      Int?
   sourceEventIndex Int?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
   createdBy        BigInt?
   /// снята админом: строку НЕ удаляем физически, иначе повторный импорт темы
   /// заведёт встречу заново (дедуп идёт по sourceMsgId), а в журнале модерации
