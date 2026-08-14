@@ -287,6 +287,27 @@ export async function fetchAll(
   return { rows: [...byId.values()], schema }
 }
 
+/**
+ * Свойства, без которых чтение таблицы бессмысленно.
+ *
+ * Переименовали колонку в Notion — и `get()` начинает молча возвращать пустоту:
+ * строки на месте, предохранитель деактивации спокоен, а у всего каталога
+ * исчезает жанр, автор или владелец (у 3000+ книг разом). Инцидент 12–14.08.2026
+ * был из этой же семьи: ответ считался корректным, хотя метаданных в нём не было.
+ * Поэтому — громкая ошибка до того, как это доедет до базы.
+ */
+export function assertSchemaHas(schema: Schema, what: string, required: string[]) {
+  const missing = required.filter((name) => !schema.byName[name])
+  if (!missing.length) return
+  const have = Object.keys(schema.byName)
+  throw new Error(
+    `Notion: в таблице «${what}» не хватает колонок: ${missing.join(', ')}. ` +
+      `Есть: ${have.join(', ') || '— схема не пришла вовсе'}. ` +
+      'Скорее всего, колонку переименовали или ответ Notion неполный — синк остановлен, ' +
+      'чтобы не обнулить эти поля у всего каталога.',
+  )
+}
+
 export type NotionLibrarian = {
   notionId: string
   name: string
@@ -373,6 +394,12 @@ export async function fetchLibrarians(): Promise<NotionLibrarian[]> {
     env.notion.librarians.collection,
     env.notion.librarians.view,
   )
+  assertSchemaHas(schema, 'Owners', [
+    'Name (and Surname)',
+    '@Telegram',
+    'Instagram',
+    'City/District',
+  ])
   return rows.map((r) => {
     const { city, district } = splitCity(text(get(r, schema, 'City/District')))
     const tg =
@@ -394,6 +421,15 @@ export async function fetchBooks(): Promise<NotionBook[]> {
     env.notion.books.view,
     'Date added',
   )
+  assertSchemaHas(schema, 'All Books', [
+    'Title',
+    'Author',
+    'Genre',
+    'Language',
+    'Cover',
+    'Owner (click on the name)',
+    'Date added',
+  ])
   return rows
     .map((r): NotionBook | null => {
       const title = text(get(r, schema, 'Title'))
@@ -420,6 +456,7 @@ export async function fetchGames(): Promise<NotionBook[]> {
     env.notion.games.collection,
     env.notion.games.view,
   )
+  assertSchemaHas(schema, 'Board Games', ['Title', 'Status', 'Cover', 'Owner', 'City/District'])
   return rows
     .map((r): NotionBook | null => {
       const title = text(get(r, schema, 'Title'))

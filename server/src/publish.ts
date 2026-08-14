@@ -459,19 +459,49 @@ export async function editBook(bookId: string, ownerTg: bigint, f: ShelfEdit) {
 
   // синхронизированную книгу правим и в Notion, иначе синк вернёт старое значение
   if (updated.notionId && notionWriteEnabled()) {
-    await updateBook(updated.notionId, updated.kind === 'game' ? 'game' : 'book', {
-      title: f.title !== undefined ? updated.title : undefined,
-      author: f.author !== undefined ? updated.author : undefined,
-      // в Notion уезжает ПРОВЕРЕННЫЙ список, а не то, что прислал клиент
-      genres,
-      languages,
-      cityDistrict:
-        f.city !== undefined || f.district !== undefined
-          ? cityDistrictOf(updated.city, updated.district)
-          : undefined,
-    }).catch((e) => console.error('[notion] правка книги не уехала:', e?.message ?? e))
+    try {
+      await pushEditToNotion(updated)
+      // отправка прошла — снимаем возможный флаг с прошлой неудачной попытки
+      if (updated.editSyncPending) {
+        await prisma.book.update({ where: { id: bookId }, data: { editSyncPending: false } })
+      }
+    } catch (e: any) {
+      /**
+       * Раньше здесь была только запись в лог — и правка исчезала молча:
+       * ближайший синк перезаписывал поля старыми значениями из Notion.
+       * Теперь книга помечена, синк её не трогает, а отправку дожмёт
+       * flushPending (аудит 14.08.2026).
+       */
+      console.error('[notion] правка книги не уехала:', e?.message ?? e)
+      await prisma.book.update({ where: { id: bookId }, data: { editSyncPending: true } })
+    }
   }
   return { card: toCard({ ...updated, owner: updated.owner }) }
+}
+
+/**
+ * Отправка полей книги в Notion. Одна на живую правку и на дожим: две похожие
+ * отправки рано или поздно разошлись бы набором полей, а «дожали не то» тут
+ * означает молча разъехавшийся каталог.
+ */
+async function pushEditToNotion(b: {
+  notionId: string | null
+  kind: string
+  title: string
+  author: string | null
+  genres: string
+  languages: string
+  city: string | null
+  district: string | null
+}) {
+  if (!b.notionId) return
+  await updateBook(b.notionId, b.kind === 'game' ? 'game' : 'book', {
+    title: b.title,
+    author: b.author,
+    genres: split(b.genres),
+    languages: split(b.languages),
+    cityDistrict: cityDistrictOf(b.city, b.district),
+  })
 }
 
 /**
@@ -650,6 +680,42 @@ export async function flushPending(limit = 50): Promise<{ ok: number; failed: nu
       failed++
     }
   }
+  // недоархивированные строки УДАЛИВШИХСЯ владельцев: пока строка жива в
+  // Notion, удаление держится только на надгробии erasedAt — а обещали убрать
+  // человека и оттуда тоже
+  const owners = await prisma.librarian.findMany({
+    where: { notionArchivePending: true, notionId: { not: null } },
+    select: { id: true, notionId: true },
+    take: limit,
+  })
+  for (const o of owners) {
+    try {
+      await archiveRow(o.notionId!)
+      await prisma.librarian.update({ where: { id: o.id }, data: { notionArchivePending: false } })
+      ok++
+    } catch (e: any) {
+      console.error('[notion] строка владельца не дожалась:', e?.message ?? e)
+      failed++
+    }
+  }
+
+  // неотправленные правки полей: пока флаг стоит, синк книгу не трогает —
+  // значит, дожать её обязаны мы, иначе локальное и Notion разъедутся навсегда
+  const edits = await prisma.book.findMany({
+    where: { editSyncPending: true, notionId: { not: null } },
+    take: limit,
+  })
+  for (const b of edits) {
+    try {
+      await pushEditToNotion(b)
+      await prisma.book.update({ where: { id: b.id }, data: { editSyncPending: false } })
+      ok++
+    } catch (e: any) {
+      console.error('[notion] правка книги не дожалась:', e?.message ?? e)
+      failed++
+    }
+  }
+
   return { ok, failed }
 }
 

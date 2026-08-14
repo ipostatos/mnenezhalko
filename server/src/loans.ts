@@ -384,6 +384,14 @@ export async function reopenLoan(id: string, byTg: bigint) {
       })
       if (relent) return { error: 'book_relent' as const }
       const book = await tx.book.findUnique({ where: { id: loan.bookId } })
+      /**
+       * Книгу скрыли при возврате («убрать с полки после возврата»): карточка
+       * удалена, очередь закрыта, строка в Notion заархивирована. Отменять
+       * возврат тут было нечестно: выдача оживала и указывала на удалённую
+       * книгу, а очередь никто не восстанавливал (аудит 14.08.2026). Честнее
+       * отказать и объяснить: книгу можно вернуть на полку в «Моей полке».
+       */
+      if (book && !book.active) return { error: 'book_hidden' as const }
       if (book?.active) await tx.book.update({ where: { id: loan.bookId }, data: { status: 'busy' } })
       // книга снова на руках: того, кому обещание ещё не ушло, возвращаем в
       // очередь. Кому сообщение уже доставлено — не трогаем (см. waitlist.ts)

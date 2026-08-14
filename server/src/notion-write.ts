@@ -109,17 +109,33 @@ const vStatus = (s: string) => [[s]]
 /* ── схемы таблиц (кешируем: имена свойств меняются редко) ── */
 
 let cache: { books?: Schema; owners?: Schema; games?: Schema } = {}
+let cachedAt = 0
+
+/**
+ * Кэш со сроком годности. Раньше он жил до перезапуска процесса: колонку в
+ * Notion переименовали — и запись молча теряла поле (см. `createRowOps`: нет
+ * pid, значит пропускаем), причём даже после исправления имени кэш продолжал
+ * держать старую схему до следующего деплоя (аудит 14.08.2026).
+ */
+const SCHEMA_TTL_MS = 10 * 60_000
 
 async function schemas() {
-  if (!cache.books) {
+  if (!cache.books || Date.now() - cachedAt > SCHEMA_TTL_MS) {
     const [books, owners, games] = await Promise.all([
       collectionSchema(env.notion.books.collection, env.notion.books.view),
       collectionSchema(env.notion.librarians.collection, env.notion.librarians.view),
       collectionSchema(env.notion.games.collection, env.notion.games.view),
     ])
     cache = { books, owners, games }
+    cachedAt = Date.now()
   }
   return cache as Required<typeof cache>
+}
+
+/** Сбросить кэш схем (зовёт синк: он только что видел свежую схему таблиц). */
+export function invalidateNotionSchemas() {
+  cache = {}
+  cachedAt = 0
 }
 
 type Props = Array<[pid: string | undefined, value: unknown]>
