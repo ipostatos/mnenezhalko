@@ -93,6 +93,47 @@ test('альтернативные записи IP (decimal/hex/octal/корот
   }
 })
 
+test('IPv4-mapped IPv6 блокируется в ЛЮБОЙ записи, включая нормализованную парсером URL', () => {
+  // Аудит 14.08.2026: `new URL('http://[::ffff:127.0.0.1]/')` отдаёт hostname
+  // `[::ffff:7f00:1]` — точечной записи, которую ждал старый регексп, до проверки
+  // не доезжало НИКОГДА. Поэтому здесь адрес берётся ровно оттуда, откуда его
+  // берёт боевой код: из hostname разобранного URL.
+  const blocked = [
+    'http://[::ffff:127.0.0.1]/x.jpg', // → [::ffff:7f00:1]
+    'http://[::ffff:169.254.169.254]/latest/meta-data/', // метаданные облака
+    'http://[0:0:0:0:0:ffff:7f00:1]/x.jpg', // полная запись того же адреса
+    'http://[::ffff:10.0.0.1]/x.jpg',
+    'http://[::127.0.0.1]/x.jpg', // IPv4-compatible
+    'http://[2002:7f00:1::]/x.jpg', // 6to4 поверх 127.0.0.1
+    'http://[64:ff9b::7f00:1]/x.jpg', // NAT64 поверх 127.0.0.1
+    'http://[fe90::1]/x.jpg', // fe80::/10 это fe80…febf, не только fe80
+    'http://[febf:ffff::1]/x.jpg',
+    'http://[ff02::1]/x.jpg', // multicast
+  ]
+  for (const u of blocked) {
+    const host = new URL(u).hostname
+    assert.equal(isPrivateIp(host), true, `${u} → hostname ${host} должен считаться приватным`)
+    assert.equal(isSafeCoverUrl(u), false, `${u} должен быть отклонён при приёме`)
+  }
+})
+
+test('публичный IPv6 по-прежнему проходит', () => {
+  for (const u of ['http://[2606:4700:4700::1111]/x.jpg', 'http://[2a00:1450:4001:830::200e]/x.jpg'])
+    assert.equal(isSafeCoverUrl(u), true, `${u} должен быть разрешён`)
+  assert.equal(isPrivateIp('2606:4700:4700::1111'), false)
+})
+
+test('неразобранный IPv6 считается небезопасным (fail-closed, как у IPv4)', () => {
+  for (const junk of ['fe80:::1', '::ffff:999.1.1.1', '1:2:3:4:5:6:7:8:9', 'gg::1', ':::'])
+    assert.equal(isPrivateIp(junk), true, `неизвестный IPv6 должен блокироваться: ${junk}`)
+})
+
+test('assertPublicUrl: mapped-адрес не доходит до соединения', async () => {
+  await assert.rejects(() => assertPublicUrl('http://[::ffff:127.0.0.1]/x.jpg'), /private_host/)
+  await assert.rejects(() => assertPublicUrl('http://[::ffff:169.254.169.254]/'), /private_host/)
+  await assert.rejects(() => assertPublicUrl('http://[2002:7f00:1::]/x.jpg'), /private_host/)
+})
+
 test('assertPublicUrl: url с username:password отвергается фильтром приёма', () => {
   // credentials в URL — способ запутать парсер («@» отделяет userinfo от хоста):
   // http://expected.com@127.0.0.1/ ведёт на 127.0.0.1, а не на expected.com

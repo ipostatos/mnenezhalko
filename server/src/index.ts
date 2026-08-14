@@ -22,7 +22,7 @@ import { startJobLoop } from './scheduler.js'
 import { coverPrewarmJob } from './prewarm.js'
 import { housekeepCovers } from './covers.js'
 import { applyRetention, describeRetention } from './retention.js'
-import { flushNotices } from './moderation.js'
+import { explainVerdict, flushNotices, NotAllowedError } from './moderation.js'
 import { expireMarketItems } from './market.js'
 import { escalateStale, expireWaitings } from './waitlist.js'
 
@@ -30,7 +30,30 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const webDist = path.resolve(here, '../../web/dist')
 
 // фото обложек приходят как dataURL в теле запроса — стандартного мегабайта мало
-const app = Fastify({ logger: { level: 'info' }, bodyLimit: 12 * 1024 * 1024 })
+/**
+ * `trustProxy` — только петля. За Caddy `req.ip` у ВСЕХ был 127.0.0.1: лимиты
+ * «на адрес» складывались в одно общее ведро на весь интернет, а настоящего
+ * адреса не было и в логах (аудит 14.08.2026). Доверять X-Forwarded-For можно
+ * ровно своему прокси: заголовок, пришедший откуда-то ещё, подделывается любым.
+ */
+const app = Fastify({
+  logger: { level: 'info' },
+  bodyLimit: 12 * 1024 * 1024,
+  trustProxy: env.trustProxy,
+})
+
+/**
+ * Отказ по правам — единственное исключение, которое ручки могут не ловить сами:
+ * замок стоит внутри действий (см. publish.ts::putOnShelf), и его отказ обязан
+ * доехать до человека понятной фразой, а не пятисоткой.
+ */
+app.setErrorHandler((err: any, req, reply) => {
+  if (err instanceof NotAllowedError) {
+    return reply.code(403).send({ error: err.verdict.code, message: explainVerdict(err.verdict) })
+  }
+  req.log.error(err)
+  return reply.send(err)
+})
 
 /**
  * CORS: только собственный origin. `origin: true` отражал ЛЮБОЙ Origin, то есть

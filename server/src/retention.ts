@@ -43,6 +43,12 @@ export type RetentionReport = {
 
 const ago = (days: number, now: number) => new Date(now - days * DAY)
 
+/** Ограничение, которое ещё действует: не снято и не истекло. */
+const activeRestrictionFilter = (now: number) => ({
+  liftedAt: null,
+  OR: [{ expiresAt: null }, { expiresAt: { gt: new Date(now) } }],
+})
+
 /**
  * Один проход чистки. Возвращает сводку — её печатает планировщик.
  *
@@ -125,6 +131,11 @@ export async function applyRetention(now = Date.now()): Promise<RetentionReport>
       waitings: { none: {} },
       reviews: { none: {} },
       marketItems: { none: {} },
+      // Забаненный не заходит именно потому, что забанен, — принимать это за
+      // «человек ушёл» нельзя: удаление профиля снимало бан, а каскад уносил и
+      // ограничения, и человек возвращался с чистого листа (аудит 14.08.2026).
+      accountStatus: 'active',
+      restrictions: { none: activeRestrictionFilter(now) },
     },
     select: { tgId: true },
   })
@@ -137,8 +148,26 @@ export async function applyRetention(now = Date.now()): Promise<RetentionReport>
   //    действовать. Дольше держать незачем, а раньше нельзя: по нему объясняют
   //    человеку, почему его ограничили, и разбирают спорные случаи
   const logCutoff = ago(RETENTION.moderationLogDays, now)
+  // «Год после того, как перестало действовать» — а считалось от даты решения:
+  // у бессрочного ограничения или бана запись о причине пропадала, пока само
+  // ограничение действовало, и объяснить человеку было бы нечем (аудит 14.08.2026).
+  const stillRestricted = (
+    await prisma.userRestriction.findMany({
+      where: activeRestrictionFilter(now),
+      select: { userTg: true },
+      distinct: ['userTg'],
+    })
+  ).map((r) => r.userTg)
+  const stillBanned = (
+    await prisma.user.findMany({ where: { accountStatus: 'banned' }, select: { tgId: true } })
+  ).map((u) => u.tgId)
+  const keepFor = [...new Set([...stillRestricted, ...stillBanned])]
+
   const oldLog = await prisma.moderationAction.deleteMany({
-    where: { createdAt: { lt: logCutoff } },
+    where: {
+      createdAt: { lt: logCutoff },
+      ...(keepFor.length ? { targetUserTg: { notIn: keepFor } } : {}),
+    },
   })
   report.решений_модерации_удалено = oldLog.count
 

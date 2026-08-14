@@ -16,15 +16,75 @@ function ipv4ToLong(ip: string): number | null {
   return ((p[0] << 24) >>> 0) + (p[1] << 16) + (p[2] << 8) + p[3]
 }
 
+/**
+ * Разбирает IPv6 в восемь групп по 16 бит. null — это не IPv6 (или мусор),
+ * и такой ответ обязан трактоваться как «небезопасно» (см. isPrivateIp).
+ *
+ * Разбор нужен именно полный: сравнение адреса со строковым шаблоном не
+ * работает, потому что одна и та же машина записывается многими способами, а
+ * `new URL()` ещё и нормализует запись. Так и был пропущен обход, найденный
+ * аудитом 14.08.2026: `http://[::ffff:127.0.0.1]/` доезжает до проверки уже
+ * как `::ffff:7f00:1`, и шаблон с точечной записью не совпадал никогда.
+ */
+function parseIpv6(input: string): number[] | null {
+  // zone id (fe80::1%eth0) к самому адресу не относится
+  let s = input.split('%')[0]
+  if (!s.includes(':')) return null
+
+  // встроенный IPv4 в последних 32 битах: ::ffff:1.2.3.4, ::1.2.3.4, 64:ff9b::1.2.3.4
+  const tail = s.match(/(\d+\.\d+\.\d+\.\d+)$/)
+  if (tail) {
+    const n = ipv4ToLong(tail[1])
+    if (n === null) return null
+    const hi = ((n >>> 16) & 0xffff).toString(16)
+    const lo = (n & 0xffff).toString(16)
+    s = s.slice(0, -tail[1].length) + `${hi}:${lo}`
+  }
+
+  const halves = s.split('::')
+  if (halves.length > 2) return null
+  const head = halves[0] ? halves[0].split(':') : []
+  const rest = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : []
+  let groups: string[]
+  if (halves.length === 2) {
+    const zeros = 8 - head.length - rest.length
+    if (zeros < 1) return null // «::» обязано сжимать хотя бы одну группу
+    groups = [...head, ...Array(zeros).fill('0'), ...rest]
+  } else {
+    groups = head
+  }
+  if (groups.length !== 8) return null
+
+  const out: number[] = []
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null
+    out.push(parseInt(g, 16))
+  }
+  return out
+}
+
 /** Приватный / служебный / нероутируемый адрес (то, что нельзя дёргать наружу). */
 export function isPrivateIp(ip: string): boolean {
   const v = ip.toLowerCase().replace(/^\[|\]$/g, '')
   if (v.includes(':')) {
-    // IPv6
-    if (v === '::1' || v === '::') return true
-    if (v.startsWith('fe80') || v.startsWith('fc') || v.startsWith('fd')) return true
-    const mapped = v.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-    if (mapped) return isPrivateIp(mapped[1])
+    const g = parseIpv6(v)
+    // не разобрали как IPv6 — считаем небезопасным, как и нераспознанный IPv4
+    if (!g) return true
+    const zeroUpTo = (n: number) => g.slice(0, n).every((x) => x === 0)
+    // IPv4 внутри адреса судим по правилам IPv4: и mapped (::ffff:a.b.c.d),
+    // и compatible (::a.b.c.d), и NAT64, и 6to4 ведут на ту же машину
+    const embedded = (hi: number, lo: number) =>
+      isPrivateIp(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`)
+    if (zeroUpTo(5) && g[5] === 0xffff) return embedded(g[6], g[7]) // ::ffff:0:0/96
+    if (zeroUpTo(6)) return embedded(g[6], g[7]) // ::/96 (в т.ч. :: и ::1)
+    // NAT64 (64:ff9b::/96): нули между префиксом и встроенным IPv4
+    if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0))
+      return embedded(g[6], g[7])
+    if (g[0] === 0x2002) return embedded(g[1], g[2]) // 6to4
+    if ((g[0] & 0xffc0) === 0xfe80) return true // fe80::/10 link-local
+    if ((g[0] & 0xfe00) === 0xfc00) return true // fc00::/7 unique-local
+    if ((g[0] & 0xff00) === 0xff00) return true // ff00::/8 multicast
+    if (g[0] === 0x0100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true // 100::/64 discard
     return false
   }
   const n = ipv4ToLong(v)

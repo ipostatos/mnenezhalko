@@ -20,6 +20,7 @@ import {
   stableNotionRowId,
   updateBook,
 } from './notion-write.js'
+import { assertUserCan } from './moderation.js'
 import { linkLibrarian } from './librarian.js'
 import { sanitizeGenres, sanitizeLanguages } from './taxonomy.js'
 
@@ -121,6 +122,13 @@ async function sendBookToNotion(bookId: string, librarian: Librarian) {
 }
 
 export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
+  // Замок стоит ЗДЕСЬ, а не у каждого входа. Входов шесть (одиночный ISBN,
+  // /import, список ISBN без команды, фото, кнопка пачки, кнопка черновика), и
+  // аудит 14.08.2026 нашёл ровно то, что и должен был: у двух из них проверки
+  // не было, и ограниченный человек спокойно добавлял книги. Проверка у самого
+  // действия переживает появление седьмого входа.
+  await assertUserCan(d.tgId, 'add_books')
+
   const user = await prisma.user.upsert({
     where: { tgId: d.tgId },
     create: {
@@ -221,7 +229,12 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
   }
 }
 
-export type ReviewResult = { card: BookCard; addedByTg: bigint | null }
+export type ReviewResult = {
+  card: BookCard
+  addedByTg: bigint | null
+  /** решение уже было принято раньше — повторять письмо человеку не нужно */
+  already?: boolean
+}
 
 /**
  * Что человек получает о решении по своей книге. Текст один и тот же, откуда
@@ -342,10 +355,17 @@ export async function rejectBook(
 ): Promise<ReviewResult | null> {
   const book = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
   if (!book) return null
-  // другой админ прямо сейчас одобряет — не выдёргиваем книгу у него из-под рук
-  if (book.reviewStatus === 'approving') return null
-  const updated = await prisma.book.update({
-    where: { id: bookId },
+
+  /**
+   * Переход УСЛОВНЫЙ, решает число изменённых строк — как у одобрения.
+   * Раньше отклонение читало состояние и писало по прочитанному, из-за чего:
+   * двойной тап слал владельцу два письма и писал два решения в журнал;
+   * уже одобренную книгу (возможно, с активной выдачей и очередью) можно было
+   * выдернуть из каталога, оставив `active` и живую очередь; а гонка с
+   * одобрением заканчивалась расхождением журнала и каталога (аудит 14.08.2026).
+   */
+  const changed = await prisma.book.updateMany({
+    where: { id: bookId, reviewStatus: 'pending' },
     data: {
       reviewStatus: 'rejected',
       reviewedByTg: adminTg,
@@ -353,8 +373,23 @@ export async function rejectBook(
       rejectionReason: reason?.slice(0, 300) ?? null,
     },
   })
+
+  if (!changed.count) {
+    const now = await prisma.book.findUnique({ where: { id: bookId }, include: { owner: true } })
+    // уже отклонена: показываем решение, но НЕ пишем человеку второй раз
+    if (now?.reviewStatus === 'rejected') {
+      return { card: toCard({ ...now, owner: now.owner }), addedByTg: now.addedByTg, already: true }
+    }
+    // approving (другой админ одобряет прямо сейчас), approved, deleted — отказ
+    return null
+  }
+
+  const updated = await prisma.book.findUniqueOrThrow({
+    where: { id: bookId },
+    include: { owner: true },
+  })
   invalidateFacets()
-  return { card: toCard({ ...updated, owner: book.owner }), addedByTg: book.addedByTg }
+  return { card: toCard({ ...updated, owner: updated.owner }), addedByTg: updated.addedByTg }
 }
 
 /* ── личная полка: состояния и действия владельца ─────────── */

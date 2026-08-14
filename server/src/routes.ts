@@ -92,7 +92,14 @@ import { prewarmCoverage } from './prewarm.js'
 import { InputFile } from 'grammy'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import sharp from 'sharp'
-import { redactCard, redactCards, redactEvent, redactMarketItem, redactOwner } from './privacy.js'
+import {
+  publicLoan,
+  redactCard,
+  redactCards,
+  redactEvent,
+  redactMarketItem,
+  redactOwner,
+} from './privacy.js'
 
 /**
  * Ключ отметки внешнего монитора в SyncState. Одна строка на всех: её пишет
@@ -696,12 +703,14 @@ export async function registerRoutes(app: FastifyInstance) {
         targetId: id,
         action: 'reject',
         reason,
+        already: Boolean(res.already),
+        // повторное «отклонить» не пишет человеку второй раз о том же
         notice: res.addedByTg
           ? { to: res.addedByTg, text: bookDecisionNotice('reject', res.card.title, reason) }
           : null,
       })
       void flushNotices()
-      return json({ ok: true, card: res.card })
+      return json({ ok: true, already: Boolean(res.already), card: res.card })
     }
 
     return reply.code(400).send({ error: 'bad_decision' })
@@ -712,6 +721,10 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     await upsertUser(u)
     const { city } = req.body as { city?: string | null }
+    // город берётся из справочника, как и во всех читающих ручках: сюда писалась
+    // любая строка любой длины и потом всплывала в выгрузке, карточках и в
+    // подсчёте «сколько экземпляров в городе» (аудит 14.08.2026)
+    if (city && !isKnownCity(String(city))) return reply.code(400).send({ error: 'unknown_city' })
     const user = await prisma.user.update({
       where: { tgId: u.id },
       data: { city: city || null },
@@ -998,14 +1011,17 @@ export async function registerRoutes(app: FastifyInstance) {
       listBorrowed(u.id),
       listHistory(u.id),
     ])
+    // наружу — только белый список полей (privacy.ts::publicLoan): строка Loan
+    // несёт числовые id обеих сторон, хэш claim-токена и заметку владельца
     return json({
-      given: given.map(decorate).map(withCoverProxy),
-      taken: taken.map(decorate).map(withCoverProxy),
-      history: history.map((l) => ({
-        ...withCoverProxy(l),
-        role: l.ownerTg === u.id ? 'given' : 'taken',
-        canUndo: canUndoLoan(l),
-      })),
+      given: given.map((l) => publicLoan(withCoverProxy(l), { mood: decorate(l).mood })),
+      taken: taken.map((l) => publicLoan(withCoverProxy(l), { mood: decorate(l).mood })),
+      history: history.map((l) =>
+        publicLoan(withCoverProxy(l), {
+          role: l.ownerTg === u.id ? 'given' : 'taken',
+          canUndo: canUndoLoan(l),
+        }),
+      ),
       summary: summarize(given.filter((l) => l.status === 'active')),
     })
   })
@@ -1028,7 +1044,7 @@ export async function registerRoutes(app: FastifyInstance) {
       const code = r.error === 'not_found' ? 404 : r.error === 'forbidden' ? 403 : 409
       return reply.code(code).send({ error: r.error })
     }
-    return json({ loan: r.loan })
+    return json({ loan: publicLoan(r.loan) })
   })
 
   /** Отметить, что книга ушла почитать: название + ник читателя. */
@@ -1052,7 +1068,7 @@ export async function registerRoutes(app: FastifyInstance) {
         note: b.note ? String(b.note) : null,
       })
       return json({
-        loan,
+        loan: publicLoan(loan),
         inviteUrl: loan.claimToken ? `https://t.me/${botUsername()}?start=loan_${loan.claimToken}` : null,
       })
     } catch (e: any) {
@@ -1072,7 +1088,7 @@ export async function registerRoutes(app: FastifyInstance) {
       void askForRating(loan)
       // и тем же путём уходит обещание «сообщим, когда освободится»
       void flushWaitlistNotices().catch(() => {})
-      return json({ loan })
+      return json({ loan: publicLoan(loan) })
     } catch (e: any) {
       // «не ваша выдача» — 403, раньше неотличимо маскировалось под 404
       if (e?.message === 'forbidden') return reply.code(403).send({ error: 'forbidden' })

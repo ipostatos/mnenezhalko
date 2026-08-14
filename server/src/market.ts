@@ -9,7 +9,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { env } from './env.js'
 import { prisma } from './db.js'
-import { logModeration, queueNotice } from './moderation.js'
+import { checkUserCan, logModeration, queueNotice } from './moderation.js'
 import { lookupPlace } from './agglomeration.js'
 import { CITIES } from './seed.js'
 
@@ -178,6 +178,16 @@ export async function saveOffer(
 ) {
   const already = await prisma.marketItem.findFirst({ where: { sourceMsgId: msg.id } })
   if (already) return null
+
+  // Пост в теме барахолки становится карточкой витрины — то есть это действие
+  // участника, а не просто сообщение в чате. Ограничение `market` и бан обязаны
+  // его останавливать (аудит 14.08.2026: не останавливали никак). Сообщение в
+  // чате при этом не трогаем: удаление постов — дело антиспама и модератора.
+  const v = await checkUserCan(msg.authorTg, 'market')
+  if (!v.allowed) {
+    console.log(`[market] пост ${msg.id} мимо витрины: автору закрыто (${v.code})`)
+    return null
+  }
 
   await prisma.user.upsert({
     where: { tgId: msg.authorTg },

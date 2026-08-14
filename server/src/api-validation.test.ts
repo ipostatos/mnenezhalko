@@ -136,6 +136,32 @@ test('возврат чужой выдачи — 403, несуществующе
   assert.equal(r2.statusCode, 404)
 })
 
+test('PATCH /api/me: город только из справочника, мусор — 400 (аудит 14.08.2026)', async () => {
+  // Единственная пишущая ручка профиля не переиспользовала проверку по
+  // справочнику: в City писалась любая строка любой длины при лимите тела 12 МБ,
+  // а потом всплывала в выгрузке, карточках и подсчёте «экземпляров в городе».
+  const me = { 'x-init-data': signInitData({ id: '555010' }) }
+  const bad = await app.inject({ method: 'PATCH', url: '/api/me', headers: me, payload: { city: 'Атлантида' } })
+  assert.equal(bad.statusCode, 400)
+  assert.equal(JSON.parse(bad.body).error, 'unknown_city')
+
+  const huge = await app.inject({
+    method: 'PATCH',
+    url: '/api/me',
+    headers: me,
+    payload: { city: 'W'.repeat(5000) },
+  })
+  assert.equal(huge.statusCode, 400, 'длинная строка тоже не должна доезжать до базы')
+
+  const ok = await app.inject({ method: 'PATCH', url: '/api/me', headers: me, payload: { city: 'Radom' } })
+  assert.equal(ok.statusCode, 200)
+  assert.equal((await prisma.user.findUnique({ where: { tgId: 555010n } }))?.city, 'Radom')
+
+  const cleared = await app.inject({ method: 'PATCH', url: '/api/me', headers: me, payload: { city: null } })
+  assert.equal(cleared.statusCode, 200, 'сброс города остаётся возможным')
+  assert.equal((await prisma.user.findUnique({ where: { tgId: 555010n } }))?.city, null)
+})
+
 test('пустое тело при content-type: application/json — это {}, а не 400', async () => {
   // дефолтный парсер Fastify отвечал FST_ERR_CTP_EMPTY_JSON_BODY, и удаление
   // (тела там нет по определению) падало у любого клиента, который ставит

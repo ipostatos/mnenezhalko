@@ -15,6 +15,7 @@ import {
   flushNotices,
   logModerationAction,
   moderationQueue,
+  NotAllowedError,
   setModerationNoticeSender,
   restrictUser,
   unbanUser,
@@ -93,7 +94,14 @@ import { warsawTime } from './time.js'
 export const bot = new Bot(env.botToken || '0:disabled')
 
 // ошибка в одном апдейте не должна ронять процесс
-bot.catch((err) => {
+bot.catch(async (err) => {
+  // Отказ по правам — не сбой, а ответ человеку: замок теперь стоит внутри
+  // самих действий (putOnShelf), поэтому любой путь, где проверку у двери
+  // забыли, всё равно объясняет человеку причину, а не молчит (аудит 14.08.2026)
+  if (err.error instanceof NotAllowedError) {
+    await err.ctx.reply(explainVerdict(err.error.verdict)).catch(() => {})
+    return
+  }
   console.error('[bot] ошибка обработчика:', err.error)
 })
 
@@ -1763,6 +1771,8 @@ bot.command('onbehalf', async (ctx) => {
 bot.callbackQuery('shelf:save', async (ctx) => {
   const d = shelfDrafts.get(ctx.from.id)
   if (!d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
+  // черновик мог пролежать до двух часов — ограничение могли выдать уже после фото
+  if (await stoppedByRules(ctx, 'add_books')) return ctx.answerCallbackQuery()
 
   // админ добавляет от имени библиотекаря — город берём у него, не спрашиваем
   const ob = await behalfFor(ctx)
@@ -1854,6 +1864,7 @@ bot.callbackQuery(/^shelfcity:(.+)$/, async (ctx) => {
   const batch = shelfBatches.get(ctx.from.id)
   const d = shelfDrafts.get(ctx.from.id)
   if (!batch?.length && !d) return ctx.answerCallbackQuery({ text: 'Пришлите фото книги ещё раз' })
+  if (await stoppedByRules(ctx, 'add_books')) return ctx.answerCallbackQuery()
   const city = ctx.match![1]
   await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from.id) },
@@ -2038,9 +2049,10 @@ bot.callbackQuery(/^mod:no:(.+)$/, async (ctx) => {
   if (!res) {
     return ctx.answerCallbackQuery({ text: 'Книга не найдена или уже одобряется другим админом' })
   }
-  await ctx.answerCallbackQuery({ text: 'Отклонено' })
+  await ctx.answerCallbackQuery({ text: res.already ? 'Уже отклонена' : 'Отклонено' })
   await ctx.editMessageText(`❌ Отклонено: «${esc(res.card.title)}».`, { parse_mode: 'HTML' })
-  if (res.addedByTg) {
+  // повторное нажатие не шлёт владельцу второе письмо об одном и том же решении
+  if (res.addedByTg && !res.already) {
     await bot.api
       .sendMessage(String(res.addedByTg), bookDecisionNotice('reject', esc(res.card.title)), {
         parse_mode: 'HTML',
@@ -2886,13 +2898,29 @@ bot.on('message:photo', async (ctx) => {
   await handleBookPhoto(ctx)
 })
 
+/**
+ * Подпись к любому другому медиа (видео, документ, гифка, кружок). Обработчик
+ * фото стоит выше и до сюда не доходит, а вот реклама видеороликом проходила
+ * мимо антиспама вовсе: проверялась только подпись фотографии (аудит 14.08.2026).
+ */
+bot.on('message:caption', async (ctx) => {
+  const caption = ctx.message.caption?.trim()
+  if (caption) await stoppedBySpam(ctx, caption)
+})
+
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim()
+  const isPrivate = ctx.chat.type === 'private'
+
+  // В ОБЩЕМ ЧАТЕ антиспам идёт раньше отсечения команд: «/ заработок в крипте,
+  // пишите в лс» — для участников обычный текст, а бот молча проходил мимо него
+  // из-за ведущей косой черты (аудит 14.08.2026).
+  if (!isPrivate && (await stoppedBySpam(ctx, text))) return
   if (text.startsWith('/')) return
 
-  // антиспам идёт ПЕРВЫМ: реклама не должна ни превратиться в карточку
-  // барахолки, ни уехать в платный ИИ-подбор
-  if (await stoppedBySpam(ctx, text)) return
+  // в личке команды до антиспама не доходят вовсе: там он защищает только от
+  // рекламы, уезжающей в платный ИИ-подбор
+  if (isPrivate && (await stoppedBySpam(ctx, text))) return
 
   if (isEventsTopic(ctx)) return handleAnnouncement(ctx, text)
   if (isMarketTopic(ctx)) return handleMarketPost(ctx, text)
@@ -2906,7 +2934,12 @@ bot.on('message:text', async (ctx) => {
   // список ISBN построчно без /import: берём, только если ВСЕ строки — ISBN,
   // иначе многострочный вопрос к ИИ («хочу лёгкое\nи на польском») уедет не туда
   const lines = text.split('\n').map((l: string) => l.trim()).filter(Boolean)
-  if (lines.length > 1 && lines.every(looksLikeIsbn)) return handleListImport(ctx, text)
+  if (lines.length > 1 && lines.every(looksLikeIsbn)) {
+    // тот же замок, что у /import: иначе ограниченный человек добавлял книги,
+    // просто прислав несколько ISBN подряд без команды (аудит 14.08.2026)
+    if (await stoppedByRules(ctx, 'add_books')) return
+    return handleListImport(ctx, text)
+  }
   await handleAi(ctx, text.slice(0, 500))
 })
 

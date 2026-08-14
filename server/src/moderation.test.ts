@@ -118,6 +118,32 @@ test('reject не выдёргивает книгу у идущего одобр
   assert.equal(book.reviewStatus, 'approving')
 })
 
+test('двойное отклонение: второе решение помечено already (аудит 14.08.2026)', async () => {
+  // У одобрения переход условный, у отклонения его не было: двойной тап по
+  // кнопке слал владельцу два письма «книга не прошла проверку» и писал в
+  // журнал два решения об одном и том же.
+  const b = await seedPending()
+  const r1 = await rejectBook(b.id, 2n, 'причина')
+  assert.ok(r1, 'первое отклонение проходит')
+  assert.equal((r1 as any).already, undefined)
+  const r2 = await rejectBook(b.id, 2n, 'причина')
+  assert.ok(r2, 'повтор отвечает состоянием, а не отказом')
+  assert.equal((r2 as any).already, true, 'повтор обязан быть помечен как уже принятое решение')
+  const book = await prisma.book.findUniqueOrThrow({ where: { id: b.id } })
+  assert.equal(book.reviewStatus, 'rejected')
+})
+
+test('одобренную книгу отклонить нельзя: она уже в каталоге и в очередях', async () => {
+  // Отклонение читало состояние и писало по прочитанному: книгу, которую уже
+  // одобрили (и на которую могли встать в очередь), можно было выдернуть из
+  // каталога, оставив active=true и живую очередь.
+  const b = await seedPending({ reviewStatus: 'approved' })
+  const r = await rejectBook(b.id, 2n, 'причина')
+  assert.equal(r, null)
+  const book = await prisma.book.findUniqueOrThrow({ where: { id: b.id } })
+  assert.equal(book.reviewStatus, 'approved')
+})
+
 test('свежий approving другого админа не перехватывается', async () => {
   const b = await seedPending({
     reviewStatus: 'approving',

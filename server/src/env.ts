@@ -56,6 +56,13 @@ export const env = {
   port: Number(process.env.PORT || 8080),
   host: process.env.HOST || '0.0.0.0',
 
+  /**
+   * Кому верить в X-Forwarded-For. По умолчанию — только петле: на проде перед
+   * приложением стоит Caddy на том же хосте. Список адресов/подсетей через
+   * запятую, если прокси когда-нибудь переедет на соседнюю машину.
+   */
+  trustProxy: process.env.TRUST_PROXY || '127.0.0.1, ::1',
+
   notion: {
     spaceId: process.env.NOTION_SPACE_ID || '5918928c-3188-457e-a69e-961acdc128e3',
     books: {

@@ -59,6 +59,48 @@ export function redactMarketItem<T extends Record<string, any>>(item: T, allowed
   return rest as Omit<T, 'authorTg'>
 }
 
+/**
+ * Выдача наружу: белый список полей вместо строки базы целиком.
+ *
+ * Здесь именно белый список, а не «выкинем лишнее»: ручка выдач единственная,
+ * где данные видит подписанный человек, и на этом её и пропустили — наружу
+ * уезжали числовые id обеих сторон, хэш claim-токена (он же ключ от чужой
+ * выдачи) и приватная заметка владельца, которую читателю видеть незачем
+ * (аудит 14.08.2026). При добавлении нового поля в модель Loan оно теперь
+ * НЕ попадает клиенту само собой — это и есть смысл белого списка.
+ *
+ * Роль в выдаче считает сервер и отдаёт готовой: клиенту незачем сравнивать
+ * числовые id, чтобы понять, его это книга или чужая.
+ */
+export function publicLoan<
+  T extends {
+    id: string
+    title: string
+    bookId?: string | null
+    book?: { id: string; title: string; coverUrl: string | null } | null
+    holderUsername?: string | null
+    holderName?: string | null
+    status: string
+    takenAt: Date
+    dueAt?: Date | null
+    returnedAt?: Date | null
+  },
+>(loan: T, extra: Record<string, unknown> = {}) {
+  return {
+    id: loan.id,
+    title: loan.title,
+    bookId: loan.bookId ?? null,
+    book: loan.book ?? null,
+    holderUsername: loan.holderUsername ?? null,
+    holderName: loan.holderName ?? null,
+    status: loan.status,
+    takenAt: loan.takenAt,
+    dueAt: loan.dueAt ?? null,
+    returnedAt: loan.returnedAt ?? null,
+    ...extra,
+  }
+}
+
 /** Встреча: `createdBy` — числовой tgId администратора, клиенту не нужен никогда. */
 export function redactEvent<T extends Record<string, any>>(event: T): Omit<T, 'createdBy'> {
   const { createdBy: _drop, ...rest } = event as Record<string, any>

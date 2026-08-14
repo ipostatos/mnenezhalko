@@ -221,6 +221,54 @@ test('ни одна публичная ручка не отдаёт контак
   }
 })
 
+/**
+ * Выдачи — единственная ручка, где данные видит ПОДПИСАННЫЙ человек, и именно
+ * поэтому её пропустили: сплошное сканирование выше проверяет анонима. Аудит
+ * 14.08.2026 нашёл, что наружу уходила строка базы целиком — числовые id обеих
+ * сторон, хэш claim-токена и заметка владельца, которую читателю видеть незачем.
+ */
+test('выдачи: подписанному не уходят чужие числовые id, хэш токена и заметка владельца', async () => {
+  const app = await buildApp()
+  const OWNER_TG = 555000333n
+  const NOTE = 'секретная заметка владельца'
+  await prisma.user.create({ data: { tgId: OWNER_TG, username: 'owner_test' } })
+  await prisma.user.upsert({ where: { tgId: VISITOR_TG }, create: { tgId: VISITOR_TG, username: 'visitor' }, update: {} })
+  const book = await prisma.book.create({
+    data: { title: 'Книга для выдачи', city: CITY, active: true, reviewStatus: 'approved', ownerId: librarianId },
+  })
+  const loan = await prisma.loan.create({
+    data: {
+      title: book.title,
+      bookId: book.id,
+      activeBookId: book.id,
+      ownerTg: OWNER_TG,
+      holderTg: VISITOR_TG,
+      holderUsername: 'visitor',
+      status: 'active',
+      note: NOTE,
+      claimTokenHash: 'a'.repeat(64),
+      claimTokenExpiresAt: new Date(Date.now() + 3600_000),
+    },
+  })
+
+  const res = await app.inject({ method: 'GET', url: '/api/loans', headers: SIGNED })
+  assert.equal(res.statusCode, 200)
+  const body = res.body
+  for (const secret of [String(OWNER_TG), 'a'.repeat(64), NOTE, 'claimTokenHash', 'ownerTg', 'holderTg']) {
+    assert.ok(!body.includes(secret), `/api/loans отдал «${secret}» — строка базы уходит наружу как есть`)
+  }
+  // при этом сама выдача видна и пригодна для экрана
+  const json = JSON.parse(body)
+  assert.equal(json.taken.length, 1, 'выдача должна быть видна тому, у кого книга')
+  assert.equal(json.taken[0].title, 'Книга для выдачи')
+  assert.ok(json.taken[0].mood, 'настроение выдачи считает сервер')
+  assert.equal(json.taken[0].id, loan.id)
+
+  await prisma.loan.deleteMany({ where: { id: loan.id } })
+  await prisma.book.deleteMany({ where: { id: book.id } })
+  await prisma.user.deleteMany({ where: { tgId: OWNER_TG } })
+})
+
 test('подписанному запросу те же ручки отдают контакты (ничего не сломали ради приватности)', async () => {
   const app = await buildApp()
   const withContacts = [

@@ -85,8 +85,22 @@ test('нормализация фото: анимированный GIF не т�
   assert.ok(out.buffer.equals(decoded.buffer))
 })
 
-test('нормализация фото: битый вход не роняет загрузку — возвращаем как получили', async () => {
+test('формат берётся из БАЙТОВ, а не из заголовка отправителя (аудит 14.08.2026)', async () => {
+  // Обход срезания координат: файл объявляли как image/gif (GIF мы намеренно не
+  // трогаем), а внутри лежал обычный JPEG с GPS — и он сохранялся как есть,
+  // уезжая публичной ссылкой в общую таблицу Notion.
+  const jpeg = await jpegWithExifAndGps()
+  const lying: Decoded = { buffer: jpeg, mediaType: 'image/gif', data: jpeg.toString('base64') }
+  const out = await normalizeForStorage(lying)
+  assert.equal(out.mediaType, 'image/webp', 'настоящий формат должен победить объявленный')
+  const meta = await sharp(out.buffer).metadata()
+  assert.equal(meta.exif, undefined, 'EXIF с координатами не должен пережить нормализацию')
+})
+
+test('битый файл отклоняется, а не сохраняется как есть (аудит 14.08.2026)', async () => {
+  // Раньше при сбое sharp возвращались исходные байты — то есть ровно тот файл,
+  // с которого не сняли метаданные. Такой «файл» и обложкой быть не может:
+  // честнее отказать на загрузке, чем хранить нечитаемое с координатами внутри.
   const garbage: Decoded = { buffer: Buffer.from('not an image'), mediaType: 'image/jpeg', data: '' }
-  const out = await normalizeForStorage(garbage)
-  assert.ok(out.buffer.equals(garbage.buffer))
+  await assert.rejects(() => normalizeForStorage(garbage), /bad_image/)
 })

@@ -80,7 +80,10 @@ export async function canReview(tgId: bigint, workKey: string): Promise<boolean>
   const librarian = await prisma.librarian.findUnique({ where: { tgId }, select: { id: true } })
   if (!librarian) return false
   const own = await prisma.book.findMany({
-    where: { ownerId: librarian.id, active: true },
+    // Именно `approved`, а не просто «карточка жива»: книга остаётся живой и на
+    // модерации, и после отказа. Иначе право оценить любое произведение
+    // выдавалось за одно заявление «она у меня есть» (аудит 14.08.2026).
+    where: { ownerId: librarian.id, active: true, reviewStatus: 'approved' },
     select: { title: true, author: true },
     take: 500,
   })
@@ -91,8 +94,13 @@ export async function canReview(tgId: bigint, workKey: string): Promise<boolean>
  * Пересчёт агрегата по произведению внутри той же транзакции, что и правка
  * отзыва. Считаем только видимые: скрытый по жалобам отзыв не должен и дальше
  * тянуть среднюю вниз (или вверх).
+ *
+ * Экспортируется, потому что отзыв правит не только этот модуль: решение
+ * модератора (moderation.ts::decideReview) обязано двигать среднюю ровно так же.
+ * Аудит 14.08.2026 нашёл именно этот перекос — скрытый модератором спам-отзыв
+ * продолжал влиять на оценку книги.
  */
-async function recountWork(tx: Prisma.TransactionClient, workKey: string) {
+export async function recountWork(tx: Prisma.TransactionClient, workKey: string) {
   const rows = await tx.review.findMany({
     where: { workKey, status: 'visible' },
     select: { rating: true },
