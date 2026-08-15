@@ -136,6 +136,14 @@ function whereOf(p: SearchParams): Prisma.BookWhereInput {
  */
 const SCORE_WINDOW = 5000
 
+/**
+ * Насколько книга похожа на запрос.
+ *
+ * Считаем и фразу целиком, и КАЖДОЕ слово отдельно: «маргарита мастер» —
+ * обычный человеческий запрос, а до этого он давал ноль всем книгам сразу
+ * (фраза целиком нигде не встречается), и выдача молча падала в сортировку по
+ * дате (аудит 14.08.2026).
+ */
 const relevance = (b: { title: string; author: string | null }, q: string) => {
   const title = norm(b.title)
   const author = norm(b.author || '')
@@ -144,6 +152,17 @@ const relevance = (b: { title: string; author: string | null }, q: string) => {
   if (title.startsWith(q)) score += 50
   if (title.includes(q)) score += 25
   if (author.includes(q)) score += 15
+
+  const words = q.split(' ').filter((w) => w.length > 1)
+  if (words.length > 1) {
+    for (const w of words) {
+      if (title.startsWith(w)) score += 8
+      else if (title.includes(w)) score += 6
+      if (author.includes(w)) score += 4
+    }
+    // все слова нашлись (пусть и в другом порядке) — это почти наверняка она
+    if (words.every((w) => title.includes(w) || author.includes(w))) score += 20
+  }
   return score
 }
 
@@ -182,7 +201,10 @@ export async function searchBooks(p: SearchParams) {
 
   const page = rows
     .map((b) => ({ b, score: relevance(b, q) }))
-    .sort((x, y) => y.score - x.score)
+    // при равном счёте порядок задаёт id: без этого две книги с одинаковой
+    // релевантностью могли меняться местами между запросами, и на границе
+    // страниц человек видел одну книгу дважды, а другую не видел вовсе
+    .sort((x, y) => y.score - x.score || (x.b.id < y.b.id ? -1 : 1))
     .slice(offset, offset + limit)
     .map((x) => x.b)
 

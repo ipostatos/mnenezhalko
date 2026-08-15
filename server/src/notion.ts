@@ -143,8 +143,14 @@ async function queryRaw(
  */
 export const SCHEMA_PROBE_LIMIT = 1
 
-function schemaOf(res: Rec): Schema {
-  const coll = unwrap(Object.values(res.recordMap?.collection || {})[0])
+function schemaOf(res: Rec, collectionId?: string): Schema {
+  // Берём ИМЕННО свою коллекцию: id известен, мы сами его и спрашивали. Первая
+  // попавшаяся из recordMap — лотерея: стоит Notion приложить к ответу связанную
+  // таблицу (relation на Owners), и мы прочитаем чужую схему, то есть «потеряем»
+  // все поля разом (аудит 14.08.2026)
+  const all = res.recordMap?.collection || {}
+  const raw = (collectionId && all[collectionId]) || Object.values(all)[0]
+  const coll = unwrap(raw)
   const byName: Record<string, string> = {}
   const typeById: Record<string, string> = {}
   const optionsByName: Record<string, string[]> = {}
@@ -162,7 +168,7 @@ function schemaOf(res: Rec): Schema {
 
 /** Схема коллекции: id свойств по имени и их типы. Нужна и для записи. */
 export async function collectionSchema(collection: string, view: string): Promise<Schema> {
-  return schemaOf(await queryRaw(collection, view, null, SCHEMA_PROBE_LIMIT))
+  return schemaOf(await queryRaw(collection, view, null, SCHEMA_PROBE_LIMIT), collection)
 }
 
 /** Пришла ли схема вообще (у срезанного ответа её может не быть — см. fetchAll). */
@@ -226,12 +232,12 @@ export async function fetchAll(
   query: typeof queryRaw = queryRaw,
 ): Promise<{ rows: NotionRow[]; schema: Schema }> {
   const first = await query(collection, view, null, NOTION_FETCH_LIMIT)
-  let schema = schemaOf(first)
+  let schema = schemaOf(first, collection)
   // Срезая payload, Notion выкидывает из ответа и саму запись коллекции —
   // то есть схему. Это ровно тот ответ, который надо шардировать, поэтому
   // схему в таком случае добираем отдельным маленьким запросом.
   if (!hasSchema(schema)) {
-    schema = schemaOf(await query(collection, view, null, SCHEMA_PROBE_LIMIT))
+    schema = schemaOf(await query(collection, view, null, SCHEMA_PROBE_LIMIT), collection)
   }
   if (isCompleteResponse(first)) return { rows: rowsOf(first), schema }
   if (!dateProp) {

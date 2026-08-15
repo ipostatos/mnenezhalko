@@ -11,8 +11,8 @@
  * Ссылки подписываем HMAC (подпись покрывает и ширину) — чтобы `/api/img` не стал
  * открытым прокси/ресайзером (SSRF): обслуживаем только свои же сгенерированные url.
  */
-import { createHash, createHmac } from 'node:crypto'
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
@@ -48,6 +48,17 @@ const PER_HOST_LIMIT = Number(process.env.IMG_MAX_PER_HOST || 2)
 export const LIST_W = 96 // строки списков: поиск, полка, история/список выдач
 export const CARD_W = 220 // разворот книги и экран правки на «Моей полке»
 export const CAROUSEL_W = 320 // карусель обложек (156px CSS ×2)
+
+/**
+ * Сравнение подписей без утечки по времени. Подобрать 64-битную подпись по сети
+ * практически нельзя, но защита в глубину стоит одной строки, а обычный `!==`
+ * выходит на первом же несовпавшем символе (аудит 14.08.2026).
+ */
+export function sameSignature(a: string, b: string): boolean {
+  const x = Buffer.from(String(a))
+  const y = Buffer.from(String(b))
+  return x.length === y.length && timingSafeEqual(x, y)
+}
 
 const sign = (url: string, w: number) =>
   createHmac('sha256', env.webhookSecret).update(`img:${w}:${url}`).digest('hex').slice(0, 16)
@@ -178,6 +189,32 @@ export function negativeTtlMs(category: ImgErrorCategory, status?: number): numb
 }
 
 const negative = new Map<string, number>() // ключ → до какого времени не пробовать
+
+/**
+ * Запись файла целиком или никак. Пишем во временный файл рядом и переименовываем:
+ * rename внутри одного каталога атомарен, поэтому «недописанного» файла в кэше
+ * не бывает даже при падении процесса (аудит 14.08.2026).
+ */
+async function writeAtomic(target: string, data: Buffer) {
+  const tmp = `${target}.${randomUUID().slice(0, 8)}.tmp`
+  try {
+    await writeFile(tmp, data)
+    await rename(tmp, target)
+  } catch (e) {
+    await unlink(tmp).catch(() => {})
+    throw e
+  }
+}
+
+/**
+ * Чистка протухших записей отрицательного кэша. Раньше запись удалялась только
+ * при успехе того же ключа: на каталоге с тысячами битых чужих ссылок ×3 ширины
+ * карта росла до перезапуска (аудит 14.08.2026).
+ */
+function sweepNegative(now = Date.now()) {
+  for (const [key, until] of negative) if (until <= now) negative.delete(key)
+  return negative.size
+}
 
 /**
  * Агент undici, подключение которого «пришпилено» к уже проверенным адресам —
@@ -448,7 +485,7 @@ export async function cachedImage(
   w: number,
   sig: string,
 ): Promise<CachedImage | null> {
-  if (!/^https?:\/\//.test(url) || sign(url, w) !== sig) return null
+  if (!/^https?:\/\//.test(url) || !sameSignature(sign(url, w), sig)) return null
   await mkdir(CACHE_DIR, { recursive: true })
   const base = path.join(CACHE_DIR, keyOf(url, w))
   const host = safeHostname(url)
@@ -478,9 +515,12 @@ export async function cachedImage(
         if (r.ok) {
           negative.delete(base)
           noteHostOutcome(host, 'ok')
+          // temp+rename: обрыв процесса посреди записи оставлял усечённый webp,
+          // который потом отдавался как HIT до самого истечения (аудит 14.08.2026).
+          // rename в пределах одного каталога атомарен
           await Promise.all([
-            writeFile(base, r.body),
-            writeFile(`${base}.type`, r.type),
+            writeAtomic(base, r.body),
+            writeAtomic(`${base}.type`, Buffer.from(r.type)),
           ]).catch(() => {})
           console.log(
             `[img] MISS ok host=${host} w=${w} in=${r.inputBytes}B out=${r.body.length}B resize=${r.resizeMs}ms total=${dur}ms`,
@@ -549,9 +589,21 @@ export async function housekeepImgCache(
   dir = CACHE_DIR,
   maxBytes = CACHE_MAX_BYTES,
 ): Promise<{ scanned: number; removed: number; freedBytes: number }> {
+  // заодно выметаем протухшие записи отрицательного кэша: он живёт в памяти и
+  // раньше не чистился вовсе
+  sweepNegative(now)
+
   const entries = await scanCacheEntries(dir)
   let removed = 0
   let freedBytes = 0
+
+  // хвосты прерванной записи (temp+rename): если процесс упал между ними
+  for (const f of await readdir(dir).catch(() => [] as string[])) {
+    if (!f.endsWith('.tmp')) continue
+    const p = path.join(dir, f)
+    const st = await stat(p).catch(() => null)
+    if (st && now - st.mtimeMs > 3600_000) await unlink(p).catch(() => {})
+  }
 
   const remove = async (e: CacheEntry) => {
     const [a, b] = await Promise.allSettled([unlink(e.path), unlink(e.typePath)])

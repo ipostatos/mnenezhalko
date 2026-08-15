@@ -157,6 +157,17 @@ else
   else ok "последняя копия $age ч назад: $(basename "$last") ($(ls "$BACKUPS" | wc -l) файлов)"; fi
 fi
 
+# Обложки лежат отдельным архивом, и сторож на них не смотрел вовсе: из-за
+# `set -eu` падение tar обрывало скрипт УЖЕ ПОСЛЕ копии базы — база свежая,
+# проверка зелёная, а обложек в бэкапе тихо нет (аудит 14.08.2026)
+covers=$(ls -t "$BACKUPS"/covers-*.tar.gz 2>/dev/null | head -1)
+if [ -z "$covers" ]; then warn "копий обложек нет вовсе"
+else
+  cage=$(( (now - $(stat -c %Y "$covers")) / 3600 ))
+  if [ "$cage" -gt 26 ]; then bad "архив обложек $cage ч назад — вероятно, backup.sh падает на нём"
+  else ok "обложки в копии $cage ч назад: $(basename "$covers")"; fi
+fi
+
 echo
 if [ "$problems" -gt 0 ]; then echo "🔴 инцидентов: $problems, предупреждений: $warns"; exit 1
 elif [ "$warns" -gt 0 ]; then echo "⚠️  предупреждений: $warns, инцидентов нет"; exit 0

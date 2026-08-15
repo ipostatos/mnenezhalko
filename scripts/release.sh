@@ -164,8 +164,11 @@ EOSH
 # выкладка сочла бы новый успешным.
 echo "→ проверка живости и что отвечает именно новый релиз"
 ok=0
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 2
+# Окно ожидания — минута, а не двадцать секунд: на нагруженной машине холодный
+# старт (Prisma, sharp) иногда не укладывался, и исправный релиз откатывался
+# по ложной тревоге (аудит 14.08.2026)
+for i in $(seq 1 20); do
+  sleep 3
   got="$(ssh "$HOST" "curl -fsS --max-time 5 http://127.0.0.1:$PORT/api/health 2>/dev/null" || true)"
   case "$got" in
     *'"ok":true'*)
@@ -192,6 +195,9 @@ systemctl is-active mnenezhalko || true
 curl -fsS --max-time 5 http://127.0.0.1:$PORT/api/health || echo '⚠️ и предыдущий релиз не отвечает — смотреть journalctl -u mnenezhalko'
 EOSH
     echo "↩️  откат выполнен на $PREV"
+    # каталог упавшего релиза (около 350 МБ) оставался лежать до следующей
+    # выкладки — на тесном диске это ощутимо
+    ssh "$HOST" "rm -rf '$DIR/releases/$REL'" || true
   else
     echo "⚠️  откатываться некуда: предыдущего релиза нет"
   fi
