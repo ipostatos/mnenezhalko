@@ -196,6 +196,38 @@ export async function putOnShelf(d: ShelfDraft): Promise<ShelfResult> {
     reviewedAt: autoApprove ? now : null,
     reviewedByTg: autoApprove ? d.tgId : null,
   }
+  /**
+   * Повтор ТОГО ЖЕ запроса не заводит вторую карточку. Идемпотентность здесь
+   * была построена вокруг «ретрая той же книги в Notion», а сам POST повторить
+   * ничего не мешало: двойной тап на медленной сети или клиентский ретрай давал
+   * две одинаковые книги и две строки в общей таблице (аудит 14.08.2026).
+   * Окно короткое: осознанное «второй экземпляр той же книги» человек добавляет
+   * не за десять секунд, а проверка дублей ему об этом ещё и скажет.
+   */
+  const DOUBLE_SUBMIT_MS = 15_000
+  const twin = await prisma.book.findFirst({
+    where: {
+      ownerId: librarian.id,
+      kind: d.kind,
+      title: data.title,
+      author: data.author,
+      active: true,
+      createdAt: { gt: new Date(now.getTime() - DOUBLE_SUBMIT_MS) },
+    },
+    include: { owner: true },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (twin) {
+    console.log(`[shelf] повтор запроса на «${data.title}» — отдаю уже созданную карточку`)
+    return {
+      book: toCard({ ...twin, owner: twin.owner }),
+      notionStatus: twin.notionStatus,
+      notionError: twin.notionError,
+      moderation,
+      moderationNotice: moderationNotice(moderation),
+    }
+  }
+
   let book = await prisma.book.create({ data: { ...data, search: buildSearch(data) } })
   invalidateFacets()
 

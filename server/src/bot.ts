@@ -1079,9 +1079,18 @@ bot.command('alerts', async (ctx) => {
 
 bot.callbackQuery(/^alerts:(on|off)$/, async (ctx) => {
   const on = ctx.match![1] === 'on'
-  await prisma.user.update({
+  // upsert, а не update: человек мог удалить свои данные, а потом нажать кнопку
+  // в старом сообщении — `update` кидал P2025, bot.catch его глотал, и кнопка
+  // «крутилась» без единого слова (аудит 14.08.2026)
+  await prisma.user.upsert({
     where: { tgId: BigInt(ctx.from.id) },
-    data: { eventAlerts: on },
+    create: {
+      tgId: BigInt(ctx.from.id),
+      username: ctx.from.username ?? null,
+      firstName: ctx.from.first_name ?? null,
+      eventAlerts: on,
+    },
+    update: { eventAlerts: on },
   })
   await ctx.answerCallbackQuery({ text: on ? 'Включил' : 'Выключил' })
   await ctx.editMessageText(
@@ -1290,6 +1299,13 @@ const draftSweeper = setInterval(() => {
       shelfBatches.delete(tgId)
     }
   }
+  // ожидание аннотации к оценке выметается тем же сторожем: TTL у него был, но
+  // проверялся ЛЕНИВО — только когда тот же человек напишет следующий текст.
+  // Кто оценку поставил, а слов не написал, оставался в памяти навсегда
+  const reviewCutoff = Date.now() - REVIEW_WAIT_TTL_MS
+  for (const [tgId, w] of reviewTextWait) {
+    if (w.at < reviewCutoff) reviewTextWait.delete(tgId)
+  }
 }, 30 * 60_000)
 draftSweeper.unref?.()
 
@@ -1486,9 +1502,17 @@ async function handleIsbnMessage(ctx: any, raw: string) {
  * Фото из Telegram-альбома приходят отдельными апдейтами с общим media_group_id.
  * Копим их с дебаунсом и обрабатываем всю пачку разом, а не как N отдельных книг.
  */
-type AlbumBuf = { fileIds: string[]; timer: ReturnType<typeof setTimeout>; ctx: any }
+type AlbumBuf = { fileIds: string[]; timer: ReturnType<typeof setTimeout>; ctx: any; startedAt: number }
 const albums = new Map<string, AlbumBuf>()
-const ALBUM_WAIT_MS = 1500
+/**
+ * Сколько ждём остальные фото альбома. Telegram доставляет их отдельными
+ * апдейтами, и при задержке доставки полторы секунды рвали пачку надвое:
+ * человек получал две сводки на один альбом (аудит 14.08.2026). Три секунды —
+ * компромисс: заметно надёжнее, а «Разбираю…» человек видит сразу.
+ */
+const ALBUM_WAIT_MS = Number(process.env.ALBUM_WAIT_MS || 3000)
+/** Потолок ожидания: подкладывать фото бесконечно, отодвигая разбор, нельзя. */
+const ALBUM_MAX_WAIT_MS = 15_000
 
 /**
  * Админ добавляет книги от имени библиотекаря (пока не сбросит /onbehalf off).
@@ -1553,11 +1577,15 @@ function bufferAlbumPhoto(ctx: any) {
   const prev = albums.get(key)
   if (prev) clearTimeout(prev.timer)
   const fileIds = prev ? [...prev.fileIds, fileId] : [fileId]
+  const startedAt = prev?.startedAt ?? Date.now()
+  // ждём паузу в доставке, но не дольше потолка от ПЕРВОГО фото: иначе
+  // медленно приходящий альбом откладывал бы разбор бесконечно
+  const wait = Math.max(0, Math.min(ALBUM_WAIT_MS, startedAt + ALBUM_MAX_WAIT_MS - Date.now()))
   const timer = setTimeout(() => {
     albums.delete(key)
     handlePhotoBatch(ctx, fileIds).catch((e) => console.error('[batch] альбом:', e?.message ?? e))
-  }, ALBUM_WAIT_MS)
-  albums.set(key, { fileIds, timer, ctx })
+  }, wait)
+  albums.set(key, { fileIds, timer, ctx, startedAt })
 }
 
 /** Распознаёт и ставит на полку пачку обложек; в конце — одна сводка. */
@@ -3006,8 +3034,11 @@ export async function checkNotionToken() {
     const row = await prisma.syncState.findUnique({ where: { key: NOTION_OK_KEY } }).catch(() => null)
     if (row) notionTokenOk = row.value === '1'
   }
+  // Именно `Boolean(me)`, а не «промис резолвнулся»: на протухшую cookie Notion
+  // может ответить обычной анонимной сессией (200, но пользователя нет) — и
+  // сторож считал бы это здоровьем, пока карточки копятся (аудит 14.08.2026)
   const ok = await whoAmI()
-    .then(() => true)
+    .then((me) => Boolean(me))
     .catch((e) => {
       console.error('[notion] токен не отвечает:', e?.message ?? e)
       return false

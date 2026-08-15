@@ -68,6 +68,7 @@ import {
   cachedImage,
   imgPipelineMetrics,
   proxyCover,
+  sameSignature,
   warmShowcaseCovers,
 } from './imgcache.js'
 import { stubCoverUrls } from './cover-quality.js'
@@ -137,6 +138,27 @@ async function denyIfCannot(
   if (v.allowed) return false
   reply.code(403).send({ error: v.code, message: explainVerdict(v) })
   return true
+}
+
+/**
+ * Telegram id из пути. `BigInt('не-число')` бросает — и админская ручка отвечала
+ * пятисоткой на обычную опечатку в адресе (аудит 14.08.2026).
+ */
+function tgIdParam(req: FastifyRequest): bigint | null {
+  const raw = (req.params as { tgId?: string }).tgId ?? ''
+  return /^\d{1,20}$/.test(raw) ? BigInt(raw) : null
+}
+
+/**
+ * Срок ограничения/выдачи в днях. Мусор («abc») превращался в NaN и молча
+ * означал «бессрочно», отрицательное число — ограничение, истёкшее в прошлом:
+ * запись есть, письмо человеку ушло, а действия никакого (аудит 14.08.2026).
+ */
+function daysParam(v: unknown): { ok: true; days: number | null } | { ok: false } {
+  if (v === undefined || v === null || v === '') return { ok: true, days: null }
+  const n = Number(v)
+  if (!Number.isInteger(n) || n <= 0 || n > 3650) return { ok: false }
+  return { ok: true, days: n }
 }
 
 /** Достаёт пользователя из заголовка X-Init-Data, либо null. */
@@ -274,6 +296,25 @@ export function warmShowcaseOnBoot() {
 const HITS = new Map<string, number[]>()
 
 /** @returns true, если лимит исчерпан и запрос надо отклонить. */
+/**
+ * Общий суточный потолок платных вызовов модели.
+ *
+ * Лимиты были только «на человека»: договорившийся десяток аккаунтов раскручивал
+ * счёт без всякого тормоза, а ключ Anthropic у проекта общий с соседним
+ * (аудит 14.08.2026). Здесь не защита от злоупотребления, а предохранитель по
+ * деньгам: при исчерпании подбор честно отвечает «сегодня не могу».
+ */
+const PAID_CALLS_PER_DAY = Number(process.env.AI_CALLS_PER_DAY || 1500)
+let paidCalls = { day: '', used: 0 }
+
+function paidCallBudgetLeft(now = new Date()): boolean {
+  const day = now.toISOString().slice(0, 10)
+  if (paidCalls.day !== day) paidCalls = { day, used: 0 }
+  if (paidCalls.used >= PAID_CALLS_PER_DAY) return false
+  paidCalls.used++
+  return true
+}
+
 function tooOften(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now()
   const fresh = (HITS.get(key) ?? []).filter((t) => now - t < windowMs)
@@ -601,13 +642,16 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
     const b = (req.body ?? {}) as { scope?: string; reason?: string; days?: number }
     if (!b.scope || !isScope(b.scope)) return reply.code(400).send({ error: 'bad_scope' })
-    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const term = daysParam(b.days)
+    if (!term.ok) return reply.code(400).send({ error: 'bad_days' })
+    const targetTg = tgIdParam(req)
+    if (targetTg === null) return reply.code(400).send({ error: 'bad_tg_id' })
     const res = await restrictUser({
       actorTg: u.id,
       targetTg,
       scope: b.scope,
       reason: String(b.reason ?? ''),
-      days: b.days ? Number(b.days) : null,
+      days: term.days,
     })
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
     void flushNotices()
@@ -620,7 +664,8 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
     const b = (req.body ?? {}) as { scope?: string; reason?: string }
     if (!b.scope || !isScope(b.scope)) return reply.code(400).send({ error: 'bad_scope' })
-    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const targetTg = tgIdParam(req)
+    if (targetTg === null) return reply.code(400).send({ error: 'bad_tg_id' })
     const res = await unrestrictUser({
       actorTg: u.id,
       targetTg,
@@ -637,7 +682,8 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
     const b = (req.body ?? {}) as { reason?: string }
-    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const targetTg = tgIdParam(req)
+    if (targetTg === null) return reply.code(400).send({ error: 'bad_tg_id' })
     const res = await banUser({ actorTg: u.id, targetTg, reason: String(b.reason ?? '') })
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
     void flushNotices()
@@ -649,7 +695,8 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     if (!isAdmin(u.id)) return reply.code(403).send({ error: 'forbidden' })
     const b = (req.body ?? {}) as { reason?: string }
-    const targetTg = BigInt((req.params as { tgId: string }).tgId)
+    const targetTg = tgIdParam(req)
+    if (targetTg === null) return reply.code(400).send({ error: 'bad_tg_id' })
     const res = await unbanUser({ actorTg: u.id, targetTg, reason: String(b.reason ?? '') })
     if (!res.ok) return reply.code(res.code === 'unknown_user' ? 404 : 409).send({ error: res.code })
     void flushNotices()
@@ -975,6 +1022,12 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!u) return reply.code(401).send({ error: 'unauthorized' })
     if (await denyIfCannot(reply, u.id, 'ai')) return
     if (tooOften(`ai:${u.id}`, 12, 60_000)) return reply.code(429).send({ error: 'too_many' })
+    if (!paidCallBudgetLeft()) {
+      return reply.code(429).send({
+        error: 'ai_budget',
+        message: 'Подбор сегодня уже отработал дневную норму. Попробуйте завтра или воспользуйтесь поиском.',
+      })
+    }
     const { text, city } = req.body as { text?: string; city?: string }
     if (!text || text.trim().length < 2) return reply.code(400).send({ error: 'empty' })
     return askAi(text.trim().slice(0, 500), city || undefined)
@@ -1057,13 +1110,17 @@ export async function registerRoutes(app: FastifyInstance) {
     await upsertUser(u)
     const b = req.body as Record<string, any>
     if (!b.title || !b.holder) return reply.code(400).send({ error: 'bad_request' })
+    // срок проверяем ДО базы: `Number('abc')` = NaN превращался в невалидную
+    // дату, и наружу уезжал многострочный дамп Prisma (аудит 14.08.2026)
+    const term = daysParam(b.days === null ? undefined : b.days)
+    if (!term.ok) return reply.code(400).send({ error: 'bad_days' })
     try {
       const loan = await createLoan({
         ownerTg: u.id,
         title: String(b.title),
         bookId: b.bookId ? String(b.bookId) : null,
         holder: String(b.holder),
-        days: b.days === null ? null : b.days ? Number(b.days) : undefined,
+        days: b.days === null ? null : term.days === null ? undefined : term.days,
         takenAt: b.takenAt ? String(b.takenAt) : null,
         note: b.note ? String(b.note) : null,
       })
@@ -1072,7 +1129,12 @@ export async function registerRoutes(app: FastifyInstance) {
         inviteUrl: loan.claimToken ? `https://t.me/${botUsername()}?start=loan_${loan.claimToken}` : null,
       })
     } catch (e: any) {
-      return reply.code(400).send({ error: e?.message ?? 'bad_request' })
+      // наружу отдаём только СВОИ коды: чужие сообщения (Prisma, драйвер) несут
+      // внутренности модели и никак не помогают человеку
+      const known = ['empty_title', 'bad_holder', 'bad_date', 'book_busy', 'not_your_book', 'book_unavailable']
+      const code = known.includes(e?.message) ? e.message : 'bad_request'
+      if (code === 'bad_request') req.log.warn(`POST /api/loans: ${e?.message ?? e}`)
+      return reply.code(400).send({ error: code })
     }
   })
 
@@ -1415,6 +1477,12 @@ export async function registerRoutes(app: FastifyInstance) {
     if (await denyIfCannot(reply, u.id, 'add_books')) return
     // распознавание тоже идёт в Claude, и картинка весит мегабайты
     if (tooOften(`vision:${u.id}`, 20, 300_000)) return reply.code(429).send({ error: 'too_many' })
+    if (!paidCallBudgetLeft()) {
+      return reply.code(429).send({
+        error: 'ai_budget',
+        message: 'Распознавание сегодня уже отработало дневную норму. Книгу можно добавить вручную.',
+      })
+    }
     const { image } = req.body as { image?: string }
     if (!image) return reply.code(400).send({ error: 'bad_request' })
 
@@ -1485,8 +1553,14 @@ export async function registerRoutes(app: FastifyInstance) {
    * Проверка дублей до сохранения: свой повтор (предупреждаем) vs чужие
    * экземпляры (подсказка). Подпись Telegram нужна, чтобы отличить «свою» книгу.
    */
-  app.get('/api/duplicates', async (req) => {
+  app.get('/api/duplicates', async (req, reply) => {
     const u = who(req)
+    // Докстрока обещала подпись, а код пускал кого угодно: ручка ходит в базу
+    // (до 500 строк с владельцами) и была открыта интернету без лимита частоты
+    // (аудит 14.08.2026). Проверку дублей зовёт только мастер добавления книги,
+    // а он всегда подписан.
+    if (!u) return reply.code(401).send({ error: 'unauthorized' })
+    if (tooOften(`dup:${u.id}`, 60, 60_000)) return reply.code(429).send({ error: 'too_often' })
     const { title, author, kind, ownerLibrarianId } = req.query as {
       title?: string
       author?: string
@@ -1616,7 +1690,7 @@ export async function registerRoutes(app: FastifyInstance) {
     if (!fileId || fileId.length > 200 || !/^[\w-]+$/.test(fileId)) {
       return reply.code(400).send({ error: 'bad_file_id' })
     }
-    if (!s || s !== signPhoto(fileId)) return reply.code(403).send({ error: 'bad_signature' })
+    if (!s || !sameSignature(s, signPhoto(fileId))) return reply.code(403).send({ error: 'bad_signature' })
     if (tooOften(`photo:${req.ip}`, 60, 60_000) || tooOften('photo:*', 600, 60_000)) {
       return reply.code(429).send({ error: 'too_many' })
     }

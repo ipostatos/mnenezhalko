@@ -18,6 +18,7 @@ process.env.DISABLE_BOT = '1'
 process.env.BOT_TOKEN = '123456:test-token-for-signature'
 process.env.NOTION_TOKEN_V2 = ''
 process.env.ADMIN_IDS = '555001' // upsertUser пересчитывает isAdmin из окружения
+const ADMIN_TG = 555001n
 
 execSync('npx prisma db push --skip-generate --accept-data-loss --schema prisma/schema.prisma', {
   stdio: 'ignore',
@@ -160,6 +161,84 @@ test('PATCH /api/me: город только из справочника, мус
   const cleared = await app.inject({ method: 'PATCH', url: '/api/me', headers: me, payload: { city: null } })
   assert.equal(cleared.statusCode, 200, 'сброс города остаётся возможным')
   assert.equal((await prisma.user.findUnique({ where: { tgId: 555010n } }))?.city, null)
+})
+
+/* ── мелкие находки аудита 14.08.2026 ─────────────────────── */
+
+test('POST /api/loans: мусорный срок — понятный код, а не дамп Prisma', async () => {
+  // `Number("abc")` = NaN → `new Date(NaN)` → Prisma кидала валидационную
+  // ошибку, и её многострочный текст с внутренностями модели уезжал клиенту
+  await prisma.user.upsert({ where: { tgId: 555020n }, create: { tgId: 555020n }, update: {} })
+  const me = { 'x-init-data': signInitData({ id: '555020' }) }
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/loans',
+    headers: me,
+    payload: { title: 'Дюна', holder: '@someone', days: 'abc' },
+  })
+  assert.equal(r.statusCode, 400)
+  const body = JSON.parse(r.body)
+  assert.equal(body.error, 'bad_days')
+  assert.ok(!r.body.includes('prisma'), 'внутренности ORM наружу не уходят')
+  assert.ok(!r.body.includes('Invalid'), 'сырое сообщение библиотеки наружу не уходит')
+})
+
+test('POST /api/loans: отрицательный и гигантский срок тоже отвергаются', async () => {
+  const me = { 'x-init-data': signInitData({ id: '555020' }) }
+  for (const days of [-5, 0, 100000]) {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/loans',
+      headers: me,
+      payload: { title: 'Дюна', holder: '@someone', days },
+    })
+    assert.equal(r.statusCode, 400, `срок ${days} должен быть отвергнут`)
+  }
+})
+
+test('админские ручки: нечисловой id — 400, а не 500 от BigInt()', async () => {
+  const admin = { 'x-init-data': signInitData({ id: String(ADMIN_TG) }) }
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/admin/users/не-число/restrict',
+    headers: admin,
+    payload: { scope: 'reviews', reason: 'проверка' },
+  })
+  assert.equal(r.statusCode, 400)
+})
+
+test('ограничение: мусорный срок не превращается в бессрочное молча', async () => {
+  const admin = { 'x-init-data': signInitData({ id: String(ADMIN_TG) }) }
+  await prisma.user.upsert({ where: { tgId: 555021n }, create: { tgId: 555021n }, update: {} })
+  const r = await app.inject({
+    method: 'POST',
+    url: '/api/admin/users/555021/restrict',
+    headers: admin,
+    payload: { scope: 'reviews', reason: 'проверка', days: 'abc' },
+  })
+  assert.equal(r.statusCode, 400, 'непонятный срок — это ошибка ввода, а не «бессрочно»')
+
+  const past = await app.inject({
+    method: 'POST',
+    url: '/api/admin/users/555021/restrict',
+    headers: admin,
+    payload: { scope: 'reviews', reason: 'проверка', days: -3 },
+  })
+  assert.equal(past.statusCode, 400, 'срок в прошлом — тихая пустышка с письмом человеку')
+  assert.equal(await prisma.userRestriction.count({ where: { userTg: 555021n } }), 0)
+})
+
+test('подпись без auth_date не проходит (защита в глубину)', async () => {
+  // сама подпись покрывает auth_date, подделать «без даты» нельзя — но и
+  // принимать initData без отметки времени незачем: проверка свежести тогда
+  // просто пропускается
+  const params = new URLSearchParams({ user: JSON.stringify({ id: '555022' }) })
+  const dcs = [...params.entries()].map(([k, v]) => `${k}=${v}`).sort().join(String.fromCharCode(10))
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(process.env.BOT_TOKEN!).digest()
+  params.set('hash', crypto.createHmac('sha256', secret).update(dcs).digest('hex'))
+
+  const r = await app.inject({ method: 'GET', url: '/api/loans', headers: { 'x-init-data': params.toString() } })
+  assert.equal(r.statusCode, 401)
 })
 
 test('пустое тело при content-type: application/json — это {}, а не 400', async () => {

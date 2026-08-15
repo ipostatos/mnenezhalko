@@ -164,3 +164,26 @@ test('забаненный не публикует барахолку', async ()
   assert.equal(saved, null)
   assert.equal(await prisma.marketItem.count(), 0)
 })
+
+/* ── мелкие находки аудита (низкая степень) ────────────────── */
+
+test('повтор того же запроса не заводит вторую карточку книги', async () => {
+  // двойной тап на медленной сети или клиентский ретрай давали две одинаковые
+  // книги и две строки в общей таблице Notion
+  const a = await putOnShelf(draft('Дюна'))
+  const b = await putOnShelf(draft('Дюна'))
+  assert.equal(a.book.id, b.book.id, 'повтор должен вернуть ту же карточку')
+  assert.equal(await prisma.book.count(), 1)
+})
+
+test('осознанный второй экземпляр позже — отдельная карточка', async () => {
+  const a = await putOnShelf(draft('Дюна'))
+  // «через полчаса передумал и добавил второй экземпляр» — окно повтора давно вышло
+  await prisma.book.update({
+    where: { id: a.book.id },
+    data: { createdAt: new Date(Date.now() - 3600_000) },
+  })
+  const b = await putOnShelf(draft('Дюна'))
+  assert.notEqual(a.book.id, b.book.id)
+  assert.equal(await prisma.book.count(), 2)
+})

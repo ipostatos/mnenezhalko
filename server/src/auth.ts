@@ -1,4 +1,12 @@
 import crypto from 'node:crypto'
+
+/**
+ * Сколько живёт подпись Mini App. Сутки — столько же, сколько было раньше:
+ * Telegram выдаёт свежую initData при каждом открытии приложения, но человек
+ * может держать его открытым долго, и обрывать ему работу на середине незачем.
+ * Переопределяется `INIT_DATA_TTL_SEC` — на случай, если решим ужесточить.
+ */
+const INIT_DATA_TTL_SEC = Number(process.env.INIT_DATA_TTL_SEC || 86_400)
 import { env, isAdmin } from './env.js'
 import { prisma } from './db.js'
 
@@ -32,9 +40,15 @@ export function verifyInitData(initData: string): TgUser | null {
   const b = Buffer.from(hash, 'hex')
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
 
-  // не принимаем совсем старые подписи
+  /**
+   * Свежесть подписи. `auth_date` покрыт хэшем, поэтому подделать «подпись без
+   * даты» нельзя — но и принимать её незачем: проверка возраста тогда просто
+   * пропускалась (аудит 14.08.2026). Утёкшая initData (лог прокси, чужая
+   * вкладка) работает ключом ко всем ручкам ровно столько, сколько мы разрешим.
+   */
   const authDate = Number(params.get('auth_date') || 0)
-  if (authDate && Date.now() / 1000 - authDate > 86400) return null
+  if (!authDate || !Number.isFinite(authDate)) return null
+  if (Date.now() / 1000 - authDate > INIT_DATA_TTL_SEC) return null
 
   try {
     const user = JSON.parse(params.get('user') || '{}')
