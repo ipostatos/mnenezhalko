@@ -2768,6 +2768,24 @@ bot.command('addevent', async (ctx) => {
  *
  * Возвращает true, если сообщение дальше обрабатывать не нужно.
  */
+/** Через сколько человек в проекте перестаёт считаться незнакомцем. */
+const KNOWN_AFTER_MS = 14 * 24 * 60 * 60 * 1000
+
+/**
+ * Разбор вердикта для журнала: счёт, уровень и СЛОВА, которые совпали.
+ *
+ * Текст сообщения сюда не кладём намеренно: цитата и так уходит админам в
+ * Telegram, а в базе для настройки словаря достаточно знать, какое слово
+ * сработало. Иначе журнал модерации превратился бы в архив переписки чата.
+ */
+function spamMeta(verdict: ReturnType<typeof checkSpam>) {
+  return {
+    score: verdict.score,
+    level: verdict.level,
+    signals: verdict.signals.map((s) => ({ key: s.key, weight: s.weight, words: s.words ?? [] })),
+  }
+}
+
 async function stoppedBySpam(ctx: any, text: string): Promise<boolean> {
   if (env.antispamOff) return false
   const from = ctx.from
@@ -2785,9 +2803,18 @@ async function stoppedBySpam(ctx: any, text: string): Promise<boolean> {
     prisma.librarian.findFirst({ where: { tgId, mergedIntoId: null }, select: { id: true } }),
   ])
 
+  // «Свой человек» — не только библиотекарь: связка библиотекаря с Telegram
+  // есть у четверых из полутора сотен (она появляется, только когда человек
+  // сам открыл Mini App), поэтому поблажка не доставалась почти никому и
+  // фильтр разговаривал со всем сообществом как с незнакомцами. Считаем своим
+  // и того, кто просто давно в проекте: спамеры приходят и пишут сразу
+  const known =
+    Boolean(librarian) ||
+    Boolean(user && Date.now() - user.createdAt.getTime() > KNOWN_AFTER_MS)
+
   const verdict = checkSpam(text, {
     marketTopic: isMarketTopic(ctx),
-    known: Boolean(librarian),
+    known,
     firstSeen: !user,
   })
   if (verdict.level === 'clean') return false
@@ -2839,7 +2866,7 @@ async function stoppedBySpam(ctx: any, text: string): Promise<boolean> {
       targetType: 'message',
       action: 'spam_delete',
       reason: verdict.reason,
-      meta: { score: verdict.score, chatId: String(ctx.chat.id), messageId: msgId },
+      meta: { ...spamMeta(verdict), chatId: String(ctx.chat.id), messageId: msgId },
     })
 
     // автору говорим, что случилось: если это ошибка, он придёт к админам,
@@ -2868,6 +2895,20 @@ async function stoppedBySpam(ctx: any, text: string): Promise<boolean> {
       .text('🗑 Удалить', `sp:del:${ctx.chat.id}:${msgId}`)
       .text('✅ Оставить', `sp:keep:${from.id}`),
   )
+
+  // Карточку записываем в журнал ДО ответа админа. 19 августа таких карточек
+  // было восемь, все оказались ложными, и разобрать их было нечем: в журнал
+  // попадало только «админ оставил сообщение», без единого слова о том, что
+  // сработало. Правило простое: если машина кого-то заподозрила, повод должен
+  // остаться в базе, а не только в переписке админов
+  await logModerationAction({
+    actorTg: null,
+    targetUserTg: tgId,
+    targetType: 'message',
+    action: 'spam_flag',
+    reason: verdict.reason,
+    meta: { ...spamMeta(verdict), chatId: String(ctx.chat.id), messageId: msgId },
+  })
   return false
 }
 

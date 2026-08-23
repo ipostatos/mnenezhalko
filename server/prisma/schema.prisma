@@ -455,7 +455,11 @@ model ModerationAction {
   targetType   String
   targetId     String?
   /// restrict | unrestrict | ban | unban | hide | restore | delete | dismiss |
-  /// remove (объявление, встреча) | spam_delete | spam_false_positive
+  /// remove (объявление, встреча) | spam_delete | spam_flag | spam_false_positive
+  ///
+  /// spam_flag — машина заподозрила сообщение и показала карточку админам,
+  /// ничего не тронув. Пара «spam_flag + spam_false_positive» и есть материал
+  /// для настройки словаря: в meta лежат счёт и совпавшие слова
   action       String
   reason       String
   /// подробности решения в JSON — например, срок ограничения
